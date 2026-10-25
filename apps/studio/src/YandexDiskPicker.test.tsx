@@ -24,6 +24,7 @@ describe("Disk picker", () => {
     vi.stubGlobal("fetch", fetch);
     render(<YandexDiskPicker mode="output-folder" csrf="csrf" onCsrf={() => {}} onFinish={selected} />);
     const choose = await screen.findByRole("button", { name: "Выбрать эту папку" });
+    await waitFor(() => expect(choose).toBeEnabled());
     fireEvent.click(choose);
     await waitFor(() => expect(selected).toHaveBeenCalledWith({ resources: [], folder: expect.objectContaining({ id: expect.any(String) }) }));
     expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toMatchObject({ path: "disk:/", folders_only: true });
@@ -35,7 +36,9 @@ describe("Disk picker", () => {
       ? json({ ...folder, id: "6f5d76f9-1ced-44a4-abf5-9ff96092687e" })
       : json({ folder, items: [], next_offset: null })));
     render(<YandexDiskPicker mode="source-folder" csrf="csrf" onCsrf={() => {}} onFinish={selected} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Выбрать эту папку" }));
+    const choose = screen.getByRole("button", { name: "Выбрать эту папку" });
+    await waitFor(() => expect(choose).toBeEnabled());
+    fireEvent.click(choose);
     await waitFor(() => expect(selected).toHaveBeenCalledWith({ resources: [], folder: expect.objectContaining({ is_folder: true }) }));
   });
 
@@ -52,7 +55,9 @@ describe("Disk picker", () => {
       return json({ folder, items: [file(body.offset ? "two.flac" : "one.flac")], next_offset: body.offset ? null : 1 });
     }));
     render(<YandexDiskPicker mode="source-folder" csrf="csrf" onCsrf={() => {}} onFinish={selected} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Выбрать эту папку" }));
+    const choose = screen.getByRole("button", { name: "Выбрать эту папку" });
+    await waitFor(() => expect(choose).toBeEnabled());
+    fireEvent.click(choose);
     await waitFor(() => expect(selected).toHaveBeenCalled());
     expect(selected.mock.calls[0][0].resources.map((item: { name: string }) => item.name)).toEqual(["one.flac", "two.flac"]);
     expect(seen).toEqual(["disk:/", "disk:/one.flac", "disk:/two.flac"]);
@@ -75,6 +80,7 @@ describe("Disk picker", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
     const selected = vi.fn();
     render(<YandexDiskPicker mode="sources" csrf="csrf" onCsrf={() => {}} onFinish={selected} />);
+    expect(screen.getByRole("button", { name: "Выбрать файлы (0)" })).toBeDisabled();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(selected).toHaveBeenCalledWith(null);
   });
