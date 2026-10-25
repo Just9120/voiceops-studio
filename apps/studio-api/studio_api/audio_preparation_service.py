@@ -597,7 +597,7 @@ def _locked_leased_job(db: Session, job_id: str, owner: str, generation: int) ->
 def _source_available(source: Source, *, project_id: str, now: datetime) -> bool:
     return bool(
         source.project_id == project_id
-        and source.source_type in {SourceType.local_upload, SourceType.google_drive}
+        and source.source_type in {SourceType.local_upload, SourceType.google_drive, SourceType.yandex_disk}
         and source.upload_status is SourceUploadStatus.uploaded
         and source.deleted_at is None
         and not is_source_expired(source.expires_at, now)

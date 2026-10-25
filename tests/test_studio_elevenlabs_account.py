@@ -549,7 +549,7 @@ def test_provider_account_snapshot_migration_is_additive_direct_successor():
     from alembic.script import ScriptDirectory
 
     scripts = ScriptDirectory.from_config(Config("apps/studio-api/alembic.ini"))
-    assert scripts.get_heads() == ["0042_totp_replay"]
+    assert scripts.get_heads() == ["0043_yandex_disk"]
     revision = scripts.get_revision("0031_provider_account_snapshots")
     assert revision is not None
     assert revision.down_revision == "0030_provider_usage_accounting"

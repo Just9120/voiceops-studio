@@ -60,6 +60,8 @@ GRANT SELECT ON TABLE
     provider_credential_versions,
     provider_account_snapshots,
     google_connections,
+    yandex_disk_connections,
+    yandex_disk_resources,
     projects,
     sources,
     transcription_jobs,
@@ -114,6 +116,7 @@ GRANT UPDATE ON TABLE
 TO studio_worker;
 
 GRANT INSERT ON TABLE
+    yandex_disk_resources,
     sources,
     transcription_job_outputs,
     transcript_catalog_entries,
@@ -136,5 +139,8 @@ GRANT DELETE ON TABLE
     transcription_provider_part_checkpoints,
     realtime_transcript_drafts
 TO studio_worker;
+
+GRANT UPDATE (token_ciphertext, token_nonce, key_id, credential_revision, updated_at)
+ON TABLE yandex_disk_connections TO studio_worker;
 
 COMMIT;

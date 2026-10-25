@@ -243,14 +243,15 @@ def test_download_rendering_keeps_input_until_its_active_lease_expires(sqlite_db
     assert source.upload_status == m.SourceUploadStatus.expired
 
 
-def test_google_drive_source_deletion_is_logical_and_not_applicable(sqlite_db):
+@pytest.mark.parametrize("source_kind", ["google_drive", "yandex_disk"])
+def test_external_source_deletion_is_logical_and_not_applicable(sqlite_db, source_kind):
     from studio_api.source_deletion import request_source_deletion
 
     m, user, project = _owner_project(sqlite_db)
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     src = m.Source(
         project_id=project.id,
-        source_type=m.SourceType.google_drive,
+        source_type=m.SourceType(source_kind),
         original_filename="drive.mp3",
         drive_file_id="drive-file",
         drive_file_url="https://drive.google.com/file/d/drive-file/view",

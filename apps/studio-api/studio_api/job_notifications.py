@@ -494,6 +494,9 @@ def _send_telegram(
         return False, "configuration_unavailable"
     payload = _notification_payload(claim)
     text = f"VoiceOps Studio\n{payload['title']}\n{payload['body']}"
+    # Owner-approved public entrypoint only; never include job/file identifiers.
+    if getattr(settings, "app_origin", "").rstrip("/") == "https://studio.cloud-nodes.net":
+        text += "\nhttps://studio.cloud-nodes.net/transcriptions"
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     body = {"chat_id": chat_id, "text": text}
     timeout = float(settings.job_telegram_timeout_seconds)

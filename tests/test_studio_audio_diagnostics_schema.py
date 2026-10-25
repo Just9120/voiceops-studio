@@ -49,7 +49,7 @@ def test_additive_audio_diagnostics_migration_preserves_legacy_events(monkeypatc
     cfg.set_main_option("script_location", str(ROOT / "apps/studio-api/alembic"))
     scripts = ScriptDirectory.from_config(cfg)
     revision = scripts.get_revision("0039_audio_diagnostics")
-    assert scripts.get_heads() == ["0042_totp_replay"]
+    assert scripts.get_heads() == ["0043_yandex_disk"]
     assert revision.down_revision == "0038_trusted_devices"
     assert revision.module.release_safety == "additive"
     engine = create_engine("sqlite+pysqlite:///:memory:")

@@ -28,6 +28,7 @@ SECRET_FILES = {
         "studio_audio_reference_s3_secret_access_key"
     ),
     "STUDIO_GOOGLE_OAUTH_CLIENT_SECRET_FILE": "studio_google_oauth_client_secret",
+    "STUDIO_YANDEX_DISK_OAUTH_CLIENT_SECRET_FILE": "studio_yandex_disk_oauth_client_secret",
     "STUDIO_GOOGLE_MAINTENANCE_OAUTH_CLIENT_SECRET_FILE": (
         "studio_google_maintenance_oauth_client_secret"
     ),
@@ -48,6 +49,7 @@ MOUNTED_SECRET_RULES: dict[str, tuple[int, int] | None] = {
     "STUDIO_AUDIO_REFERENCE_S3_ACCESS_KEY_ID_FILE": (16, 128),
     "STUDIO_AUDIO_REFERENCE_S3_SECRET_ACCESS_KEY_FILE": (32, 256),
     "STUDIO_GOOGLE_OAUTH_CLIENT_SECRET_FILE": None,
+    "STUDIO_YANDEX_DISK_OAUTH_CLIENT_SECRET_FILE": None,
     "STUDIO_GOOGLE_MAINTENANCE_OAUTH_CLIENT_SECRET_FILE": None,
     "STUDIO_ALERT_TELEGRAM_BOT_TOKEN_FILE": None,
     "STUDIO_ALERT_TELEGRAM_CHAT_ID_FILE": None,

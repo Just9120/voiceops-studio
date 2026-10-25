@@ -130,7 +130,7 @@ def job_fixture(db, *, status=m.JobStatus.failed, attempt_count=1):
 def test_job_notification_migration_is_additive_single_head():
     script = ScriptDirectory.from_config(Config(str(ROOT / "apps/studio-api/alembic.ini")))
     revision = script.get_revision("0035_job_notifications")
-    assert script.get_heads() == ["0042_totp_replay"]
+    assert script.get_heads() == ["0043_yandex_disk"]
     assert revision.down_revision == "0034_personal_security"
     assert revision.module.release_safety == "additive"
     assert {"retry_not_before_at", "automatic_retry_reason"} <= set(
@@ -398,7 +398,7 @@ def test_telegram_transport_covers_success_and_failure_without_job_content(
         delivery_id="delivery",
         claim_token="claim",
         owner_user_id="owner",
-        job_id="job",
+        job_id="private-job-123",
         terminal_status=terminal_status,
         attempt_number=1,
         channel="telegram",
@@ -407,6 +407,7 @@ def test_telegram_transport_covers_success_and_failure_without_job_content(
     transport_settings = SimpleNamespace(
         job_telegram_credentials=lambda: ("12345678901234567890:token", "123"),
         job_telegram_timeout_seconds=5,
+        app_origin="https://studio.cloud-nodes.net/",
     )
 
     assert _send_telegram(claim, settings=transport_settings, post=post) == (
@@ -416,6 +417,8 @@ def test_telegram_transport_covers_success_and_failure_without_job_content(
     assert sent["body"]["chat_id"] == "123"
     assert "Транскрибация" in sent["body"]["text"]
     assert "recording.mp3" not in sent["body"]["text"]
+    assert "private-job-123" not in sent["body"]["text"]
+    assert sent["body"]["text"].endswith("\nhttps://studio.cloud-nodes.net/transcriptions")
 
 
 def test_retired_channels_never_enqueue_even_with_legacy_opt_ins(db):

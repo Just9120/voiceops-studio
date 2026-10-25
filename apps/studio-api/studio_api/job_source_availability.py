@@ -11,6 +11,8 @@ from .google_drive import GOOGLE_FOLDER_MIME_TYPE, GoogleDriveMetadataError, Goo
 from .job_claim_lease import is_lease_active
 from .models import JobStatus, Project, SourceType, SourceUploadStatus, TranscriptionJob, TranscriptionJobSource
 from .security import utcnow
+from .yandex_disk import YandexDiskError
+from .yandex_disk_access import verify_selected_resource
 from .source_policy import is_source_expired, is_supported_source_mime_type, normalize_source_mime_type, validate_source_size
 from .source_storage import (
     get_source_storage,
@@ -109,6 +111,7 @@ def verify_processing_job_sources(
     drive_token_resolver: Callable = refresh_user_google_drive_access_token,
     drive_metadata_fetcher: Callable = fetch_drive_file_metadata,
     now_provider: Callable[[], datetime] | None = None,
+    disk_resource_verifier: Callable = verify_selected_resource,
 ) -> ProcessingSourceAvailabilitySummary:
     job = _load_job(db, job_id)
     initial_reasons = _job_boundary_reasons(job, lease_owner_id, lease_generation, now)
@@ -164,6 +167,20 @@ def verify_processing_job_sources(
                     effective_mime = mime if mime is not None else effective_mime
                     effective_size = size if size is not None else effective_size
                     reasons.extend(more)
+            elif snap["source_type"] == SourceType.yandex_disk.value:
+                try:
+                    resource = disk_resource_verifier(db, owner_user_id=boundary_snapshot.job.owner_user_id,
+                        resource_id=snap["drive_file_id"], settings=settings, is_folder=False)
+                    effective_mime = normalize_source_mime_type(resource.mime_type)
+                    effective_size = resource.size_bytes
+                    if effective_mime != snap["mime_type"]:
+                        reasons.append("source_mime_mismatch")
+                    if effective_size != snap["size_bytes"]:
+                        reasons.append("source_size_mismatch")
+                except YandexDiskError as exc:
+                    reasons.append("yandex_disk_" + exc.reason)
+                finally:
+                    db.rollback()
             else:
                 reasons.append("unsupported_source_type")
         source_summaries.append(_source_summary(snap, effective_mime, effective_size, reasons))
@@ -218,7 +235,7 @@ def _snapshot(job, js):
         reasons.append("source_deleted")
     if src.upload_status != SourceUploadStatus.uploaded:
         reasons.append("source_not_uploaded")
-    if source_type not in {SourceType.local_upload.value, SourceType.google_drive.value}:
+    if source_type not in {SourceType.local_upload.value, SourceType.google_drive.value, SourceType.yandex_disk.value}:
         reasons.append("unsupported_source_type")
     if not is_supported_source_mime_type(mime):
         reasons.append("unsupported_mime_type")

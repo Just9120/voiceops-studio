@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     audio_preparation_max_scratch_bytes: int = Field(default=3221225472, ge=134217728, le=8589934592)
     audio_preparation_max_output_bytes: int = Field(default=2147483647, ge=1, le=2147483647)
     google_oauth_client_id: str | None = None
+    yandex_disk_oauth_client_id: str | None = None
+    yandex_disk_oauth_client_secret_file: str | None = None
     google_oauth_client_secret_file: str | None = None
     google_oauth_redirect_uri: str | None = None
     google_oauth_scopes: str = (

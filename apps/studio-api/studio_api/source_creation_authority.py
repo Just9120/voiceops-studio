@@ -10,6 +10,7 @@ from sqlalchemy import and_
 
 SOURCE_CREATION_PROVENANCES = {
     "google_drive_created_time",
+    "yandex_disk_created_time",
     "embedded_media_metadata",
 }
 

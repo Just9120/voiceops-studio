@@ -151,6 +151,54 @@ def fake_drive_meta(token, drive_file_id):
     return GoogleDriveMetadata(id=drive_file_id, name="meeting.mp3", mime_type="audio/mpeg", size_bytes=100, web_view_link=None, created_time=None, modified_time=None, is_folder=False)
 
 
+@pytest.mark.parametrize("failure", [None, "changed", "cancelled"])
+def test_yandex_source_is_revalidated_streamed_and_controlled(sqlite_session, models, monkeypatch, failure):
+    from studio_api import job_source_materialization as materialization
+    from studio_api.yandex_disk import YandexDiskError, resource_from_payload
+    job, source, relation, _, now, user = make_job(sqlite_session, models,
+        source_type=models.SourceType.yandex_disk)
+    resource = resource_from_payload({"type": "file", "path": "disk:/meeting.mp3",
+        "name": "meeting.mp3", "size": 100, "mime_type": "audio/mpeg"})
+    reads, checks = [], []
+    ticks = iter(range(100))
+    monkeypatch.setattr(materialization, "monotonic", lambda: next(ticks) * 2)
+    def verify(db, **kwargs):
+        assert kwargs["owner_user_id"] == user.id and kwargs["resource_id"] == source.drive_file_id
+        checks.append(kwargs)
+        if failure == "changed" and reads:
+            raise YandexDiskError("resource_changed")
+        return resource
+    class DiskClient:
+        def download_to(self, selected, target, *, maximum_bytes, check):
+            assert selected == resource and maximum_bytes == 1000
+            assert not sqlite_session.in_transaction()
+            reads.append(target)
+            target.write(b"a" * 50)
+            if failure == "cancelled":
+                job.cancel_requested_at = now
+                sqlite_session.commit()
+            check()
+            target.write(b"b" * 50)
+            return 100
+    context = materialization.materialize_processing_job_source(sqlite_session,
+        job_id=job.id, job_source_id=relation.id, lease_owner_id="worker-1", lease_generation=1,
+        settings=SimpleSettings(), now=now, clock=lambda: now,
+        disk_resource_verifier=verify, disk_token_resolver=lambda *a, **kw: "synthetic",
+        disk_client_factory=lambda token: DiskClient(),
+        drive_token_resolver=lambda *a, **kw: pytest.fail("must not use Google"))
+    if failure:
+        expected = "cancellation_requested" if failure == "cancelled" else "external_source_unavailable"
+        with pytest.raises(materialization.SourceMaterializationError, match=expected):
+            with context:
+                pytest.fail("failed download must not reach STT")
+    else:
+        with context as handle:
+            assert handle.stream.read() == b"a" * 50 + b"b" * 50
+            assert handle.source_type == "yandex_disk"
+        assert len(checks) == 3  # Availability, before and after reading.
+    assert reads and reads[0].closed
+
+
 def assert_safe(text):
     for value in ["private/key", "studio-temp", "drive-1", "token-secret", "Authorization", "https://", "source-bytes"]:
         assert value not in text

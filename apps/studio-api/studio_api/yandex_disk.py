@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 import hashlib
 import json
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -42,6 +42,10 @@ def signed_content_url(value: str) -> str:
     if not valid:
         raise YandexDiskError("unsafe_content_url")
     return value
+
+
+def disk_web_url(path: str) -> str:
+    return "https://disk.yandex.ru/client/disk" + quote(normalize_disk_path(path)[5:], safe="/")
 
 
 @dataclass(frozen=True)
@@ -158,9 +162,10 @@ class YandexDiskClient:
                 raise YandexDiskError("resource_changed")
         return parent,rows,(offset+len(rows) if offset+len(rows)<total else None)
 
-    def download_to(self,resource: DiskResource,target,*,maximum_bytes: int) -> int:
+    def download_to(self,resource: DiskResource,target,*,maximum_bytes: int,check=lambda: None) -> int:
         if resource.is_folder or resource.size_bytes is None or resource.size_bytes>maximum_bytes:
             raise YandexDiskError("too_large")
+        check()
         link=self._json("/resources/download",params={"path":resource.path})
         url=signed_content_url(link.get("href"))
         if link.get("method")!="GET":raise YandexDiskError("malformed_response")
@@ -169,6 +174,7 @@ class YandexDiskClient:
             with self._http() as client, client.stream("GET",url,follow_redirects=False) as response:
                 _check_status(response.status_code)
                 for chunk in response.iter_bytes(1024*1024):
+                    check()
                     size+=len(chunk)
                     if size>maximum_bytes or size>resource.size_bytes:raise YandexDiskError("size_mismatch")
                     target.write(chunk);md5.update(chunk);sha.update(chunk)
@@ -176,6 +182,7 @@ class YandexDiskClient:
         except httpx.HTTPError:raise YandexDiskError("unavailable") from None
         if size!=resource.size_bytes or (resource.md5 and md5.hexdigest()!=resource.md5) or (resource.sha256 and sha.hexdigest()!=resource.sha256):
             raise YandexDiskError("integrity_mismatch")
+        check()
         return size
 
     def upload_new(self,path: str,content: bytes) -> DiskResource:

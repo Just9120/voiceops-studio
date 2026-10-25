@@ -1361,7 +1361,7 @@ def validate_job_sources(db: Session, project_id: str, source_ids: list[str], *,
         src=by_id.get(sid)
         if not src or src.deleted_at is not None:
             raise HTTPException(422, "Один или несколько источников недоступны для задания")
-        if src.source_type==SourceType.google_drive:
+        if src.source_type in {SourceType.google_drive, SourceType.yandex_disk}:
             usable=bool(src.drive_file_id) and src.upload_status==SourceUploadStatus.uploaded
         elif src.source_type==SourceType.local_upload:
             usable=src.upload_status==SourceUploadStatus.uploaded and src.s3_object_key is not None
@@ -5075,3 +5075,8 @@ def audit_events(
     rows=query.order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).limit(page_size+1).all()
     rows,next_cursor=page_envelope(rows, page_size=page_size, timestamp_attribute="created_at", secret=sess.csrf_hash, owner_user_id=user.id, surface="audit-events")
     return {"events":[{"id":r.id,"type":r.event_type,"outcome":r.outcome or "legacy_unknown","trace_id":r.trace_id if valid_trace_id(r.trace_id) else None,"metadata":json.loads(r.metadata_json),"created_at":r.created_at.isoformat()} for r in rows], "next_cursor": next_cursor, "page_size": page_size}
+
+
+from .yandex_disk_routes import build_router as build_yandex_disk_router
+app.include_router(build_yandex_disk_router(recent_auth=require_recent_auth, limiter=limiter,
+    project_loader=owned_project_or_404, source_serializer=source_payload))
