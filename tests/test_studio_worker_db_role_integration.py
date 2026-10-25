@@ -77,6 +77,7 @@ case "$query" in
   *"has_schema_privilege"*) printf '%s\n' "${ROLE_TEST_SCHEMA-t}" ;;
   *"alembic_version"*) printf '%s\n' "${ROLE_TEST_REVISION-t}" ;;
   *"SELECT NOT (has_table_privilege"*) printf '%s\n' "${ROLE_TEST_PROHIBITED-t}" ;;
+  *"yandex_disk_connections"*) printf '%s\n' "${ROLE_TEST_DISK-t}" ;;
   *"has_table_privilege"*) printf '%s\n' "${ROLE_TEST_REQUIRED-t}" ;;
   *) exit 99 ;;
 esac
@@ -103,7 +104,8 @@ def test_worker_role_verifier_accepts_postgresql_boolean_output(tmp_path):
     proc, queries = run_verifier(tmp_path)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert proc.stdout.strip() == "STUDIO_WORKER_DB_ROLE_OK"
-    assert len(queries) == 6
+    assert len(queries) == 7
+    assert "has_column_privilege" in queries[-1] and "yandex_disk_connections" in queries[-1]
     assert all(query.startswith("SELECT") for query in queries)
 
 
@@ -129,6 +131,7 @@ def test_worker_role_verifier_stops_on_query_failure(tmp_path):
     ("revision", "worker schema revision read-only privilege invalid", 4),
     ("required", "worker required table privileges missing", 5),
     ("prohibited", "worker prohibited table privileges present", 6),
+    ("disk", "worker Disk privileges invalid", 7),
 ])
 def test_worker_role_verifier_preserves_each_privilege_gate(tmp_path, gate, message, count):
     proc, queries = run_verifier(tmp_path, **{gate: "f"})
@@ -157,7 +160,8 @@ def test_root_verifier_inspects_checkout_as_repository_owner(tmp_path):
 
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert proc.stdout.strip() == "STUDIO_WORKER_DB_ROLE_OK"
-    assert len(queries) == 6
+    assert len(queries) == 7
+    assert "has_column_privilege" in queries[-1] and "yandex_disk_connections" in queries[-1]
 
 
 def test_invalid_repository_owner_blocks_before_database_queries(tmp_path):

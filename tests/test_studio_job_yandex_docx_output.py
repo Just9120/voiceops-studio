@@ -360,3 +360,42 @@ def test_output_and_text_retirement_roll_back_together(db):
     assert db.query(m.TranscriptionJobOutput).count() == 0
     assert operation.result_ciphertext is not None
     assert job.status == m.JobStatus.processing
+
+
+def test_batch_api_preserves_disk_folder_snapshot_and_legacy_google_adapter(db, monkeypatch):
+    from fastapi.testclient import TestClient
+    from studio_api import main
+    from studio_api.job_output_folder_selection import VerifiedOutputFolderSelection
+    from studio_api import yandex_disk_routes
+    owner = m.User(email="batch-owner@example.test")
+    db.add(owner); db.flush()
+    project = m.Project(owner_user_id=owner.id, title="Batch")
+    db.add(project); db.flush()
+    sources = [m.Source(project_id=project.id, source_type=m.SourceType.local_upload,
+        original_filename=f"source-{i}.wav", size_bytes=10, mime_type="audio/wav",
+        upload_status=m.SourceUploadStatus.uploaded, s3_bucket="synthetic", s3_object_key=f"key-{i}") for i in range(2)]
+    db.add_all(sources)
+    credential = m.ProviderCredential(user_id=owner.id, provider=m.CredentialProvider.elevenlabs,
+        label="Synthetic", status=m.CredentialStatus.active)
+    db.add(credential); db.commit()
+    handle = "6f5d76f9-1ced-44a4-abf5-9ff96092687e"
+    monkeypatch.setitem(main.app.dependency_overrides, main.get_db, lambda: db)
+    monkeypatch.setitem(main.app.dependency_overrides, main.require_csrf, lambda: (None, owner))
+    monkeypatch.setattr(main.limiter, "check", lambda *a, **kw: None)
+    monkeypatch.setattr(main, "refreshed_google_drive_access_token", lambda *a: "synthetic")
+    # Existing adapters may return the historical four-field protocol object.
+    monkeypatch.setattr(main, "verify_output_folder_selection", lambda token, fid: SimpleNamespace(
+        id=fid, name="Google", web_view_url="https://drive.google.com/drive/folders/synthetic", verified_at=NOW))
+    monkeypatch.setattr(yandex_disk_routes, "verify_yandex_output_folder", lambda *a, **kw:
+        VerifiedOutputFolderSelection(handle, "Disk", "https://disk.yandex.ru/client/disk/Docs", NOW, provider="yandex_disk"))
+    payload = {"language":"ru", "provider_credential_id":credential.id, "items":[
+        {"source_id":sources[0].id,"output_folder_id":"google-folder","title":"First"},
+        {"source_id":sources[1].id,"output_folder_id":handle,"output_provider":"yandex_disk","title":"Second"}]}
+    url = f"/api/projects/{project.id}/jobs/batch"
+    with TestClient(main.app) as client:
+        response = client.post(url, json=payload, headers={"Idempotency-Key":"synthetic-batch-key"})
+        assert response.status_code == 200, response.text
+        assert [item["output_provider"] for item in response.json()["jobs"]] == ["google_drive","yandex_disk"]
+        assert response.json()["jobs"][1]["output_folder"]["web_view_url"] == "https://disk.yandex.ru/client/disk/Docs"
+        replay = client.post(url, json=payload, headers={"Idempotency-Key":"synthetic-batch-key"})
+        assert replay.status_code == 200 and replay.json()["replayed"]

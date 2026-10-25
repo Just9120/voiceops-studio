@@ -444,8 +444,27 @@ class TranscriptionJob(Base):
 
     def apply_output_folder_snapshot(self, *, folder_id=None, folder_url=None, folder_name=None):
         from .job_output_folder_selection import normalize_drive_id, normalize_drive_url, normalize_optional_name
-        self.output_drive_folder_id = normalize_drive_id(folder_id, "ID папки Google Drive")
-        self.output_drive_folder_url = normalize_drive_url(folder_url)
+        provider = self.output_provider or "google_drive"
+        if provider == "yandex_disk":
+            from fastapi import HTTPException
+            from .job_output_read import normalize_output_web_view_url
+            from .transcript_docx import DOCX_OUTPUT_KIND
+            try:
+                if folder_id is not None and str(uuid.UUID(folder_id)) != folder_id:
+                    raise ValueError()
+            except (ValueError, TypeError, AttributeError):
+                raise HTTPException(422, "Некорректный ID папки Яндекс Диска") from None
+            self.output_drive_folder_id = folder_id
+            self.output_drive_folder_url = normalize_output_web_view_url(folder_url, DOCX_OUTPUT_KIND)
+            if folder_url is not None and self.output_drive_folder_url is None:
+                raise HTTPException(422, "Некорректная ссылка Яндекс Диска")
+        elif provider == "google_drive":
+            self.output_drive_folder_id = normalize_drive_id(folder_id, "ID папки Google Drive")
+            self.output_drive_folder_url = normalize_drive_url(folder_url)
+        else:
+            from fastapi import HTTPException
+            raise HTTPException(422, "Неизвестное хранилище результата")
+        self.output_provider = provider
         self.output_drive_folder_name = normalize_optional_name(folder_name)
         if not self.output_drive_folder_id:
             self.output_drive_folder_url = None

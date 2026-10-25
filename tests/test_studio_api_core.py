@@ -701,6 +701,9 @@ def test_worker_manifest_supports_readiness_with_restricted_postgresql_login(mon
                 # Operational alert evaluation reads the current provider
                 # account snapshot, but never mutates provider accounting.
                 conn.execute(text("SELECT id FROM provider_account_snapshots LIMIT 0"))
+                conn.execute(text("SELECT user_id FROM yandex_disk_connections FOR UPDATE"))
+                conn.execute(text("UPDATE yandex_disk_connections SET token_ciphertext=token_ciphertext WHERE false"))
+                conn.execute(text("SELECT id FROM yandex_disk_resources LIMIT 0"))
                 with pytest.raises(ProgrammingError) as failure:
                     conn.execute(
                         text(
@@ -718,6 +721,10 @@ def test_worker_manifest_supports_readiness_with_restricted_postgresql_login(mon
                     "TRUNCATE alembic_version",
                     "CREATE TABLE public.worker_must_not_create (id integer)",
                     "SELECT * FROM sessions LIMIT 0",
+                    "UPDATE yandex_disk_connections SET account_uid=account_uid",
+                    "UPDATE yandex_disk_connections SET status=status",
+                    "DELETE FROM yandex_disk_connections",
+                    "DELETE FROM yandex_disk_resources",
                 ):
                     with pytest.raises(ProgrammingError) as failure:
                         conn.execute(text(statement))
@@ -727,7 +734,8 @@ def test_worker_manifest_supports_readiness_with_restricted_postgresql_login(mon
             script = (ROOT / "scripts/configure_studio_worker_db_role.sh").read_text(encoding="utf-8")
             queries = [query.replace("${ROLE_NAME}", role_name)
                        for query in re.findall(r'psql_admin -Atqc "([^"]+)"', script)]
-            assert len(queries) == 6
+            assert len(queries) == 7
+            assert "has_column_privilege" in queries[-1] and "yandex_disk_connections" in queries[-1]
             with temp_engine.begin() as conn:
                 assert all(conn.execute(text(query)).scalar_one() is True for query in queries)
                 conn.execute(text(f"REVOKE SELECT ON alembic_version FROM {role_name}"))
@@ -1591,7 +1599,7 @@ def test_elevenlabs_account_routes_are_owner_scoped_no_store_and_never_echo_secr
         json={"provider": "elevenlabs", "label": "Основной", "raw_value": secret},
         headers={"origin": "https://studio.test", "x-csrf-token": owner_csrf},
     )
-    assert created.status_code == 200
+    assert created.status_code == 200, created.text
     credential_id = created.json()["id"]
 
     response = owner.get("/api/provider-accounts/elevenlabs")

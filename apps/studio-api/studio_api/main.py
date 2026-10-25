@@ -1227,7 +1227,7 @@ def revoke_other(
     return {"revoked": revoked}
 
 def project_payload(p: Project):
-    return {"id": p.id, "title": p.title, "description": p.description, "output_provider": p.output_provider, "output_drive_folder_id": p.output_drive_folder_id, "output_drive_folder_url": p.output_drive_folder_url, "output_drive_folder_name": p.output_drive_folder_name, "created_at": p.created_at.isoformat(), "updated_at": p.updated_at.isoformat(), "archived_at": p.archived_at.isoformat() if p.archived_at else None}
+    return {"id": p.id, "title": p.title, "description": p.description, "output_provider": getattr(p,"output_provider","google_drive"), "output_drive_folder_id": p.output_drive_folder_id, "output_drive_folder_url": p.output_drive_folder_url, "output_drive_folder_name": p.output_drive_folder_name, "created_at": p.created_at.isoformat(), "updated_at": p.updated_at.isoformat(), "archived_at": p.archived_at.isoformat() if p.archived_at else None}
 
 def source_payload(s: Source):
     return {**({"prepared_audio": context} if (context := prepared_audio_context_payload(s.prepared_audio_context_json)) else {}), "id": s.id, "project_id": s.project_id, "source_type": s.source_type.value, "original_filename": s.original_filename, "mime_type": s.mime_type, "size_bytes": s.size_bytes, "drive_file_url": s.drive_file_url, "upload_status": s.upload_status.value, "uploaded_at": s.uploaded_at.isoformat() if s.uploaded_at else None, "source_created_at": s.source_created_at.isoformat() if s.source_created_at else None, "source_created_at_provenance": s.source_created_at_provenance, "expires_at": s.expires_at.isoformat() if s.expires_at else None, "deleted_at": s.deleted_at.isoformat() if s.deleted_at else None, "delete_reason": s.delete_reason, "created_at": s.created_at.isoformat(), "updated_at": s.updated_at.isoformat()}
@@ -1313,7 +1313,7 @@ def safe_job_output_folder_payload(job: TranscriptionJob):
     if not job.output_drive_folder_id:
         return None
     try:
-        if job.output_provider == "yandex_disk":
+        if getattr(job,"output_provider","google_drive") == "yandex_disk":
             from .job_output_read import normalize_output_web_view_url
             from .transcript_docx import DOCX_OUTPUT_KIND
             url=normalize_output_web_view_url(job.output_drive_folder_url,DOCX_OUTPUT_KIND)
@@ -1321,7 +1321,7 @@ def safe_job_output_folder_payload(job: TranscriptionJob):
             url=clean_drive_url(job.output_drive_folder_url)
     except HTTPException:
         url=None
-    fallback="Папка Яндекс Диска" if job.output_provider == "yandex_disk" else "Папка Google Drive"
+    fallback="Папка Яндекс Диска" if getattr(job,"output_provider","google_drive") == "yandex_disk" else "Папка Google Drive"
     return {"name": clean_optional_name(job.output_drive_folder_name) or fallback, "web_view_url": url}
 
 def browser_batch_reference(job: TranscriptionJob):
@@ -1338,7 +1338,7 @@ def job_payload(job: TranscriptionJob, include_sources=False):
     media_clip=None if clip_start is None and clip_end is None else {"start_seconds":clip_start,"end_seconds":clip_end}
     terminal_dismissed_at=getattr(job,"terminal_dismissed_at",None)
     attention_resolved_at=getattr(job,"history_attention_resolved_at",None)
-    payload={"id": job.id, "project_id": job.project_id, "status": job.status.value, "title": job.title, "provider": job.provider, "operating_mode": getattr(job,"operating_mode","standard"), "language_mode": browser_language_mode(getattr(job, "language", None)), "diarization_enabled": job_diarization_enabled(getattr(job, "options_json", None)), "media_clip": media_clip, "terminal_dismissed_at": terminal_dismissed_at.isoformat() if terminal_dismissed_at else None, "history_attention_resolved_at": attention_resolved_at.isoformat() if attention_resolved_at else None, "history_attention_resolution": getattr(job,"history_attention_resolution",None), "history_attention_linked_job_id": getattr(job,"history_attention_linked_job_id",None), "source_count": len(job.sources), "created_at": job.created_at.isoformat(), "updated_at": job.updated_at.isoformat(), "cancelled_at": job.cancelled_at.isoformat() if job.cancelled_at else None, "cancel_requested_at": job.cancel_requested_at.isoformat() if job.cancel_requested_at else None, "attempt_count": job.attempt_count or 0, "started_at": job.started_at.isoformat() if job.started_at else None, "finished_at": job.finished_at.isoformat() if job.finished_at else None, "error_code": safe_failure_metadata_value(job.error_code), "error_message": safe_failure_metadata_value(job.error_message), "output_provider": job.output_provider, "output_folder": safe_job_output_folder_payload(job), "speaker_identities": [job_speaker_payload(row) for row in sorted(getattr(job, "speakers", ()), key=lambda row: row.display_ordinal)], "usage_cost": job_usage_cost_payload(job)}
+    payload={"id": job.id, "project_id": job.project_id, "status": job.status.value, "title": job.title, "provider": job.provider, "operating_mode": getattr(job,"operating_mode","standard"), "language_mode": browser_language_mode(getattr(job, "language", None)), "diarization_enabled": job_diarization_enabled(getattr(job, "options_json", None)), "media_clip": media_clip, "terminal_dismissed_at": terminal_dismissed_at.isoformat() if terminal_dismissed_at else None, "history_attention_resolved_at": attention_resolved_at.isoformat() if attention_resolved_at else None, "history_attention_resolution": getattr(job,"history_attention_resolution",None), "history_attention_linked_job_id": getattr(job,"history_attention_linked_job_id",None), "source_count": len(job.sources), "created_at": job.created_at.isoformat(), "updated_at": job.updated_at.isoformat(), "cancelled_at": job.cancelled_at.isoformat() if job.cancelled_at else None, "cancel_requested_at": job.cancel_requested_at.isoformat() if job.cancel_requested_at else None, "attempt_count": job.attempt_count or 0, "started_at": job.started_at.isoformat() if job.started_at else None, "finished_at": job.finished_at.isoformat() if job.finished_at else None, "error_code": safe_failure_metadata_value(job.error_code), "error_message": safe_failure_metadata_value(job.error_message), "output_provider": getattr(job,"output_provider","google_drive"), "output_folder": safe_job_output_folder_payload(job), "speaker_identities": [job_speaker_payload(row) for row in sorted(getattr(job, "speakers", ()), key=lambda row: row.display_ordinal)], "usage_cost": job_usage_cost_payload(job)}
     payload["source_names"]=[entry.source.original_filename for entry in sorted(job.sources, key=lambda item: item.position)[:3]]
     batch=browser_batch_reference(job)
     if batch is not None: payload["batch"]=batch
@@ -2762,7 +2762,9 @@ def create_transcription_jobs_batch(project_id: str, data: TranscriptionJobBatch
                 model=capability.model,
             )
             job=TranscriptionJob(project_id=p.id, owner_user_id=user.id, trace_id=getattr(request.state,"trace_id",None), status=JobStatus.queued, provider=data.provider.value, operating_mode=data.operating_mode.value, provider_credential_id=provider_credential_id, title=title, language=language, options_json=job_options_json, batch_idempotency_key=key, batch_request_hash=request_hash, batch_position=idx, media_clip_start_seconds=media_clip.start_seconds, media_clip_end_seconds=media_clip.end_seconds)
-            job.output_provider=vf.provider
+            job.output_provider=getattr(vf,"provider","google_drive")
+            if job.output_provider != data.items[idx].output_provider:
+                raise HTTPException(409,detail={"reason":"output_provider_conflict"})
             job.apply_output_folder_snapshot(folder_id=vf.id, folder_url=vf.web_view_url, folder_name=vf.name)
             db.add(job); db.flush(); db.add(TranscriptionJobSource(job_id=job.id, source_id=src.id, position=0, status=JobSourceStatus.queued)); jobs.append(job)
         audit(db,"job.batch_created",actor_user_id=user.id,subject_user_id=user.id,project_id=p.id,created_count=len(jobs))
@@ -3920,7 +3922,7 @@ def check_output_reconciliation(job_id: str, request: Request, pair=Depends(requ
     job=owned_job_or_404(db,user,job_id)
     if job.status in {JobStatus.queued, JobStatus.processing}:
         raise HTTPException(409, "Output reconciliation unavailable")
-    if job.output_provider == "yandex_disk":
+    if getattr(job,"output_provider","google_drive") == "yandex_disk":
         from .yandex_output_reconciliation import check_yandex_output_reconciliation
         try:
             result=check_yandex_output_reconciliation(db,owner_user_id=user.id,job_id=job.id,

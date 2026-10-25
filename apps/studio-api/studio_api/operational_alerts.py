@@ -671,7 +671,7 @@ def _telegram_text(claim: DeliveryClaim) -> str:
         "queue_stuck": "очередь обработки не продвигается",
         "provider_unavailable": "STT provider временно недоступен",
         "maintenance_failure": "ошибка обслуживания или очистки",
-        "backup_failure": "резервная копия PostgreSQL отсутствует, просрочена или завершилась ошибкой",
+        "backup_failure": "защищённое резервное копирование PostgreSQL завершилось ошибкой",
         "storage_limit_near": "временное хранилище близко к лимиту",
         "api_limit_near": "API credits близки к лимиту",
         "operator_canary_ok": "проверка контура предупреждений завершена",
