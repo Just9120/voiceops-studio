@@ -532,7 +532,7 @@ nonce verification; performs a real custom-format PostgreSQL dump and restore
 of current-model synthetic data with encrypted Live drafts; and removes only
 its verified containers. Its report includes snapshot age at the synthetic incident, one measured post-snapshot metadata loss, and elapsed time
 to a quarantined restored state. The Linux suite requires this rehearsal;
-unavailable local Docker remains an explicit local limitation, not PASS. The default comparison uses the owner-approved personal targets12h/4h; an explicit diagnostic override must supply both `--rpo-seconds` and `--rto-seconds`. Invalid or one-sided targets fail before container creation. The loss window is measured at the incident, excluding subsequent restore time; an exceeded RPO or already-over-budget quarantine fails. An in-budget quarantine reports full RTO as PENDING, never PASS, because service reactivation is outside that measurement.
+unavailable local Docker remains an explicit local limitation, not PASS. The default synthetic comparison retains the historical12h/4h reference solely as a regression fixture; it is not the current Cloudkeep RPO or production recovery Evidence. Current Cloudkeep RPO is UNSET and RTO4h. An explicit diagnostic override must supply both `--rpo-seconds` and `--rto-seconds`. Invalid or one-sided targets fail before container creation. The loss window is measured at the incident, excluding subsequent restore time; an exceeded RPO or already-over-budget quarantine fails. An in-budget quarantine reports full RTO as PENDING, never PASS, because service reactivation is outside that measurement.
 
 The Linux integration test also checks authenticated application access on the
 restored synthetic target. The Linux host accesses the owned internal bridge
@@ -983,6 +983,38 @@ cross-owner delivery, sensitive payload or any provider/Google call made only
 for notification testing.
 
 ## Provider-neutral STT and Yandex SpeechKit
+
+### Optional personal Yandex Disk
+
+Disk and SpeechKit are separate integrations. Configure `STUDIO_YANDEX_DISK_OAUTH_CLIENT_ID`
+and `STUDIO_YANDEX_DISK_OAUTH_CLIENT_SECRET_FILE` for both API and worker. The secret is a
+root-owned regular0600 file outside the checkout; Compose mounts it read-only and the
+reviewed bootstrap copies it into the existing private runtime tmpfs. The callback is
+`STUDIO_APP_ORIGIN` plus `/api/yandex/oauth/callback`; the exact grant is
+`cloud_api:disk.read cloud_api:disk.write cloud_api:disk.info`. Do not request basic
+profile/email scopes, reuse Cloudkeep credentials or put tokens in browser storage.
+
+Schema0043 adds owner/account/version resource handles, encrypted Disk credentials,
+provider-bound destinations and immutable DOCX receipts. Apply it through the existing
+protected migration lane and re-apply/verify runtime roles before the compatible worker.
+Downgrade fails closed when Disk data exists. Historical Google destination defaults and
+field names stay compatible; an old worker must remain stopped after this migration.
+
+Settings starts a session-bound one-use PKCE flow. The owner must finish consent in the
+same browser; disconnect erases local tokens before attempting remote revocation and
+reports unconfirmed revocation honestly. Reconnect does not require prior disconnect.
+Source removal affects only Studio metadata. The picker reads current-folder pages,
+including empty folders; ordinary output is DOCX, prepared-audio output remains Google
+Drive/download under its separate contract.
+
+Before external output creation the worker commits the exact path, content hash/size
+and opaque receipt. Creation never overwrites. Recovery accepts only exact content
+proof; modified files conflict, missing permissions/network never prove absence.
+After confirmed absence, explicit retry restores cached text without another STT call.
+Quota/access errors retain that text; successful full-document persistence or explicit
+terminal cancellation retires only temporary text atomically, preserving history/usage.
+No historical sweep is part of rollout. A real Disk smoke must use marked synthetic
+objects and verify cleanup; it must not start paid recognition or modify owner documents.
 
 Migration `0036_stt_multiprovider` adds the explicit batch operating mode,
 owner dictionaries, durable Yandex operation authority and provider/mode

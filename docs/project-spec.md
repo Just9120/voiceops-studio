@@ -14,6 +14,8 @@ Canonical требования и атомарные AC — здесь и в и�
 
 Согласованный Google Doc ID `1uaYvnqpbns_iyHTtQDZYjNYygT4ikUhmhuhRDWySrzI` повторно прочитан полностью 2026-10-10; содержание и 308 пунктов не изменились с аудита 2026-10-04, modifiedTime `2026-09-27T19:48:44.099Z`, 308 пунктов Q001..Q308. [Source trace](spec/source-trace.md) сохраняет все пункты, актуальные AC/constraints и исторические S-ID. Прежняя revision 2026-09-05 содержала 289 пунктов; перенос её процентов без сверки недопустим. Неповторённые старые AC сохранены, явно изменённые — обновлены либо SUPERSEDED со связями. Последующие решения PWA update prompt, document-based retry и trusted device30 days остаются обязательными.
 
+Решения25Oct2026 синхронизированы scoped native Google Doc edits с requiredRevisionId/readback: voice identity исключена, task notifications только Telegram, personal recovery через authorized VPS console, регулярные backups через Cloudkeep; RPO новой цепочки UNSET, RTO4h сохранён. System mail F66 и lecture/cleaned procedure F62 отложены. Stable IDs/отменённые критерии не удаляются.
+
 ## Бизнес-правила и интерфейсы/данные
 
 1. Навигация: обзор, подготовка аудио, транскрибации, настройки. Отдельной пользовательской сущности Project нет; технический legacy Project ID не создаёт продуктового обязательства.
@@ -44,13 +46,13 @@ READY = исполняемый код и подходящие автоматич
 
 Решение владельца17Oct2026: canonical Studio hostname меняется с `studio.librechat.online` на `studio.cloud-nodes.net`, VPS и Google-проект сохраняются. Это смена deployment configuration, без миграции пользовательских данных/новых продуктовых AC. Cookie sessions, доверие браузеру, локальные drafts и installed PWA между origins автоматически не переносятся. Процедура, external preconditions и recovery — [domain cutover](runbooks/studio-platform-ops.md#studio-domain-cutover-domain-studio-20261017); фактическое выполнение — в плане/первичных delivery records.
 
-Яндекс Disk export/permissions зависят от отдельного adapter; timed Live exports — от сегментной модели и provider corrections. Изменение retention требует совместимой миграции existing drafts/checkpoints и recovery, а не очистки пользовательского текста. Утверждения runtime требуют primary deployment records и versioned smoke.
+Яндекс Disk использует отдельное owner-scoped OAuth подключение и DOCX export с persisted receipt; timed Live exports — от сегментной модели и provider corrections. Изменение retention требует совместимой миграции existing drafts/checkpoints и recovery, а не очистки пользовательского текста. Утверждения runtime требуют primary deployment records и versioned smoke.
 
 ## Owner-triggered процедуры и открытые вопросы
 
 - CONSTRAINT-LECTURE-AUDIT (Q301..306): по команде владельца через существующий Google Drive connector и модель по подписке сопоставить лекции с полными документами по source/result evidence (имени недостаточно), проверить качество/пропуски/термины и при доступном инструменте аудио, выдать ссылки, охват проверки и действия. Изменение документов и платный повтор согласуются отдельно. Это внешняя процедура, не автоматически запускаемый код Studio/LLM API/MCP feature; без поручения аудит лекций не выполняется и в code readiness denominator не входит.
 - CONSTRAINT-CLEANED-EXPERIMENT (Q307..308): сравнение обычного/очищенного Eleven Labs на одинаковых коротких lecture/call fragments со смыслом/терминами/отрицаниями/повторами; выбор feature только после результатов и решения владельца. Default normal unchanged, никакого paid experiment в текущем AUDIT. Не включать будущую feature до решения.
-- Automatic voice identity отложена Q009/Q089..092. Обычная пронумерованная diarization обязательна; manual identity code сохраняется без обязательства развивать voiceprints.
+- Automatic voice identity исключена владельцем25Oct2026: Q009/Q089..092 и VID сохраняются как историческая трассировка SUPERSEDED. Обычная пронумерованная diarization и manual names/roles сохраняются; matcher/voiceprints не требуются.
 - Cloudflare Zero Trust — optional дополнительный слой, без обязательного deliverable. Commercial tariff/legal/provider решения не выдумываются; открытые поля UNSET в соответствующем spec.
 - Требования содержат action/observable result/validation в соответствующих AC. Числовые SLO/coverage target не заданы. Отсутствующий runtime доступ/faithful fixture — Evidence gap, а не отмена требования.
 

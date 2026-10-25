@@ -205,7 +205,7 @@
 | `PM-02` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `PM-03` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `PM-04` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
-| `PM-05` | IN_PROGRESS | ◐ | ◐ | ✅ | A20261010-CODE/CI; full Google Doc и failed-export guards реализованы; unfinished text до документа/cancel подтверждён PR326. Optional DOCX destination на Яндекс Диске отсутствует (F02); прежний TTL finding F01 закрыт. |
+| `PM-05` | READY | ✅ | ✅ | PENDING | PERSONAL-INTEGRATIONS-20261025 candidate23e796f/f65c342: owner/session/PKCE OAuth, encrypted refresh/revoke, account/version handles, paginated file/folder/empty selection, folder-only filter, source/audio intake, deterministic DOCX receipt/create-only/readback и cache-only recovery. Local focused backend245/115 и UI94 + App5 PASS; группы пересекаются. Browser layout3 PASS390/768/1280px, synthetic API. Current Linux PG/CI и exact-main CD PENDING; реальный Disk grant ещё не проверен, paid STT не выполнялся. После подтверждённого полного DOCX временный Yandex text очищается атомарно с output; при rollback или export failure сохраняется. Отдельное разрешение владельца25Oct2026; без historical sweep. |
 | `PM-06` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `PM-07` | READY | ✅ | ✅ | ✅ | PR #313–#316 поставлены; последний merge `3902b2a`, main CI 36285760379/36285760427 и web/API CD 36285760435 PASS. Принятый связанный catalog-result блокирует подтверждение отсутствия; private replay исходного файла не проверен. |
 
@@ -355,7 +355,7 @@
 | `STTPRO-02` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `STTPRO-03` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `STTPRO-04` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
-| `STTPRO-05` | READY | ✅ | ✅ | PENDING | F05 code7151628: truthful Yandex REAL_TIME catalog/selection, existing wire labeling disabled; batch/ElevenLabs unchanged. Local193 focused checks PASS24Oct; required API/CI and delivery PENDING, no paid provider call. |
+| `STTPRO-05` | READY | ✅ | ✅ | ✅ | PR341/mainb323cfd; CI40080175294/API40080899685/worker40081158508 SUCCESS, primary readback25Oct. REAL_TIME catalog/selection diarization=false; disabled wire labels retained, FULL_DATA batch remains capable. Synthetic catalog/relay checks PASS; paid runtime disabled unchanged. |
 | `STTPRO-06` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `STTPRO-07` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `STTPRO-08` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
@@ -370,11 +370,11 @@
 
 | AC | Состояние | CODE | TEST | CI | Остаток / Evidence |
 | --- | --- | --- | --- | --- | --- |
-| `YANDEX-01` | READY | ✅ | ✅ | PENDING | F04 code854c0d7: standard/deferred official-shape REST timing/channel/probability, durable operation and encrypted completed-result reload without resubmit; malformed bounds normalized. Local193 focused checks PASS24Oct; required Linux/API CI and delivery PENDING. No real Yandex call. |
-| `YANDEX-02` | READY | ✅ | ✅ | PENDING | F04 code854c0d7: standard/deferred official-shape REST timing/channel/probability, durable operation and encrypted completed-result reload without resubmit; malformed bounds normalized. Local193 focused checks PASS24Oct; required Linux/API CI and delivery PENDING. No real Yandex call. |
+| `YANDEX-01` | READY | ✅ | ✅ | ✅ | PR341 merged24Oct/mainb323cfd799a5be6a8ac44efa3971faf31eabf1af; current PR CI40080175294, API40080899685, worker40081158508 SUCCESS (readback25Oct). Official int64 strings/channel/probability/finalRefinement и durable encrypted terminal reload подтверждены193 focused checks. Real paid Yandex canary не выполнялся. |
+| `YANDEX-02` | READY | ✅ | ✅ | ✅ | PR341 merged24Oct/mainb323cfd799a5be6a8ac44efa3971faf31eabf1af; current PR CI40080175294, API40080899685, worker40081158508 SUCCESS (readback25Oct). Official int64 strings/channel/probability/finalRefinement и durable encrypted terminal reload подтверждены193 focused checks. Real paid Yandex canary не выполнялся. |
 | `YANDEX-03` | READY | ✅ | ✅ | ✅ | REAL_TIME relay с отключённым speaker labeling, single-use capability, indexed finals/refinements и bounded reconnect/replay реализованы; tests/test_studio_yandex_transcription.py и exact-main CI37502013651 PASS. F05 сохраняется для неверного capability diarization, не для самой realtime transcription. Реальный Yandex runtime disabled, paid canary не выполнялся. |
 | `YANDEX-04` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
-| `YANDEX-05` | READY | ✅ | ✅ | PENDING | F04 code854c0d7: standard/deferred official-shape REST timing/channel/probability, durable operation and encrypted completed-result reload without resubmit; malformed bounds normalized. Local193 focused checks PASS24Oct; required Linux/API CI and delivery PENDING. No real Yandex call. |
+| `YANDEX-05` | READY | ✅ | ✅ | ✅ | PR341 merged24Oct/mainb323cfd799a5be6a8ac44efa3971faf31eabf1af; current PR CI40080175294, API40080899685, worker40081158508 SUCCESS (readback25Oct). Official int64 strings/channel/probability/finalRefinement и durable encrypted terminal reload подтверждены193 focused checks. Real paid Yandex canary не выполнялся. |
 
 ### `PWA-DICTIONARIES-01`
 
@@ -486,7 +486,7 @@
 | `OBSERV-15` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `OBSERV-16` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `OBSERV-17` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
-| `OBSERV-18` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
+| `OBSERV-18` | READY | ✅ | ✅ | PENDING | PERSONAL-INTEGRATIONS candidate4594f6: latest actual failed ops.postgres_backup outcome сохраняет alert, missing/stale legacy12h не считается ошибкой Cloudkeep или green external health. Focused32 alert/recovery PASS; текущие CI/CD PENDING. |
 | `OBSERV-19` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `OBSERV-20` | READY | ✅ | ✅ | ✅ | F47 code READY #320/a666df1: HTTP/WS query redaction и exact nginx access_log off; main CI 37155276745 PASS, API CD 37155276752 PASS. Protected nginx delivery не завершён: run 37156564109 host verification FAIL; см. F55. |
 | `OBSERV-21` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
