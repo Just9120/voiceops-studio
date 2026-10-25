@@ -473,6 +473,7 @@
   overflow-y: auto;
 }
 .yandex-disk-picker-content .google-drive-folder-row { justify-content: flex-start; }
+.yandex-disk-picker-content { padding: 6px; }
 .yandex-disk-picker-content .google-drive-folder-row > span:first-child { flex: 0 0 auto; }
 .yandex-disk-picker-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .yandex-disk-picker-dialog > footer {
