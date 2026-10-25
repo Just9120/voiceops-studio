@@ -317,6 +317,9 @@ def test_migration_widens_legacy_authority_and_empty_schema_roundtrips(db):
             revision.module.creation_authority_constraint(connection, include_yandex=False)
             for table in ["projects", "transcription_jobs"]:
                 revision.module.op.drop_column(table, "output_provider")
+            for name in ("expected_output_provider", "expected_docx_path", "expected_document_sha256",
+                         "expected_document_md5", "expected_document_size_bytes"):
+                revision.module.op.drop_column("transcription_output_reconciliations", name)
             revision.module.op.drop_table("yandex_disk_resources")
             revision.module.op.drop_table("yandex_disk_connections")
             revision.module.upgrade()

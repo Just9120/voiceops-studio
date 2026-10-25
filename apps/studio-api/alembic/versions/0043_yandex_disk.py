@@ -58,6 +58,16 @@ def upgrade():
     for table in ["projects","transcription_jobs"]:
         if "output_provider" not in {c["name"] for c in sa.inspect(bind).get_columns(table)}:
             op.add_column(table,sa.Column("output_provider",sa.String(32),nullable=False,server_default="google_drive"))
+    columns = {c["name"] for c in sa.inspect(bind).get_columns("transcription_output_reconciliations")}
+    for column in (
+        sa.Column("expected_output_provider", sa.String(32), nullable=False, server_default="google_drive"),
+        sa.Column("expected_docx_path", sa.Text(), nullable=True),
+        sa.Column("expected_document_sha256", sa.String(64), nullable=True),
+        sa.Column("expected_document_md5", sa.String(32), nullable=True),
+        sa.Column("expected_document_size_bytes", sa.BigInteger(), nullable=True),
+    ):
+        if column.name not in columns:
+            op.add_column("transcription_output_reconciliations", column)
 
 
 def downgrade():
@@ -73,7 +83,15 @@ def downgrade():
         raise RuntimeError("Yandex sources prevent downgrade")
     if bind.execute(sa.text("SELECT count(*) FROM sources WHERE source_created_at_provenance = 'yandex_disk_created_time'")).scalar():
         raise RuntimeError("Yandex source authority prevents downgrade")
+    if bind.execute(sa.text("SELECT count(*) FROM transcription_output_reconciliations "
+                            "WHERE expected_output_provider <> 'google_drive' OR expected_docx_path IS NOT NULL "
+                            "OR expected_document_sha256 IS NOT NULL OR expected_document_md5 IS NOT NULL "
+                            "OR expected_document_size_bytes IS NOT NULL")).scalar():
+        raise RuntimeError("Yandex output receipts prevent downgrade")
     creation_authority_constraint(bind, include_yandex=False)
+    for name in ("expected_output_provider", "expected_docx_path", "expected_document_sha256",
+                 "expected_document_md5", "expected_document_size_bytes"):
+        op.drop_column("transcription_output_reconciliations", name)
     for table in ["projects","transcription_jobs"]:op.drop_column(table,"output_provider")
     op.drop_table("yandex_disk_resources")
     op.drop_table("yandex_disk_connections")
