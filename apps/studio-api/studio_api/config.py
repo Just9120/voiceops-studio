@@ -159,6 +159,7 @@ class Settings(BaseSettings):
     security_email_enabled: bool = False
     security_email_sender_domain: str | None = None
     job_telegram_enabled: bool = False
+    job_telegram_owner_user_id: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
     job_telegram_bot_token_file: str | None = None
     job_telegram_chat_id_file: str | None = None
     job_telegram_timeout_seconds: int = Field(default=5, ge=1, le=15)
@@ -182,7 +183,7 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("job_smtp_from_email", "backup_monitor_owner_user_id", mode="before")
+    @field_validator("job_smtp_from_email", "backup_monitor_owner_user_id", "job_telegram_owner_user_id", mode="before")
     @classmethod
     def normalize_optional_email(cls, value):
         if isinstance(value, str) and not value.strip():

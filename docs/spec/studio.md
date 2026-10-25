@@ -481,12 +481,12 @@ Q009,Q089..092: отложено до отдельного решения вла
 
 | AC | Проверяемое требование |
 |---|---|
-| `JOBNOT-01` | Web Push уведомляет об успешном завершении. |
-| `JOBNOT-02` | Web Push уведомляет о terminal error. |
-| `JOBNOT-03` | Email уведомляет об успешном завершении. |
-| `JOBNOT-04` | Email уведомляет о terminal error. |
-| `JOBNOT-05` | Telegram может уведомлять об успешном завершении. |
-| `JOBNOT-06` | Telegram может уведомлять о terminal error. |
+| `JOBNOT-01` | **SUPERSEDED: требование отменено владельцем25Oct2026, вне denominator.** Web Push об успехе не требуется; вместо него JOBNOT-05. |
+| `JOBNOT-02` | **SUPERSEDED: требование отменено владельцем25Oct2026, вне denominator.** Web Push об ошибке не требуется; вместо него JOBNOT-06. |
+| `JOBNOT-03` | **SUPERSEDED: требование отменено владельцем25Oct2026, вне denominator.** Email об успехе не требуется; вместо него JOBNOT-05. |
+| `JOBNOT-04` | **SUPERSEDED: требование отменено владельцем25Oct2026, вне denominator.** Email об ошибке не требуется; вместо него JOBNOT-06. |
+| `JOBNOT-05` | После явного opt-in настроенный Telegram-бот уведомляет об успешном завершении. Получатель привязан к конкретному owner; другой/disabled owner не может использовать этот chat. Повторные intent/claim не создают дублей; внешняя доставка at-least-once при потерянном ACK. Проверка: owner/opt-out, durable retry, positive message ACK, безопасный payload и разрешённая реальная доставка после настройки. |
+| `JOBNOT-06` | Telegram уведомляет о terminal error; автоматический retry подавляет устаревшее сообщение предыдущей попытки. Ошибка Telegram не отменяет обработку и не скрывает готовый результат. Проверка: terminal/retry races, claim fences/backoff, malformed/negative ACK и ошибочный получатель без отправки. |
 
 Проверка AC этого эпика: Unit/component/contract проверки позитивного и негативного сценария, owner isolation и повторов; browser проверяет пользовательский результат; внешние side effects и recovery — отдельный разрешённый сценарий точной версии. Конкретные существующие suites и незакрытые gaps — в [delivery dashboard](../delivery-plan.md). Наличие suite не подтверждает её полноту.
 

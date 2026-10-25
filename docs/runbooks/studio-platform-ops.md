@@ -937,11 +937,13 @@ secret or role stops dependent activation without blocking unrelated UI fixes.
 ## Automatic retry and owner job notifications
 
 Migration `0035_job_notifications` adds the automatic-retry schedule, explicit
-owner channel preferences, encrypted Web Push subscriptions and a durable
-terminal-delivery outbox. Every channel is disabled by default. A completed or
-failed job creates delivery rows only for channels the owner already enabled;
+owner channel preferences, historical encrypted Web Push subscriptions and a durable
+terminal-delivery outbox. From25Oct2026 only Telegram task notifications are supported;
+email/Web Push activation is rejected and legacy preferences cannot enqueue sends.
+The historical tables/DTO keys remain compatible during rolling delivery. A completed or
+failed job creates Telegram delivery rows only when the owner already enabled it;
 retry/recovery suppresses obsolete pending rows before a new attempt. Claim and
-completion use separate transactions, so SMTP, Web Push and Telegram network
+completion use separate transactions, so Telegram network
 I/O never holds a database transaction. Stale claims, retry attempts and
 backoff are bounded; transport bodies, provider URLs, transcript text,
 filenames, document IDs and credentials are not persisted in delivery status.
@@ -956,27 +958,23 @@ timeout/unavailability, partial/returned result, Google handoff or output
 reconciliation uncertainty stays terminal and requires the existing explicit
 owner recovery flow. Never requeue such a job with direct SQL.
 
-To activate Web Push, generate one VAPID key pair outside the repository and
-store only the private key in a distinct operator-managed root-owned `0600`
-file. Set `STUDIO_JOB_WEB_PUSH_ENABLED=true`, the public key and a `mailto:` or
-HTTPS subject in the host `.env`, and set
-`STUDIO_JOB_WEB_PUSH_VAPID_PRIVATE_KEY_FILE` to that file. Do not reuse a
-Google, R2, database or provider credential. The browser still requires an
-explicit permission grant and creates an encrypted owner-scoped subscription;
-server configuration alone does not opt the owner in.
-
-Email uses `STUDIO_JOB_EMAIL_ENABLED=true`, SMTP host/port, a validated From
-address and exactly one TLS mode. When SMTP authentication is required, place
-the password in the distinct `STUDIO_JOB_SMTP_PASSWORD_FILE`; never place it in
-`.env`. Telegram job notifications are separate from operational alerts and
-use their own bot-token/chat-ID files with
-`STUDIO_JOB_TELEGRAM_ENABLED=true`. Do not reuse the operational-alert bot
-credentials implicitly. The owner must enable email or Telegram separately in
-Settings even after the transport is configured.
+Telegram job notifications are separate from operational alerts and use their
+own bot-token/chat-ID files with `STUDIO_JOB_TELEGRAM_ENABLED=true`. Configure
+`STUDIO_JOB_TELEGRAM_OWNER_USER_ID` to the exact existing personal owner UUID;
+other/disabled owners cannot opt in or claim deliveries for that configured chat.
+Keep the token and exact selected chat ID in separate operator-managed secret
+files referenced by `STUDIO_JOB_TELEGRAM_BOT_TOKEN_FILE` and
+`STUDIO_JOB_TELEGRAM_CHAT_ID_FILE`; never put the token in `.env` or chat/logs.
+The recipient must first start the owner-selected bot. Do not reuse an alert
+bot or another project's credentials implicitly. Both API and worker need the
+same owner/configuration, and Settings still requires the owner's explicit opt-in.
+The transport requires Telegram's positive message acknowledgment rather than
+HTTP200 alone. Outbox rows/claims are deduplicated; a lost network acknowledgment
+can still make a bounded retry send a duplicate externally (at-least-once transport).
 
 Safe rollout order is: reviewed additive migration and grant re-apply/verify →
 API/web deployment → stopped-worker configuration and role verification →
-worker deployment/status. With all three transports disabled, bounded LIVE may
+worker deployment/status. With Telegram disabled, bounded LIVE may
 verify schema, API preferences, service-worker assets, worker health and zero
 external sends. Enabling a transport or sending a real notification requires
 separate action-time owner authorization. Stop on an unexpected enabled

@@ -429,10 +429,10 @@
 
 | AC | Состояние | CODE | TEST | CI | Остаток / Evidence |
 | --- | --- | --- | --- | --- | --- |
-| `JOBNOT-01` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
-| `JOBNOT-02` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
-| `JOBNOT-03` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
-| `JOBNOT-04` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
+| `JOBNOT-01` | SUPERSEDED | — | — | — | Требование отменено владельцем25Oct2026; task notifications только Telegram JOBNOT-05/06. ID/история сохранены, вне denominator. |
+| `JOBNOT-02` | SUPERSEDED | — | — | — | Требование отменено владельцем25Oct2026; task notifications только Telegram JOBNOT-05/06. ID/история сохранены, вне denominator. |
+| `JOBNOT-03` | SUPERSEDED | — | — | — | Требование отменено владельцем25Oct2026; task notifications только Telegram JOBNOT-05/06. ID/история сохранены, вне denominator. |
+| `JOBNOT-04` | SUPERSEDED | — | — | — | Требование отменено владельцем25Oct2026; task notifications только Telegram JOBNOT-05/06. ID/история сохранены, вне denominator. |
 | `JOBNOT-05` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `JOBNOT-06` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 

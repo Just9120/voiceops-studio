@@ -26,6 +26,7 @@ from .models import (
     JobStatus,
     TranscriptionJob,
     User,
+    UserStatus,
     UserNotificationPreference,
     WebPushSubscription,
 )
@@ -216,16 +217,8 @@ def ensure_terminal_notification_intents(
     current = _utc_naive(now)
     terminal_status = job.status.value
     destinations: list[tuple[str, str]] = []
-    if preference.web_push_enabled:
-        subscriptions = db.execute(
-            select(WebPushSubscription.id).where(
-                WebPushSubscription.owner_user_id == job.owner_user_id,
-                WebPushSubscription.revoked_at.is_(None),
-            )
-        ).scalars().all()
-        destinations.extend(("web_push", subscription_id) for subscription_id in subscriptions)
-    if preference.email_enabled:
-        destinations.append(("email", "account"))
+    # Retired email/push preferences remain readable for rolling compatibility,
+    # but can never create a new task notification.
     if preference.telegram_enabled:
         destinations.append(("telegram", "configured"))
     created = 0
@@ -283,14 +276,15 @@ def suppress_obsolete_job_notification_intents(
 
 
 def _configured_channels(settings) -> tuple[str, ...]:
-    channels = []
-    if getattr(settings, "job_web_push_configured", lambda: False)():
-        channels.append("web_push")
-    if getattr(settings, "job_email_configured", lambda: False)():
-        channels.append("email")
-    if getattr(settings, "job_telegram_configured", lambda: False)():
-        channels.append("telegram")
-    return tuple(channels)
+    if (getattr(settings, "job_telegram_owner_user_id", None)
+            and getattr(settings, "job_telegram_configured", lambda: False)()):
+        return ("telegram",)
+    return ()
+
+
+def telegram_owner_allowed(settings, owner_user_id: str) -> bool:
+    return (getattr(settings, "job_telegram_owner_user_id", None) == owner_user_id
+            and "telegram" in _configured_channels(settings))
 
 
 def _channel_enabled(preference: UserNotificationPreference, channel: str) -> bool:
@@ -350,26 +344,17 @@ def claim_next_job_notification(
             return None
         job = db.get(TranscriptionJob, row.job_id)
         preference = db.get(UserNotificationPreference, row.owner_user_id)
+        user = db.get(User, row.owner_user_id)
         valid = bool(
             job
             and preference
+            and user and user.status == UserStatus.active
             and job.owner_user_id == row.owner_user_id
             and job.status.value == row.terminal_status
             and int(job.attempt_count or 0) == row.attempt_number
             and _channel_enabled(preference, row.channel)
+            and telegram_owner_allowed(settings, row.owner_user_id)
         )
-        subscription = None
-        user = None
-        if valid and row.channel == "web_push":
-            subscription = db.get(WebPushSubscription, row.destination_id)
-            valid = bool(
-                subscription
-                and subscription.owner_user_id == row.owner_user_id
-                and subscription.revoked_at is None
-            )
-        elif valid and row.channel == "email":
-            user = db.get(User, row.owner_user_id)
-            valid = bool(user and user.email)
         if not valid or (
             row.state == "claimed"
             and row.attempt_count >= settings.job_notification_max_attempts
@@ -399,9 +384,6 @@ def claim_next_job_notification(
             attempt_number=row.attempt_number,
             channel=row.channel,
             destination_id=row.destination_id,
-            recipient_email=user.email if user else None,
-            subscription_ciphertext=bytes(subscription.ciphertext) if subscription else None,
-            subscription_nonce=bytes(subscription.nonce) if subscription else None,
         )
 
 
@@ -522,7 +504,11 @@ def _send_telegram(
             return False, "transport_timeout"
         except OSError:
             return False, "transport_unavailable"
-        return (True, None) if 200 <= int(response.status_code) < 300 else (False, "transport_rejected")
+        try:
+            ack = response.json()
+        except (AttributeError, ValueError, TypeError):
+            return False, "transport_rejected"
+        return (True, None) if 200 <= int(response.status_code) < 300 and _telegram_acknowledged(ack) else (False, "transport_rejected")
     request = Request(
         url,
         data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
@@ -532,6 +518,7 @@ def _send_telegram(
     try:
         with urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed HTTPS origin
             status_code = int(response.status)
+            ack = json.loads(response.read(65537))
     except HTTPError:
         return False, "transport_rejected"
     except (TimeoutError, socket.timeout):
@@ -540,7 +527,15 @@ def _send_telegram(
         return (False, "transport_timeout") if isinstance(exc.reason, (TimeoutError, socket.timeout)) else (False, "transport_unavailable")
     except OSError:
         return False, "transport_unavailable"
-    return (True, None) if 200 <= status_code < 300 else (False, "transport_rejected")
+    except (ValueError, UnicodeError):
+        return False, "transport_rejected"
+    return (True, None) if 200 <= status_code < 300 and _telegram_acknowledged(ack) else (False, "transport_rejected")
+
+
+def _telegram_acknowledged(ack) -> bool:
+    result = ack.get("result") if isinstance(ack, dict) and ack.get("ok") is True else None
+    message_id = result.get("message_id") if isinstance(result, dict) else None
+    return type(message_id) is int and message_id > 0
 
 
 def complete_job_notification(
@@ -615,12 +610,7 @@ def process_one_job_notification(
         claim_db.close()
     if claim is None:
         return False
-    if claim.channel == "web_push":
-        success, error_code = _send_web_push(claim, settings=settings, sender=web_push_sender)
-    elif claim.channel == "email":
-        success, error_code = _send_email(claim, settings=settings, smtp_factory=smtp_factory)
-    else:
-        success, error_code = _send_telegram(claim, settings=settings, post=telegram_post)
+    success, error_code = _send_telegram(claim, settings=settings, post=telegram_post)
     finish_db = session_factory()
     try:
         completed = complete_job_notification(
@@ -662,18 +652,18 @@ def notification_preferences_payload(db: Session, *, owner_user_id: str, setting
     return {
         "channels": {
             "web_push": {
-                "enabled": bool(preference.web_push_enabled),
-                "configured": settings.job_web_push_configured(),
+                "enabled": False,
+                "configured": False,
                 "subscription_count": len(subscription_count),
-                "vapid_public_key": settings.job_web_push_vapid_public_key if settings.job_web_push_configured() else None,
+                "vapid_public_key": None,
             },
             "email": {
-                "enabled": bool(preference.email_enabled),
-                "configured": settings.job_email_configured(),
+                "enabled": False,
+                "configured": False,
             },
             "telegram": {
                 "enabled": bool(preference.telegram_enabled),
-                "configured": settings.job_telegram_configured(),
+                "configured": telegram_owner_allowed(settings, owner_user_id),
             },
         },
         "recent_deliveries": [

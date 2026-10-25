@@ -6,6 +6,8 @@ VoiceOps Studio — PWA подготовки аудио, обычной тран
 
 Решение владельца23Oct2026 `OWNER-REBRAND-20261023`: единый бренд всего проекта — VoiceOps Studio, canonical repository `Just9120/voiceops-studio`; ElevenLabs остаётся названием provider. Отображаемое имя существующего Google Cloud project меняется без смены project/client IDs. Публичные страницы описания и обработки данных отражают personal реализацию и доступны до входа. Stateful deployment identifiers и existing data сохраняются; compatibility/strict CI/CD — часть переименования, а не поручение миграции данных. Проверяемые критерии BRAND-01..05 — в [расширениях](spec/extensions.md#эпик-brand-voiceops-01--единый-бренд-и-публичная-информация).
 
+Решение владельца25Oct2026 `OWNER-PERSONAL-INTEGRATIONS-20261025`: automatic voice identity исключена окончательно; обычная diarization и ручные имена сохраняются. Task notifications — только Telegram, Web Push/email исключены. Personal access/security mail F66 остаётся DEFER, восстановление — через защищённую VPS-процедуру и TOTP recovery codes. Регулярные backups и freshness/target monitoring принадлежат Cloudkeep; Studio сохраняет фактические protected pre-migration backup outcomes. Выбран полный personal Яндекс Диск; commercial и F62 остаются вне этой Goal.
+
 Canonical требования и атомарные AC — здесь и в индексируемых spec; состояния, Evidence, findings и checkpoint — только [delivery-plan](delivery-plan.md). Workflow/полномочия — [AGENTS](../AGENTS.md). Запись requirement/finding не разрешает исполнение.
 
 ## Источники и решения

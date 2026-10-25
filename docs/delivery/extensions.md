@@ -91,11 +91,11 @@
 
 | AC | Состояние | CODE | TEST | CI | Остаток / Evidence |
 | --- | --- | --- | --- | --- | --- |
-| `VID-01` | IN_PROGRESS | ◐ | ◐ | ✅ | F08 |
-| `VID-02` | IN_PROGRESS | ◐ | ◐ | ✅ | F08 |
-| `VID-03` | IN_PROGRESS | ◐ | ◐ | ✅ | F08 |
-| `VID-04` | IN_PROGRESS | ◐ | ◐ | ✅ | F08 |
-| `VID-05` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
+| `VID-01` | SUPERSEDED | — | — | — | Automatic voice identity отменена владельцем25Oct2026; diarization и ручные имена сохраняются. Вне denominator. |
+| `VID-02` | SUPERSEDED | — | — | — | Automatic voice identity отменена владельцем25Oct2026; diarization и ручные имена сохраняются. Вне denominator. |
+| `VID-03` | SUPERSEDED | — | — | — | Automatic voice identity отменена владельцем25Oct2026; diarization и ручные имена сохраняются. Вне denominator. |
+| `VID-04` | SUPERSEDED | — | — | — | Automatic voice identity отменена владельцем25Oct2026; diarization и ручные имена сохраняются. Вне denominator. |
+| `VID-05` | SUPERSEDED | — | — | — | Automatic voice identity отменена владельцем25Oct2026; diarization и ручные имена сохраняются. Вне denominator. |
 
 ### `SECURITY-LIFECYCLE-03`
 

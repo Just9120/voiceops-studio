@@ -1269,9 +1269,9 @@ def test_job_notification_preferences_are_owner_scoped_opt_in_and_fail_closed():
         json={"email_enabled": True},
         headers=headers,
     )
-    assert blocked.status_code == 409
+    assert blocked.status_code == 410
     assert blocked.json() == {
-        "detail": "Email-уведомления пока не настроены администратором"
+        "detail": "Для уведомлений о задачах используется только Telegram"
     }
     assert c.post(
         "/api/notifications/web-push/subscriptions",
@@ -1281,7 +1281,7 @@ def test_job_notification_preferences_are_owner_scoped_opt_in_and_fail_closed():
             "auth": "A" * 20,
         },
         headers=headers,
-    ).status_code == 409
+    ).status_code == 410
 
 
 def test_source_upload_policy_is_authenticated_safe_and_not_cached(monkeypatch):

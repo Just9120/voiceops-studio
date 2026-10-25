@@ -94,7 +94,6 @@ from .job_notifications import (
     notification_preference,
     notification_preferences_payload,
     revoke_web_push_subscription,
-    upsert_web_push_subscription,
 )
 from .google_docs_output import OUTPUT_RECONCILIATION_APP_PROPERTY
 from .google_drive import GoogleDriveReconciliationError, list_reconciliation_candidates
@@ -1091,15 +1090,10 @@ def update_notification_preferences(
 ):
     _,user=pair
     limiter.check("notifications:preferences:update:"+user.id,30,3600)
-    if data.web_push_enabled is True:
-        if not settings.job_web_push_configured():
-            raise HTTPException(409,"Web Push пока не настроен администратором")
-        subscription_count=db.query(WebPushSubscription).filter_by(owner_user_id=user.id,revoked_at=None).count()
-        if subscription_count < 1:
-            raise HTTPException(409,"Сначала разрешите уведомления в этом браузере")
-    if data.email_enabled is True and not settings.job_email_configured():
-        raise HTTPException(409,"Email-уведомления пока не настроены администратором")
-    if data.telegram_enabled is True and not settings.job_telegram_configured():
+    if data.web_push_enabled is True or data.email_enabled is True:
+        raise HTTPException(410,"Для уведомлений о задачах используется только Telegram")
+    from .job_notifications import telegram_owner_allowed
+    if data.telegram_enabled is True and not telegram_owner_allowed(settings, user.id):
         raise HTTPException(409,"Telegram-уведомления пока не настроены администратором")
     preference=notification_preference(db,owner_user_id=user.id)
     changed=[]
@@ -1124,30 +1118,7 @@ def create_web_push_subscription(
 ):
     _,user=pair
     limiter.check("notifications:web-push:subscribe:"+user.id,20,3600)
-    if not settings.job_web_push_configured():
-        raise HTTPException(409,"Web Push пока не настроен администратором")
-    try:
-        subscription=upsert_web_push_subscription(
-            db,
-            owner_user_id=user.id,
-            endpoint=data.endpoint,
-            p256dh=data.p256dh,
-            auth=data.auth,
-            master_key_b64=settings.master_key_b64(),
-            key_id=settings.credential_key_id,
-        )
-    except ValueError as exc:
-        raise HTTPException(422,"Браузер вернул неподдерживаемую подписку") from exc
-    preference=notification_preference(db,owner_user_id=user.id)
-    preference.web_push_enabled=True
-    preference.updated_at=utcnow()
-    audit(db,"notifications.web_push_subscribed",actor_user_id=user.id,subject_user_id=user.id)
-    db.commit()
-    _browser_capability_cache_headers(response)
-    return {
-        "subscription_id":subscription.id,
-        "preferences":notification_preferences_payload(db,owner_user_id=user.id,settings=settings),
-    }
+    raise HTTPException(410,"Для уведомлений о задачах используется только Telegram")
 
 @app.delete("/api/notifications/web-push/subscriptions")
 def delete_web_push_subscriptions(
