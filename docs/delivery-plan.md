@@ -2,6 +2,24 @@
 
 ## Current work и checkpoint
 
+### PERSONAL-INTEGRATIONS-20261025 — IN_PROGRESS
+
+Основание: владелец25Oct2026 согласовал единый scope и один PR с поставкой на Contabo: полный personal Яндекс Диск, Telegram уведомления, адаптация мониторинга Cloudkeep, отмена automatic voice identity и email/Web Push task notifications, документированное восстановление через VPS без почты. F62 и personal security email F66 остаются DEFER; commercial не реализуется. Built-in Goal ACTIVE. Base `815b829e8d51dbea073d62e914887593d64895f6`, clean main/origin main; branch `codex/personal-integrations-20261025`, primary worktree. Strict `ci-required`, admin enforcement, approvals0, open PR0 подтверждены. Unrelated `codex/audio-upload-confirmation` и LOCAL-BACKLOG сохраняются.
+
+Scope/DoD: YD-01..05/07..09 и связанные UXN-04/PM-05 — отдельное owner-scoped подключение Disk, files/folders, DOCX destination, bounded quota/access/revocation handling, безопасный export-only recovery без нового STT и незаметной перезаписи; Telegram JOBNOT-05/06 — owner binding, success/error delivery, дедупликация/retry и отсутствие влияния сбоя канала на результат. OBSERV-18/REC — регулярный backup принадлежит Cloudkeep; отключённый Studio timer не создаёт ложную12h тревогу, неизвестное внешнее evidence не считается success; protected pre-migration R2 snapshot сохраняется. Personal recovery — проверенная процедура администратора VPS без SMTP, без сброса пароля/2FA реального владельца при проверках. Отменённые VID и task Web Push/email AC сохраняют ID/основание исключения из denominator; diarization и ручные имена SP остаются. Актуализировать source trace, процедуры и устаревшие F04/F05/F68 по PR338/341; source Google Doc уже scoped edited25Oct с revision guard/readback, остальные требования сохранены.
+
+Non-goals: F62 lecture/cleaned experiments, paid STT/retries, personal security email F66, commercial, voice matcher, изменение старых транскриптов, перенастройка остальных Cloudkeep jobs/targets и удаление существующих backups. Административное восстановление существующего owner не выполняется. Секреты/пользовательский контент в репозиторий не попадают.
+
+| Validation Plan / риск | Tool / cwd / environment / ожидаемый результат | Этап |
+|---|---|---|
+| Disk OAuth и данные | Root focused synthetic OAuth/client/source/export tests; CSRF/session/state/owner, refresh/revoke, pagination, unsafe URLs, quota/permission/conflict, idempotent retry; без реальных провайдеров | REQUIRED local + Linux CI |
+| UI и notifications | `apps/studio` focused Vitest, lint/typecheck/build; settings/source/destination/error/recovery, Telegram-only configuration и pending states. Root Telegram binding/outbox/worker tests, synthetic transports | REQUIRED local + current CI/browser |
+| Backup/recovery | Root alert/CLI tests: external pending/failure/stale evidence не подменяется green; отключённый legacy timer не создаёт stale alert; pre-migration guards неизменны. Recovery synthetic credentials, session/trust revocation, audit и negative cases | REQUIRED local + Linux CI |
+| Документы/совместимость | Root `python scripts/ci_checks.py`, `git diff --check`, source/spec/plan IDs/relative links и self-review; affected DB/schema/API consumers | REQUIRED before push |
+| Delivery | Current CI/review → merge → applicable exact-main web/API → graceful compatible worker rollout; runtime/config owners, required environment gates, identity/schema/readiness/public health; bounded authorized notification/integration checks | REQUIRED after merge |
+
+Checkpoint25Oct: подготовка. Реализация/локальные проверки ещё PENDING. Следующий шаг — inventory существующих integration/output/notification boundaries, реализация в этой ветке, один PR после полной применимой local validation. Внешние настройки Disk OAuth и bot credentials подтверждаются отдельно до dependent live checks; отсутствие конфигурации не выдаётся за live PASS. Предыдущие pre-merge checkpoints ниже исторические; PR342 API/worker40091778574/40092000906 и main CI40091427515 SUCCESS на815b829 подтверждены.
+
 ### CONCISE-METADATA-20261024 — IN_PROGRESS
 
 Основание: владелец24Oct2026 поручил оставить provider/model/language, остальное только при необходимости, исправить текущие Google Docs и шаблон, сохранить совместимость каталога; один PR и поставка на VPS. Built-in Goal ACTIVE. Base `b323cfd799a5be6a8ac44efa3971faf31eabf1af`, clean main/origin main, branch `codex/concise-transcript-metadata-20261024`; unrelated `codex/audio-upload-confirmation` и LOCAL-BACKLOG сохранены. F04/F05 завершены PR341: CI40080175294/main40080567821, API40080899685, graceful drain40081054570, worker40081158508 SUCCESS; exact b323cfd/schema0042/role/readiness подтверждены. Исторический checkpoint ниже не возобновляется.
