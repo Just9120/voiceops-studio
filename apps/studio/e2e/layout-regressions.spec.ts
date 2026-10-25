@@ -298,7 +298,11 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
     await page.setViewportSize(viewport);
     await fixtures(page);
     const folder = {path:'disk:/', name:'Мой диск', is_folder:true, fingerprint:'f'.repeat(64), mime_type:null, size_bytes:null, modified:null};
-    await page.route('**/api/yandex/resources/list', route => route.fulfill({json:{folder, items:Array.from({length:20},(_,i)=>({...folder,path:`disk:/Folder${i}`,name:`Длинное название папки ${i} ${'результаты '.repeat(12)}`})),next_offset:null}}));
+    await page.route('**/api/yandex/resources/list', route => {
+      const items=[...Array.from({length:20},(_,i)=>({...folder,path:`disk:/Folder${i}`,name:`Длинное название папки ${i} ${'результаты '.repeat(12)}`})),
+        ...(route.request().postDataJSON().folders_only ? [] : [{...folder,path:'disk:/recording.mp4',name:'recording.mp4',is_folder:false,mime_type:'video/mp4',size_bytes:1234}])];
+      return route.fulfill({json:{folder,items,next_offset:null}});
+    });
     await page.route('**/api/yandex/resources/select', route => route.fulfill({json:{...folder,id:'6f5d76f9-1ced-44a4-abf5-9ff96092687e'}}));
     await page.route('**/api/projects/*/output-folders/yandex-disk/verify', route => route.fulfill({json:{name:'Мой диск',web_view_url:'https://disk.yandex.ru/client/disk/',provider:'yandex_disk'}}));
     await page.goto('/transcriptions');
@@ -317,5 +321,28 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
     await expect(page.getByText('Яндекс Диск · DOCX',{exact:false})).toBeVisible();
     await noHorizontalOverflow(page);
     expect(await page.evaluate(()=>Object.values(sessionStorage).some(value=>value.includes('"provider":"yandex_disk"')))).toBe(true);
+    for (const name of ['Из Яндекс Диска','Папка Яндекс Диска','Выбрать папку Яндекс Диска для задачи 1']) {
+      await page.getByRole('button',{name,exact:true}).first().click();
+      const picker=page.locator('.yandex-disk-picker-dialog');
+      await expect(picker.locator('.google-drive-folder-list')).toBeVisible();
+      const footer=picker.locator('footer');
+      await expect(footer.getByRole('button')).toBeInViewport({ratio:1});
+      const geometry=await picker.evaluate(element=>{
+        const rect=(selector:string)=>element.querySelector(selector)!.getBoundingClientRect();
+        const header=rect('header'), toolbar=rect('.yandex-disk-picker-toolbar'), navigation=rect('nav'), body=rect('.yandex-disk-picker-content'), footer=rect('footer');
+        const list=element.querySelector('.yandex-disk-picker-content')!;
+        return {ordered:header.bottom<=toolbar.top+1 && toolbar.bottom<=navigation.top+1 && navigation.bottom<=body.top+1 && body.bottom<=footer.top+1,
+          bodyHeight:body.height,scrollable:list.scrollHeight>list.clientHeight,inside:element.getBoundingClientRect().top>=0 && element.getBoundingClientRect().bottom<=innerHeight+1,
+          noOverflow:element.scrollWidth<=element.clientWidth+1};
+      });
+      expect(geometry).toMatchObject({ordered:true,scrollable:true,inside:true,noOverflow:true});
+      expect(geometry.bodyHeight).toBeGreaterThan(100);
+      const content=picker.locator('.yandex-disk-picker-content');
+      await content.evaluate(element=>{element.scrollTop=element.scrollHeight;});
+      await expect(picker.locator('.google-drive-folder-row').last()).toBeInViewport({ratio:1});
+      await expect(footer.getByRole('button')).toBeInViewport({ratio:1});
+      await page.keyboard.press('Escape');
+      await expect(picker).toHaveCount(0);
+    }
   });
 }
