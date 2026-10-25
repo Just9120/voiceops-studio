@@ -39,7 +39,7 @@ def _run_upgrade(revision, connection) -> None:
 def test_ux_audit_controls_migration_is_additive_single_head():
     script, revision = _revision()
 
-    assert script.get_heads() == ["0042_totp_replay"]
+    assert script.get_heads() == ["0043_yandex_disk"]
     assert revision.down_revision == "0036_stt_multiprovider"
     assert revision.module.release_safety == "additive"
     assert {

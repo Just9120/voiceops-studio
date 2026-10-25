@@ -132,6 +132,7 @@ export function JobCard({
       {outputs?.error && <p className="error">{outputs.error}</p>}
       {!attentionRequired && reconciliation?.data?.available && (
         <OutputReconciliationNotice
+          outputProvider={job.output_provider}
           jobId={job.id}
           state={reconciliation}
           onCheck={onCheckReconciliation}

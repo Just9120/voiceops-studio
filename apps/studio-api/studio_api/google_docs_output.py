@@ -80,6 +80,8 @@ class GoogleDocsTranscriptArtifact:
     _holder: _RevocableArtifact = field(repr=False)
     created_at: datetime
     character_count: int
+    output_provider: str = "google_drive"
+    output_kind: str = "google_docs_transcript"
 
     @property
     def document_id(self) -> str:
@@ -238,8 +240,10 @@ def normalize_google_docs_create_response(payload: Any, *, expected_folder_id: s
     return GoogleDocsCreateResult(doc_id, name, mime_type, web_view_link, tuple(parents_raw))
 
 
-def new_google_docs_transcript_artifact(*, result: GoogleDocsCreateResult, created_at: datetime, character_count: int) -> GoogleDocsTranscriptArtifact:
-    return GoogleDocsTranscriptArtifact(_RevocableArtifact(result.document_id, result.web_view_link, result.parents[0]), created_at, character_count)
+def new_google_docs_transcript_artifact(*, result: GoogleDocsCreateResult, created_at: datetime, character_count: int,
+                                       output_provider: str = "google_drive", output_kind: str = "google_docs_transcript") -> GoogleDocsTranscriptArtifact:
+    return GoogleDocsTranscriptArtifact(_RevocableArtifact(result.document_id, result.web_view_link, result.parents[0]),
+        created_at, character_count, output_provider, output_kind)
 
 
 def _multipart_body(boundary: str, *, title: str, folder_id: str, document_text: str, reconciliation_token: str | None = None) -> bytes:

@@ -27,7 +27,7 @@ from .job_lease_heartbeat import (
     LeaseHeartbeatFailureReason,
 )
 from .job_output_persistence import persist_processing_job_source_output_and_maybe_complete
-from .job_output_reconciliation import mark_reconciliation_required
+from .job_output_reconciliation import SAFE_REASONS, mark_reconciliation_required
 from .job_retry_recovery import prepare_current_attempt_sources, classify_source_attempt_failure, mark_attempt_provider_started, mark_attempt_provider_returned, mark_attempt_google_handoff, mark_attempt_output_reconciliation_required, mark_attempt_completed
 from .provider_part_checkpoints import delete_provider_part_checkpoints
 from .speaker_identity import persist_speaker_observations
@@ -76,6 +76,11 @@ class JobProcessingOrchestrationResult:
 
 
 _UNCERTAIN_GOOGLE_REASONS = {
+    JobGoogleDocsOutputReason.yandex_disk_quota_exceeded,
+    JobGoogleDocsOutputReason.yandex_disk_permission_denied,
+    JobGoogleDocsOutputReason.yandex_disk_reauthorization_required,
+    JobGoogleDocsOutputReason.yandex_disk_document_conflict,
+    JobGoogleDocsOutputReason.yandex_disk_unavailable,
     JobGoogleDocsOutputReason.google_docs_timeout,
     JobGoogleDocsOutputReason.google_docs_unavailable,
     JobGoogleDocsOutputReason.malformed_google_docs_response,
@@ -495,7 +500,13 @@ def _has_output(db, rel_id) -> bool:
 
 
 def _existing_reconciliation_case_status(db, rel_id) -> OutputReconciliationStatus | None:
-    return db.execute(select(TranscriptionOutputReconciliation.status).where(TranscriptionOutputReconciliation.job_source_id == rel_id)).scalar_one_or_none()
+    case = db.execute(select(TranscriptionOutputReconciliation).where(TranscriptionOutputReconciliation.job_source_id == rel_id)).scalar_one_or_none()
+    if (case and case.expected_output_provider == "yandex_disk"
+            and case.status == OutputReconciliationStatus.resolved
+            and case.uncertainty_reason == "yandex_output_absent" and case.resolved_output_id is None
+            and case.returned_document_id is None):
+        return None  # Confirmed absence authorizes create-only export, never STT.
+    return case.status if case else None
 
 
 def _counts(db, job_id):
@@ -560,7 +571,7 @@ def _record_output_uncertainty(db, job_id, owner, generation, clock, message):
         job = db.get(TranscriptionJob, job_id)
         if job is not None and job.status == JobStatus.processing and job.cancel_requested_at is None and job.lease_owner_id == owner and job.lease_generation == generation and is_lease_active(job, clock()):
             mark_reconciliation_required(db, job_id=job_id, lease_generation=generation, reason=message, now=clock())
-            fail_job_processing(db, job_id=job_id, lease_owner_id=owner, lease_generation=generation, now=clock(), error_code="output_reconciliation_required", error_message=message if message in {"google_docs_timeout","google_docs_unavailable","malformed_google_docs_response","lifecycle_changed_after_output_creation","commit_failed","context_closed","unknown","job_not_processable","lease_not_owned","lease_not_active","cancellation_requested","existing_reconciliation_case","lease_heartbeat_failed","lease_heartbeat_not_owned","lease_heartbeat_expired","lease_heartbeat_commit_failed","lease_heartbeat_stop_timeout"} else "unknown")
+            fail_job_processing(db, job_id=job_id, lease_owner_id=owner, lease_generation=generation, now=clock(), error_code="output_reconciliation_required", error_message=message if message in SAFE_REASONS else "unknown")
             db.commit()
             _emit(db, job_id, "JOB_FAILED", metadata={"final_job_status": "failed", "error_code": "output_reconciliation_required", "boundary": "output_persistence", "attempt_number": _attempt(db, job_id)})
     except Exception:

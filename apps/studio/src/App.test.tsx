@@ -1579,6 +1579,32 @@ describe("Studio PWA", () => {
     );
   });
 
+  it("keeps a verified Yandex destination in preflight and restored composer drafts", async () => {
+    const baseFetch = fetch as unknown as ReturnType<typeof vi.fn>;
+    const original = baseFetch.getMockImplementation();
+    const folder = { path: "disk:/", name: "Мой диск", is_folder: true, fingerprint: "f".repeat(64), mime_type: null, size_bytes: null, modified: null };
+    const handle = "6f5d76f9-1ced-44a4-abf5-9ff96092687e";
+    baseFetch.mockImplementation((url: string, init?: RequestInit) => {
+      if (url === "/api/yandex/resources/list") return json({ folder, items: [], next_offset: null });
+      if (url === "/api/yandex/resources/select") return json({ ...folder, id: handle });
+      if (url === "/api/projects/p1/output-folders/yandex-disk/verify") return json({ name: "Мой диск", web_view_url: "https://disk.yandex.ru/client/disk/", provider: "yandex_disk" });
+      return original?.(url, init) ?? json({ ok: true });
+    });
+    renderApp();
+    await openSelectedProjectJobs();
+    await chooseExistingSource(1, "Лекция 1");
+    await userEvent.click(screen.getByRole("button", { name: "Выбрать папку Яндекс Диска для задачи 1" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Выбрать эту папку" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByText(/Яндекс Диск · DOCX/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Проверить задачи \(1\)/ }));
+    await screen.findByLabelText("Проверка перед созданием задач");
+    const call = baseFetch.mock.calls.find(([url]) => String(url).endsWith("/jobs/batch/preflight"));
+    expect(JSON.parse(String(call?.[1]?.body)).items[0]).toMatchObject({ source_id: "s1", output_folder_id: handle, output_provider: "yandex_disk" });
+    expect(Object.values(sessionStorage).some((raw) => String(raw).includes('"provider":"yandex_disk"'))).toBe(true);
+    expect(baseFetch.mock.calls.some(([url]) => String(url).endsWith("/jobs/batch"))).toBe(false);
+  });
+
   it("undo restores an unstarted row, its title and position without creating jobs", async () => {
     renderApp();
     await openSelectedProjectJobs();
@@ -10455,7 +10481,7 @@ describe("Studio PWA", () => {
       );
     });
     expect(
-      await screen.findByText("Не удалось проверить Google Drive."),
+      await screen.findByText("Не удалось проверить папку результата."),
     ).toBeInTheDocument();
     const unlockedButton = screen.getByRole("button", {
       name: "Проверить созданный документ в Google Drive",

@@ -52,8 +52,24 @@ def normalize_google_web_view_url(value) -> str | None:
     return urlunsplit(("https", hostname, parsed.path, parsed.query, parsed.fragment))
 
 
+def normalize_output_web_view_url(value, output_kind) -> str | None:
+    from .transcript_docx import DOCX_OUTPUT_KIND
+    if output_kind != DOCX_OUTPUT_KIND:
+        return normalize_google_web_view_url(value)
+    if not isinstance(value, str) or len(value) > 50000:
+        return None
+    try:
+        parsed = urlsplit(value)
+        if (parsed.scheme != "https" or parsed.netloc != "disk.yandex.ru"
+                or not parsed.path.startswith("/client/disk/") or parsed.query or parsed.fragment):
+            return None
+        return urlunsplit(("https", "disk.yandex.ru", parsed.path, "", ""))
+    except ValueError:
+        return None
+
+
 def browser_job_output_payload(output, job_source, source) -> dict:
-    web_view_url = normalize_google_web_view_url(output.web_view_url)
+    web_view_url = normalize_output_web_view_url(output.web_view_url, output.output_kind)
     return {
         "source_id": job_source.source_id,
         "source_position": job_source.position,
@@ -92,7 +108,7 @@ def load_primary_output_urls(db, *, owner_user_id: str, job_ids: list[str]) -> d
     from .models import TranscriptionJob, TranscriptionJobOutput, TranscriptionJobSource
     if not job_ids:
         return {}
-    rows = (db.query(TranscriptionJobOutput.job_id, TranscriptionJobOutput.web_view_url)
+    rows = (db.query(TranscriptionJobOutput.job_id, TranscriptionJobOutput.web_view_url, TranscriptionJobOutput.output_kind)
         .join(TranscriptionJob, TranscriptionJob.id == TranscriptionJobOutput.job_id)
         .join(TranscriptionJobSource, TranscriptionJobSource.id == TranscriptionJobOutput.job_source_id)
         .filter(TranscriptionJob.owner_user_id == owner_user_id,
@@ -100,8 +116,8 @@ def load_primary_output_urls(db, *, owner_user_id: str, job_ids: list[str]) -> d
         .order_by(TranscriptionJobSource.position, TranscriptionJobOutput.persisted_at,
                   TranscriptionJobOutput.id).all())
     result = {}
-    for job_id, raw_url in rows:
-        url = normalize_google_web_view_url(raw_url)
+    for job_id, raw_url, output_kind in rows:
+        url = normalize_output_web_view_url(raw_url, output_kind)
         if url:
             result.setdefault(job_id, url)
     return result

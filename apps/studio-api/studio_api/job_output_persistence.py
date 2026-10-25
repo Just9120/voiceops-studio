@@ -91,6 +91,12 @@ def persist_processing_job_source_output_and_maybe_complete(
     )
     job = authority.job
     rel = authority.selected_relation
+    from .transcript_docx import DOCX_OUTPUT_KIND
+    expected_kind = {"google_drive": GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND,
+                     "yandex_disk": DOCX_OUTPUT_KIND}.get(job.output_provider)
+    if (artifact.output_provider != job.output_provider or not expected_kind
+            or artifact.output_kind != expected_kind):
+        raise JobOutputPersistenceError(JobOutputPersistenceReason.output_conflict)
 
     existing = db.execute(select(TranscriptionJobOutput).where(TranscriptionJobOutput.job_source_id == job_source_id)).scalar_one_or_none()
     if existing is None:
@@ -100,7 +106,7 @@ def persist_processing_job_source_output_and_maybe_complete(
             document_id=document_id,
             web_view_url=web_view_url,
             output_drive_folder_id=output_folder_id,
-            output_kind=GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND,
+            output_kind=expected_kind,
             transcript_standard=TRANSCRIPT_STANDARD,
             document_character_count=artifact.character_count,
             document_created_at=artifact.created_at,
@@ -124,6 +130,8 @@ def persist_processing_job_source_output_and_maybe_complete(
         case.resolved_at = now
         case.updated_at = now
     required_ids = [rel.id for rel in authority.job_source_relations if rel.status != JobSourceStatus.skipped]
+    from .job_cached_transcript import retire_cached_yandex_result
+    retire_cached_yandex_result(db, job_id=job.id, job_source_id=rel.id)
     persisted_count = db.execute(select(func.count(TranscriptionJobOutput.id)).where(TranscriptionJobOutput.job_id == job.id, TranscriptionJobOutput.job_source_id.in_(required_ids or ["__none__"]))).scalar_one()
     required_count = len(required_ids)
     completed = required_count > 0 and persisted_count == required_count
@@ -196,7 +204,9 @@ def _load_locked_output_authority(
         raise JobOutputPersistenceError(JobOutputPersistenceReason.job_source_not_processable)
 
     source = db.execute(select(Source).where(Source.id == selected.source_id).with_for_update().execution_options(populate_existing=True)).scalar_one_or_none()
-    if source is None or source.project_id != job.project_id or source.upload_status != SourceUploadStatus.uploaded or source.deleted_at is not None:
+    from .job_cached_transcript import fully_cached_relation
+    cached = fully_cached_relation(db, job, selected.id, now)
+    if source is None or source.project_id != job.project_id or (not cached and (source.upload_status != SourceUploadStatus.uploaded or source.deleted_at is not None)):
         raise JobOutputPersistenceError(JobOutputPersistenceReason.job_source_not_processable)
     return _LockedOutputAuthority(job, project, selected, source, relations)
 
@@ -206,7 +216,7 @@ def _same_output(existing: TranscriptionJobOutput, document_id: str, web_view_ur
         existing.document_id == document_id
         and existing.web_view_url == web_view_url
         and existing.output_drive_folder_id == output_folder_id
-        and existing.output_kind == GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND
+        and existing.output_kind == artifact.output_kind
         and existing.transcript_standard == TRANSCRIPT_STANDARD
         and existing.document_character_count == artifact.character_count
         and existing.document_created_at == artifact.created_at

@@ -80,7 +80,42 @@ def observability_alert_canary():
     )
     return 0
 
+
+def recover_owner():
+    from .owner_recovery import recover_local_owner
+    parser = argparse.ArgumentParser(description="Local VPS operator recovery of the personal owner")
+    parser.add_argument("owner_user_id", type=UUID)
+    parser.add_argument("--reset-totp", action="store_true", help="Explicitly retire a lost second factor")
+    args = parser.parse_args()
+    if not sys.stdin.isatty():
+        print("Recovery requires an interactive terminal", file=sys.stderr)
+        return 2
+    email = input("Confirm the existing owner's email: ").strip()
+    if args.reset_totp and input("Type RESET SECOND FACTOR to retire the lost factor: ") != "RESET SECOND FACTOR":
+        print("Second-factor reset was not confirmed", file=sys.stderr)
+        return 2
+    password = getpass.getpass("New owner password: ")
+    if password != getpass.getpass("Confirm new owner password: "):
+        print("Passwords differ", file=sys.stderr)
+        return 2
+    db = SessionLocal()
+    try:
+        recover_local_owner(db, owner_user_id=str(args.owner_user_id), confirmed_email=email,
+                            new_password=password, reset_totp=args.reset_totp)
+        db.commit()
+    except Exception:
+        db.rollback()
+        print("Owner recovery failed; no changes committed", file=sys.stderr)
+        return 2
+    finally:
+        db.close()
+    print("Owner recovered; prior sessions and trusted browsers revoked")
+    return 0
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "recover-local-owner":
+        sys.argv.pop(1)
+        return recover_owner()
     if len(sys.argv) > 1 and sys.argv[1] == "cleanup-expired-sources":
         sys.argv.pop(1)
         return cleanup_sources()

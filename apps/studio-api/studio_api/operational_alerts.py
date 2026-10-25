@@ -184,27 +184,11 @@ def collect_rule_observations(
         .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
         .first()
     )
-    # An absent timer produces no failure event. Check freshness independently
-    # of the short diagnostics window, retaining the existing owner boundary.
-    backup_required = (
-        getattr(settings, "backup_monitor_owner_user_id", None) == owner_user_id
-        or latest_backup is not None
-    )
-    latest_successful_backup = (
-        db.query(AuditEvent)
-        .filter(
-            AuditEvent.subject_user_id == owner_user_id,
-            AuditEvent.event_type == "ops.postgres_backup",
-            AuditEvent.outcome == "success",
-        )
-        .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
-        .first()
-    ) if backup_required else None
-    backup_unhealthy = bool(backup_required and (
-        latest_backup is None or latest_backup.outcome == "failed"
-        or latest_successful_backup is None
-        or _utc_naive(latest_successful_backup.created_at) <= now_dt - timedelta(hours=12)
-    ))
+    # Regular backups and their schedule/target verification belong to Cloudkeep.
+    # Its health cannot be inferred from the age of a Studio migration snapshot.
+    # Retain alerts for an actual reported failure of the protected Studio backup
+    # operation; absence or age is neither external failure nor external success.
+    backup_unhealthy = bool(latest_backup is not None and latest_backup.outcome == "failed")
 
     storage_firing = False
     storage_evidence = 0
@@ -687,7 +671,7 @@ def _telegram_text(claim: DeliveryClaim) -> str:
         "queue_stuck": "очередь обработки не продвигается",
         "provider_unavailable": "STT provider временно недоступен",
         "maintenance_failure": "ошибка обслуживания или очистки",
-        "backup_failure": "резервная копия PostgreSQL отсутствует, просрочена или завершилась ошибкой",
+        "backup_failure": "защищённое резервное копирование PostgreSQL завершилось ошибкой",
         "storage_limit_near": "временное хранилище близко к лимиту",
         "api_limit_near": "API credits близки к лимиту",
         "operator_canary_ok": "проверка контура предупреждений завершена",

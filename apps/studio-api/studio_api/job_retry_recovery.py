@@ -305,6 +305,11 @@ def _evaluate(db, job, *, mode: Literal["explicit", "recovery"], now: datetime|N
         if _has_output(db, rel.id): continue
         missing.append(rel)
         if _has_unresolved_reconciliation(db, rel.id): reason=RetryReason.output_reconciliation_required; continue
+        if job.provider == "yandex":
+            from .job_cached_transcript import completed_yandex_result
+            if completed_yandex_result(db, job, rel.id) is not None:
+                safe += 1; fully_cached_sources += 1; resumable_parts += 1; provider_total_parts += 1
+                continue
         att=current_attempt_for_relation(db, job_source_id=rel.id, attempt_number=attempts)
         complete = complete_provider_attempt(db, job_id=job.id, job_source_id=rel.id)
         if complete is not None:
@@ -357,7 +362,8 @@ def _evaluate(db, job, *, mode: Literal["explicit", "recovery"], now: datetime|N
         elif att.retry_disposition==Disp.provider_result_lost or att.stage in {Stage.provider_response_returned, Stage.google_handoff}: reason=reason or RetryReason.provider_result_lost
         elif att.retry_disposition==Disp.output_reconciliation_required: reason=reason or RetryReason.output_reconciliation_required
         else: reason=reason or RetryReason.non_retryable
-    if attempts >= MAX_PROCESSING_ATTEMPTS: return RetryReadiness(False, RetryReason.attempt_limit_reached, attempts, MAX_PROCESSING_ATTEMPTS, len(missing), safe, resumable_parts, provider_total_parts)
+    if attempts >= MAX_PROCESSING_ATTEMPTS and fully_cached_sources != len(missing):
+        return RetryReadiness(False, RetryReason.attempt_limit_reached, attempts, MAX_PROCESSING_ATTEMPTS, len(missing), safe, resumable_parts, provider_total_parts)
     if not missing: return RetryReadiness(False, RetryReason.completed, attempts, MAX_PROCESSING_ATTEMPTS, 0, safe, resumable_parts, provider_total_parts)
     if safe==len(missing) and _projected_queued_ready(job, now=now):
         if fully_cached_sources == len(missing):

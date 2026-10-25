@@ -30,6 +30,7 @@ class OutputDestinationReason(str, Enum):
     output_not_folder = "output_not_folder"
     output_folder_not_writable = "output_folder_not_writable"
     output_destination_changed = "output_destination_changed"
+    yandex_connection_unavailable = "yandex_connection_unavailable"
 
 
 class OutputDestinationError(RuntimeError):
@@ -44,6 +45,7 @@ class ProcessingJobOutputDestination:
     project_id: str
     verified_at: datetime
     drive_folder_id: str = field(repr=False)
+    output_provider: str = "google_drive"
 
     def __repr__(self) -> str:
         return f"ProcessingJobOutputDestination(job_id={self.job_id!r}, project_id={self.project_id!r}, verified_at={self.verified_at!r}, drive_folder_id=<redacted>)"
@@ -70,6 +72,7 @@ class _OutputSnapshot:
     lease_expires_at: datetime | None
     cancel_requested_at: datetime | None
     project_archived_at: datetime | None
+    output_provider: str = "google_drive"
 
 
 def verify_processing_job_output_destination(
@@ -83,9 +86,24 @@ def verify_processing_job_output_destination(
     clock: Callable[[], datetime] | None = None,
     token_resolver: Callable = refresh_user_google_drive_access_token,
     metadata_fetcher: Callable[[str, str], DriveFolderAuthorizationMetadata] | None = None,
+    disk_resource_verifier: Callable | None = None,
 ) -> ProcessingJobOutputDestination:
     clock = clock or (lambda: utcnow().replace(tzinfo=None))
     snap = _load_snapshot(db, job_id, lease_owner_id, lease_generation, now or clock())
+    if snap.output_provider == "yandex_disk":
+        from .yandex_disk import YandexDiskError
+        from .yandex_disk_access import verify_selected_resource
+        try:
+            (disk_resource_verifier or verify_selected_resource)(db, owner_user_id=snap.owner_user_id,
+                resource_id=snap.output_drive_folder_id, settings=settings, is_folder=True)
+        except YandexDiskError as exc:
+            raise OutputDestinationError(OutputDestinationReason.yandex_connection_unavailable) from exc
+        verified_at = clock()
+        _compare_snapshot(snap, _load_snapshot(db, job_id, lease_owner_id, lease_generation, verified_at))
+        return ProcessingJobOutputDestination(job_id=snap.job_id, project_id=snap.project_id,
+            verified_at=verified_at, drive_folder_id=snap.output_drive_folder_id, output_provider="yandex_disk")
+    if snap.output_provider != "google_drive":
+        raise OutputDestinationError(OutputDestinationReason.metadata_unavailable)
     try:
         token = token_resolver(db, user_id=snap.owner_user_id, settings=settings)
     except GoogleConnectionAccessError as exc:
@@ -121,7 +139,7 @@ def _load_snapshot(db: Session, job_id: str, owner: str, generation: int, now: d
         raise OutputDestinationError(OutputDestinationReason.project_unavailable)
     if not job.output_drive_folder_id:
         raise OutputDestinationError(OutputDestinationReason.output_folder_missing)
-    return _OutputSnapshot(job.id, job.owner_user_id, project.id, job.output_drive_folder_id, job.lease_owner_id, job.lease_generation, job.lease_expires_at, job.cancel_requested_at, project.archived_at)
+    return _OutputSnapshot(job.id, job.owner_user_id, project.id, job.output_drive_folder_id, job.lease_owner_id, job.lease_generation, job.lease_expires_at, job.cancel_requested_at, project.archived_at, job.output_provider)
 
 
 def _validate_metadata(meta: DriveFolderAuthorizationMetadata, expected_id: str) -> None:

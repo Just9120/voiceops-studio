@@ -16,6 +16,8 @@ from .job_claim_lease import is_lease_active
 from .job_source_availability import verify_processing_job_sources
 from .models import JobSourceStatus, JobStatus, Project, SourceType, SourceUploadStatus, TranscriptionJob, TranscriptionJobSource
 from .security import utcnow
+from .yandex_disk import YandexDiskClient, YandexDiskError
+from .yandex_disk_access import access_token as disk_access_token, verify_selected_resource
 from .source_policy import is_source_expired, is_supported_source_mime_type, normalize_source_mime_type, validate_source_size
 from .source_storage import (
     SourceObjectReadError,
@@ -129,6 +131,9 @@ def materialize_processing_job_source(
     drive_token_resolver: Callable = refresh_user_google_drive_access_token,
     drive_content_fetcher: Callable = fetch_drive_file_content,
     drive_metadata_fetcher: Callable = fetch_drive_file_metadata,
+    disk_resource_verifier: Callable = verify_selected_resource,
+    disk_token_resolver: Callable = disk_access_token,
+    disk_client_factory: Callable = YandexDiskClient,
 ) -> Iterator[MaterializedJobSource]:
     clock = clock or (lambda: utcnow().replace(tzinfo=None))
     check_now = now or clock()
@@ -153,6 +158,7 @@ def materialize_processing_job_source(
                 drive_token_resolver=_cached_drive_token_resolver,
                 drive_metadata_fetcher=drive_metadata_fetcher,
                 now_provider=clock,
+                disk_resource_verifier=disk_resource_verifier,
             )
             if not availability.ready:
                 raise SourceMaterializationError(_availability_reason(availability.blocking_reasons))
@@ -173,6 +179,9 @@ def materialize_processing_job_source(
                 drive_content_fetcher,
                 db,
                 check,
+                disk_resource_verifier=disk_resource_verifier,
+                disk_token_resolver=disk_token_resolver,
+                disk_client_factory=disk_client_factory,
             )
             _validate_materialized_metadata(snap, byte_count, response_mime, response_length, settings)
             _compare_snapshot(snap, _load_selected_snapshot(db, job_id, job_source_id, lease_owner_id, lease_generation, clock(), settings))
@@ -224,7 +233,7 @@ def _load_selected_snapshot(db, job_id, job_source_id, owner, generation, now, s
         raise SourceMaterializationError(SourceMaterializationReason.job_source_not_processable)
     if not allow_retired_source and is_source_expired(src.expires_at, now):
         raise SourceMaterializationError(SourceMaterializationReason.job_source_not_processable)
-    if src.source_type not in {SourceType.local_upload, SourceType.google_drive} or not is_supported_source_mime_type(mime):
+    if src.source_type not in {SourceType.local_upload, SourceType.google_drive, SourceType.yandex_disk} or not is_supported_source_mime_type(mime):
         raise SourceMaterializationError(SourceMaterializationReason.job_source_not_processable)
     if not validate_source_size(src.size_bytes, settings.source_max_upload_bytes):
         raise SourceMaterializationError(SourceMaterializationReason.source_too_large)
@@ -252,7 +261,26 @@ def processing_source_control(db, *, job_id, job_source_id, lease_owner_id, leas
     return check
 
 
-def _copy_source_bytes(snap, temp, settings, storage_factory, drive_token_resolver, drive_content_fetcher, db, check=lambda: None):
+def _copy_source_bytes(snap, temp, settings, storage_factory, drive_token_resolver, drive_content_fetcher, db, check=lambda: None,
+                       *, disk_resource_verifier=verify_selected_resource, disk_token_resolver=disk_access_token,
+                       disk_client_factory=YandexDiskClient):
+    if snap.source_type == SourceType.yandex_disk.value:
+        if not snap.drive_file_id:
+            raise SourceMaterializationError(SourceMaterializationReason.job_source_not_processable)
+        try:
+            resource = disk_resource_verifier(db, owner_user_id=snap.job_owner_user_id,
+                resource_id=snap.drive_file_id, settings=settings, is_folder=False)
+            token = disk_token_resolver(db, user_id=snap.job_owner_user_id, settings=settings)
+            db.rollback()
+            count = disk_client_factory(token).download_to(resource, temp,
+                maximum_bytes=settings.source_max_upload_bytes, check=check)
+            # The selected resource must still be the same version after reading.
+            disk_resource_verifier(db, owner_user_id=snap.job_owner_user_id,
+                resource_id=snap.drive_file_id, settings=settings, is_folder=False)
+            db.rollback()
+            return count, resource.mime_type, resource.size_bytes
+        except YandexDiskError as exc:
+            raise SourceMaterializationError(SourceMaterializationReason.external_source_unavailable) from exc
     if snap.source_type == SourceType.local_upload.value:
         if (
             not reference_storage_isolation_configured(settings)

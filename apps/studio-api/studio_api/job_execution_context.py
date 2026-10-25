@@ -78,7 +78,7 @@ def open_processing_job_execution_prerequisites(
     credential_opener = credential_opener or open_processing_job_provider_credential
     output_verifier = output_verifier or verify_processing_job_output_destination
     credential_kwargs = {key: value for key, value in kwargs.items() if key in {"master_key_resolver", "decryptor"}}
-    output_kwargs = {key: value for key, value in kwargs.items() if key in {"token_resolver", "metadata_fetcher"}}
+    output_kwargs = {key: value for key, value in kwargs.items() if key in {"token_resolver", "metadata_fetcher", "disk_resource_verifier"}}
     try:
         credential_cm = credential_opener(
             db,
@@ -143,7 +143,8 @@ def _final_revalidate(
         raise JobExecutionContextError(JobExecutionContextReason.credential_unavailable) from ProviderCredentialAccessError(
             ProviderCredentialAccessReason.credential_changed
         )
-    if output_snapshot.output_drive_folder_id != output.drive_folder_id:
+    if (output_snapshot.output_drive_folder_id != output.drive_folder_id
+            or output_snapshot.output_provider != output.output_provider):
         raise JobExecutionContextError(JobExecutionContextReason.output_destination_unavailable) from OutputDestinationError(
             OutputDestinationReason.output_destination_changed
         )

@@ -143,7 +143,7 @@ def _summarize_source(job: Any, job_source: Any, *, now: datetime | None = None,
 
 
 def _source_has_required_identity(source: Any, source_type: str) -> bool:
-    if source_type == GOOGLE_DRIVE_SOURCE_TYPE:
+    if source_type in {GOOGLE_DRIVE_SOURCE_TYPE, "yandex_disk"}:
         return bool(source.drive_file_id)
     if source_type == LOCAL_UPLOAD_SOURCE_TYPE:
         return bool(source.s3_bucket) and bool(source.s3_object_key)

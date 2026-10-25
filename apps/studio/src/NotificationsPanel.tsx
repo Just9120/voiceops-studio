@@ -96,12 +96,6 @@ export function parseNotificationPreferences(
   };
 }
 
-function base64UrlToUint8Array(value: string): Uint8Array {
-  const padding = "=".repeat((4 - (value.length % 4)) % 4);
-  const raw = window.atob((value + padding).replace(/-/g, "+").replace(/_/g, "/"));
-  return Uint8Array.from(raw, (character) => character.charCodeAt(0));
-}
-
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError && error.data && typeof error.data === "object") {
     const detail = (error.data as { detail?: unknown }).detail;
@@ -157,7 +151,7 @@ export function NotificationsPanel({
   }, []);
 
   const patchChannel = async (
-    channel: "email" | "telegram",
+    channel: "telegram",
     enabled: boolean,
   ) => {
     setPendingChannel(channel);
@@ -184,96 +178,11 @@ export function NotificationsPanel({
     }
   };
 
-  const enableWebPush = async () => {
-    const channel = preferences?.channels.web_push;
-    if (!channel?.configured || !channel.vapid_public_key) return;
-    setPendingChannel("web_push");
-    setMessage("");
-    try {
-      if (
-        !("serviceWorker" in navigator) ||
-        !("PushManager" in window) ||
-        !("Notification" in window)
-      ) {
-        throw new Error("web_push_unsupported");
-      }
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") {
-        setMessage("Браузер не дал разрешение на уведомления.");
-        return;
-      }
-      const registration = await navigator.serviceWorker.ready;
-      const current = await registration.pushManager.getSubscription();
-      const subscription =
-        current ??
-        (await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: base64UrlToUint8Array(channel.vapid_public_key),
-        }));
-      const serialized = subscription.toJSON();
-      if (!serialized.endpoint || !serialized.keys?.p256dh || !serialized.keys.auth) {
-        throw new Error("invalid_browser_subscription");
-      }
-      const response = (await mutateWithCsrfRetry<unknown>(
-        "/notifications/web-push/subscriptions",
-        csrf,
-        onCsrf,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            endpoint: serialized.endpoint,
-            p256dh: serialized.keys.p256dh,
-            auth: serialized.keys.auth,
-          }),
-        },
-      )) as { preferences?: unknown };
-      const parsed = parseNotificationPreferences(response?.preferences);
-      if (!parsed) throw new Error("invalid_notification_preferences");
-      setPreferences(parsed);
-      setMessage("Уведомления в этом браузере включены.");
-    } catch (error) {
-      setMessage(
-        error instanceof Error && error.message === "web_push_unsupported"
-          ? "Этот браузер не поддерживает фоновые уведомления."
-          : errorMessage(error),
-      );
-    } finally {
-      setPendingChannel(null);
-    }
-  };
-
-  const disableWebPush = async () => {
-    setPendingChannel("web_push");
-    setMessage("");
-    try {
-      if ("serviceWorker" in navigator) {
-        const registration = await navigator.serviceWorker.ready;
-        const subscription = await registration.pushManager.getSubscription();
-        await subscription?.unsubscribe();
-      }
-      const parsed = parseNotificationPreferences(
-        await mutateWithCsrfRetry<unknown>(
-          "/notifications/web-push/subscriptions",
-          csrf,
-          onCsrf,
-          { method: "DELETE" },
-        ),
-      );
-      if (!parsed) throw new Error("invalid_notification_preferences");
-      setPreferences(parsed);
-      setMessage("Уведомления в браузере выключены.");
-    } catch (error) {
-      setMessage(errorMessage(error));
-    } finally {
-      setPendingChannel(null);
-    }
-  };
-
   return (
     <section aria-labelledby="notification-settings-title">
       <h2 id="notification-settings-title">Уведомления</h2>
       <p className="muted">
-        Выберите, куда сообщать о готовой транскрибации или ошибке. Каналы
+        Telegram сообщит о готовой транскрибации или ошибке. Уведомления
         выключены, пока вы сами их не включите.
       </p>
       {loading && <p role="status">Загружаем настройки уведомлений…</p>}
@@ -285,7 +194,7 @@ export function NotificationsPanel({
       {preferences && (
         <div className="notification-channel-grid">
           {(
-            ["web_push", "email", "telegram"] as const
+            ["telegram"] as const
           ).map((channelName) => {
             const channel = preferences.channels[channelName];
             const pending = pendingChannel === channelName;
@@ -310,11 +219,7 @@ export function NotificationsPanel({
                   }
                   aria-busy={pending || undefined}
                   onClick={() => {
-                    if (channelName === "web_push") {
-                      void (channel.enabled ? disableWebPush() : enableWebPush());
-                    } else {
-                      void patchChannel(channelName, !channel.enabled);
-                    }
+                    void patchChannel(channelName, !channel.enabled);
                   }}
                 >
                   {pending ? "Сохраняем…" : channel.enabled ? "Выключить" : "Включить"}

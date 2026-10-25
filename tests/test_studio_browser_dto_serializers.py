@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "apps/studio-api"))
 
 NOW = datetime(2026, 7, 21, tzinfo=timezone.utc)
 PROJECT_KEYS = {
+    "output_provider",
     "id",
     "title",
     "description",
@@ -23,6 +24,7 @@ PROJECT_KEYS = {
     "archived_at",
 }
 JOB_KEYS = {
+    "output_provider",
     "id",
     "project_id",
     "status",

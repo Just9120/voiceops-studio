@@ -2,7 +2,43 @@
 
 ## Current work и checkpoint
 
-### CONCISE-METADATA-20261024 — IN_PROGRESS
+### PERSONAL-INTEGRATIONS-20261025 — IN_PROGRESS
+
+Основание: владелец25Oct2026 согласовал единый scope и один PR с поставкой на Contabo: полный personal Яндекс Диск, Telegram уведомления, адаптация мониторинга Cloudkeep, отмена automatic voice identity и email/Web Push task notifications, документированное восстановление через VPS без почты. F62 и personal security email F66 остаются DEFER; commercial не реализуется. Built-in Goal ACTIVE. Base `815b829e8d51dbea073d62e914887593d64895f6`, clean main/origin main; branch `codex/personal-integrations-20261025`, primary worktree. Strict `ci-required`, admin enforcement, approvals0, open PR0 подтверждены. Unrelated `codex/audio-upload-confirmation` и LOCAL-BACKLOG сохраняются.
+
+Scope/DoD: YD-01..05/07..09 и связанные UXN-04/PM-05 — отдельное owner-scoped подключение Disk, files/folders, DOCX destination, bounded quota/access/revocation handling, безопасный export-only recovery без нового STT и незаметной перезаписи; Telegram JOBNOT-05/06 — owner binding, success/error delivery, дедупликация/retry и отсутствие влияния сбоя канала на результат. OBSERV-18/REC — регулярный backup принадлежит Cloudkeep; отключённый Studio timer не создаёт ложную12h тревогу, неизвестное внешнее evidence не считается success; protected pre-migration R2 snapshot сохраняется. Personal recovery — проверенная процедура администратора VPS без SMTP, без сброса пароля/2FA реального владельца при проверках. Отменённые VID и task Web Push/email AC сохраняют ID/основание исключения из denominator; diarization и ручные имена SP остаются. Актуализировать source trace, процедуры и устаревшие F04/F05/F68 по PR338/341; source Google Doc уже scoped edited25Oct с revision guard/readback, остальные требования сохранены.
+
+Non-goals: F62 lecture/cleaned experiments, paid STT/retries, personal security email F66, commercial, voice matcher, изменение старых транскриптов, перенастройка остальных Cloudkeep jobs/targets и удаление существующих backups. Административное восстановление существующего owner не выполняется. Секреты/пользовательский контент в репозиторий не попадают.
+
+| Validation Plan / риск | Tool / cwd / environment / ожидаемый результат | Этап |
+|---|---|---|
+| Disk OAuth и данные | Root focused synthetic OAuth/client/source/export tests; CSRF/session/state/owner, refresh/revoke, pagination, unsafe URLs, quota/permission/conflict, idempotent retry; без реальных провайдеров | REQUIRED local + Linux CI |
+| UI и notifications | `apps/studio` focused Vitest, lint/typecheck/build; settings/source/destination/error/recovery, Telegram-only configuration и pending states. Root Telegram binding/outbox/worker tests, synthetic transports | REQUIRED local + current CI/browser |
+| Backup/recovery | Root alert/CLI tests: external pending/failure/stale evidence не подменяется green; отключённый legacy timer не создаёт stale alert; pre-migration guards неизменны. Recovery synthetic credentials, session/trust revocation, audit и negative cases | REQUIRED local + Linux CI |
+| Документы/совместимость | Root `python scripts/ci_checks.py`, `git diff --check`, source/spec/plan IDs/relative links и self-review; affected DB/schema/API consumers | REQUIRED before push |
+| Delivery | Current CI/review → merge → applicable exact-main web/API → graceful compatible worker rollout; runtime/config owners, required environment gates, identity/schema/readiness/public health; bounded authorized notification/integration checks | REQUIRED after merge |
+
+Checkpoint25Oct: локально готовы backup policy и operator recovery: Cloudkeep owns regular freshness/target monitoring; Studio сохраняет только alerts фактически сообщённого failed pre-migration backup, не оценивает external health по своему audit stream. Operator CLI требует интерактивное подтверждение существующего admin/email, скрытый пароль, атомарную ревокацию sessions/trust/reset capabilities; TOTP сохраняется либо явно retire-ится отдельным флагом/подтверждением с отдельным audit event. Root focused owner-recovery/operational-alert suite32 PASS (Windows/SQLite/synthetic data); lightweight checks/diff PASS. Production owner не изменялся. Остальная реализация/CI/PR/CD PENDING. Следующий шаг — Telegram-only UI/delivery и Disk integration. Внешние настройки Disk OAuth и bot credentials подтверждаются отдельно до dependent live checks; отсутствие конфигурации не выдаётся за live PASS. Предыдущие pre-merge checkpoints ниже исторические; PR342 API/worker40091778574/40092000906 и main CI40091427515 SUCCESS на815b829 подтверждены.
+
+Telegram checkpoint25Oct: task UI предлагает только Telegram, retired enable API возвращает410, legacy flags не создают sends. Claim привязан к operator-configured owner UUID и активному аккаунту; чужой owner/opt-out подавляет intent. Подтверждение доставки требует positive Bot API message ACK, HTTP200 недостаточно. Root52 focused tests PASS (20 notification +32 alert/recovery); UI3 focused Vitest, TypeScript и ESLint PASS. API contract changes требуют PG Linux CI; реальные сообщения не отправлялись. Владелец явно разрешил публичную ссылку на список транскрибаций после automatic approval rejection; она добавлена только для текущего production origin, без filename/transcript/job ID. Bot8819983827, username VoiceOpsStudioNotifyBot; token/chat ID и Disk OAuth credentials ещё не предоставлены. Зависимые live checks остаются PENDING.
+
+Disk transport checkpoint25Oct: новый bounded REST transport и29 synthetic tests PASS: canonical paths, pagination/empty folder, normalized auth/quota/conflict/rate/redirect errors, allowlisted signed-content hosts без переноса OAuth headers, streamed size/hash verification, create-only upload и exact metadata readback. Контракт сверяется с официальной REST документацией/SDK; Google-specific nested fields syntax не используется. Это foundation, ещё не подключённый end-to-end сценарий; OAuth/registry/schema, source/output/worker/UI integration PENDING. Реальные Disk calls/user files не использовались.
+
+Disk connection/source checkpoint25Oct: additive schema0043_yandex_disk (owner/account resource handles, encrypted connection, output provider defaults Google; source-time constraint widened), PKCE/session-bound one-use OAuth, refresh/revoke и optimistic post-I/O guards реализованы. Callback не отменяет logout/disconnect/newer start; local disconnect стирает credentials до попытки provider revoke. List/select/intake API сохраняет CSRF и не выдаёт tokens; selected-version intake идемпотентен в рамках проекта, empty folder selection поддерживается. Batch materialization/availability и audio preparation читают Disk c size/hash/budget/cancellation guards; logical deletion не удаляет external files. Root focused244 PASS, ещё4 новых audio cases PASS; connection/schema group54 PASS включая legacy SQLite upgrade/downgrade. Windows temp требует owned workspace TEMP/TMP; PostgreSQL enum/grants и role/release rehearsal REQUIRED в Linux CI, локально не подтверждены. Lightweight/diff PASS. UI, DOCX output/reconciliation/export-only recovery, final source/spec/plan consolidation и CI/PR/CD остаются PENDING; intermediate commits не объявляются всей Goal READY. Следующий шаг — DOCX destination и recovery, затем UI и сквозные tests. Реальный owner/файлы не изменялись.
+
+DOCX foundation checkpoint25Oct: deterministic OOXML renderer сохраняет весь canonical text, title/metadata/body hierarchy и speaker14pt/body11pt; opaque receipt находится только в hidden custom property. Create-only upload проверяет path/type/size и SHA256, при отсутствии strong metadata hash читает содержимое в hash sink; совпадение filename или одного MD5 не считается результатом. Повтор после lost ACK не пишет второй файл, изменённый документ даёт conflict.18 synthetic formatting/upload/receipt tests PASS; additive migration0043 получила nullable path/hash/size receipts и provider discriminator с fail-closed downgrade, два SQLite legacy/current roundtrip checks PASS. Pipeline/reconciliation/UI ещё не используют этот foundation; YD-05/07/09 остаются IN_PROGRESS, не READY. Commit4d41809 сохраняет предшествующий OAuth/source этап; весь scope остаётся в одной локальной ветке, initial push/PR ещё не выполнен. Следующий шаг — интеграция destination provider и persisted receipts с worker/reconciliation/cache-only retry, затем UI и текущие CI/CD gates.
+
+Pipeline checkpoint25Oct: provider-bound Google/Disk destinations и persisted create-only DOCX receipts подключены к worker, owner-scoped reconciliation и accepted-output catalog/history/lifecycle. Quota/permission/timeout сохраняют результат; confirmed absence допускает export-only retry, modified file не перезаписывается, missing grant не считается отсутствием документа. Сохранённый Yandex STT восстанавливается без source bytes/key/provider request. Владелец отдельно разрешил очищать временный Yandex text только после подтверждённого полного документа либо явной terminal cancellation; metadata/accounting сохраняются, historical sweep отсутствует. Output persistence/text retirement атомарны при rollback. Focused worker/output/cache/OAuth group245 PASS; additional catalog/attention/source-cleanup/manifest group115 PASS (overlap не суммируется), Windows SQLite/synthetic transports. Новые PG API batch/provider tests и migration/grants/release проверки остаются REQUIRED CI. Backend foundation63bdaf9; текущий diff ещё не поставлен. UI находится на отдельном локальном этапе той же ветки/будущего одного PR.
+
+UI checkpoint25Oct: settings connection/reconnect/disconnect c authoritative readback, source files/current folder/empty selection, sort/filter/pagination, DOCX destinations per row/fragment и audio input подключены к Disk API. Reload сохраняет namespace папки, duplicate/preflight signature включает provider; recovery сообщает selected Disk и не обещает Google Doc. Picker отменяется Escape/close, сохраняет порядок файлов, re-reads source-folder и возвращает focus. Focused UI94 PASS, App selected5 PASS including actual picker→verify→preflight без job creation; broader UI834 unchanged cases PASS и4 старых copy assertions исправлены/перепроверены. Build/TypeScript/ESLint PASS; existing bundle-size warning сохранён, не runtime failure. Browser layout, Linux PG/current CI и live external checks остаются PENDING. Root245/115 groups не суммируются. На VPS установлен root-only interactive staging helper с hash/readback; runtime .env не менялся, credentials вводит владелец вне чата. Source requirements повторно прочитаны и изменены ровно3 paragraphs с revision guard/readback: personal console recovery, deferred system mail, Cloudkeep/RPO UNSET/RTO4h; остальные374 paragraphs сохранены.
+
+Pre-push checkpoint25Oct: branch `codex/personal-integrations-20261025`, base815b829, backend23e796f/UI f65c342; one PR, no initial push yet. Fresh origin/main unchanged, open PR0; current/previous readiness и716 stable IDs/local links проверены, unrelated branch/LOCAL-BACKLOG сохранены. App/connection/picker/reconciliation259 PASS; focused UI94 PASS overlaps; Chromium synthetic layout3 PASS390/768/1280, build/typecheck/lint/lightweight/diff PASS. Backend245 + downstream115 + security/alerts/roles subset89 PASS overlap; migration release14 локально не исполняются из-за unavailable Git Bash child,6 Linux/PG-specific cases skipped. Linux PG enum/grants/full release rehearsal и current required CI REQUIRED/PENDING, checks не ослаблены. Следующий шаг — initial push/один PR, collect/fix actual CI failures, merge только после gates. Delivery: signed direct0042→0043 protected migration с pre-migration R2 backup, compatible API, old worker drained/stopped, reviewed config/roles, compatible worker, exact identities/readiness/public smoke. Legacy backup timer не включать; Cloudkeep targets не менять. Реальные owner password/2FA/STT/documents не менялись; stage helper не включает transport. Owner credential staging, private Telegram chat binding и Disk consent/live smoke PENDING. F78 описывает отдельные Cloudkeep retention/RPO/restore gaps, не обещает их устранение текущим мониторингом.
+
+PR343 checkpoint25Oct: initial head6db4cf7, CI40203997538 — release rehearsal и Studio/browser PASS, root2370 PASS/21 FAIL. Причины batch собраны: model snapshot принимал только Google URL; legacy adapter/DTO fixtures не имели output_provider; preflight head остался0042; role verifier fixtures ожидали6 вместо7 gates; новым audit events не хватало human labels. Diagnostic assertion failure оставлял dependency overrides и порождал downstream auth/E2E failures. Исправлены provider-specific snapshot/legacy fallback, isolated test overrides, exact0043 preflight, Disk privilege negative gate и audit labels; assertions не ослаблялись. Новая local API regression проходит mixed Google/Disk create+DTO+replay, backend affected173 PASS и API/diagnostics/ports45 PASS в canonical synthetic origin/cookie environment. Lint/lightweight PASS; Linux shell/PG cases REQUIRE current CI. Один grouped push в тот же PR; merge/CD ещё PENDING. Public Telegram URL разрешён отдельно, staging credentials ещё не подтверждён. Production revision815b829/healthy/clean подтверждена read-only, secrets не выводились.
+
+### CONCISE-METADATA-20261024 — DONE по первичным records
+
+Primary readback25Oct: PR342 merged815b829, CI40091076292, API40091778574 и worker40092000906 SUCCESS. Нижние pre-merge ограничения относятся к историческому checkpoint, Goal не возобновляется.
 
 Основание: владелец24Oct2026 поручил оставить provider/model/language, остальное только при необходимости, исправить текущие Google Docs и шаблон, сохранить совместимость каталога; один PR и поставка на VPS. Built-in Goal ACTIVE. Base `b323cfd799a5be6a8ac44efa3971faf31eabf1af`, clean main/origin main, branch `codex/concise-transcript-metadata-20261024`; unrelated `codex/audio-upload-confirmation` и LOCAL-BACKLOG сохранены. F04/F05 завершены PR341: CI40080175294/main40080567821, API40080899685, graceful drain40081054570, worker40081158508 SUCCESS; exact b323cfd/schema0042/role/readiness подтверждены. Исторический checkpoint ниже не возобновляется.
 
@@ -371,80 +407,80 @@ PR329 интегрирован и поставлен на main5601f1a; AC и fin
 
 PERSONAL-COMPLETION-20261004 — DONE по PR326/merge1937658:105/105 выбранных AC READY на момент closure; CI37430070244/37430070238, protected web/API/migration37430070252, worker37431465267 и status37432061023 SUCCESS. Старые pre-merge PENDING в реестрах заменены primary results; вновь выявленные независимые нарушения F74/F75 возвращают соответствующие AC в работу. Closure предыдущей Goal не доказывает отсутствие новых findings.
 
-## Готовность — проверенный main23Oct2026 и diarization candidate
+## Готовность — main25Oct2026 и personal integrations candidate
 
-Проверенный `origin/main` `0cf7f72ef8c30bb81467b77ba6ad8cc29078ed43` (fetch23Oct2026), PR337 required CI39943830679/main39950863307 и web CD39950923150 SUCCESS. BRAND-01..05 READY; реестры синхронизированы с первичными records, без повторного аудита. До уточнения MC-06: personal442/459=96.3%, полный roadmap447/692=64.6%.
+Проверенный `origin/main` `815b829e8d51dbea073d62e914887593d64895f6`, fetch25Oct2026; PR342 CI40091076292/API40091778574/worker40092000906 SUCCESS, primary readback25Oct. Это scoped пересчёт, не новый полный аудит: неизменённые AC используют прежнее Evidence с указанными в реестрах ограничениями.
 
-Явное решение23Oct уточнило существующий MC-06, denominator не изменился. Main пока разбивает diarization и ставит полную legend перед речью: **personal441/459=96.1%; полный roadmap446/692=64.5%; MEDIA-CONTRACT-03 5/8=62.5%**. Всего716 стабильных ID,692 active и24 ALIAS/SUPERSEDED; personal исключает224 commercial и9 deferred voice AC. Снижение на один READY обусловлено известным нарушением уточнённого MC-06, не новым finding/AC.
+Baseline registry хранит453/692 READY. Независимо учтены четыре переставших быть подтверждёнными Cloudkeep REC-01/03/04/06: актуальная оценка кода/процедур main **449/692=64.88%**, без изменения denominator. Новое расписание не доказывает retention/RPO/restore; F78 сохраняет gap. Historical recorded personal448/459=97.60% не переносится как current.
 
-Незамерженный DIARIZATION-WHOLE candidate: **personal442/459=96.3%; полный roadmap447/692=64.6%; MEDIA-CONTRACT-03 6/8=75.0%; Goal D01..03 3/3 READY** по source и focused checks. CI/merge/API+worker delivery ещё PENDING и входят в DoD. Проценты изменились менее10п.п.; остальные AC основаны на прежнем проверенном Evidence, полный аудит не повторялся.
+Candidate23e796f/f65c342 с текущим docs diff: **454/683=66.47%**. Девять критериев исключены явным решением: VID-01..05 и JOBNOT-01..04 SUPERSEDED; manual speaker names/roles остаются. Personal теперь включает все применимые technical EVC-33..48/50 и manual speaker AC, исключает224 commercial-only: **454/459=98.91%**. При том же действующем scope и известных recovery gaps baseline main до реализации даёт444/459=96.73%;10 YD/UXN/PM AC добавляют10 READY. Совпадающий исторический denominator459 имеет другой состав: cancelled notification/identity AC исключены, manual speaker AC сохранены. Изменения менее10п.п.; рост не выдаётся за live verification.
 
-Незавершённые personal AC17: `PM-05`, `STTPRO-05`, `YANDEX-01`, `YANDEX-02`, `YANDEX-05`, `YD-01`, `YD-02`, `YD-03`, `YD-04`, `YD-05`, `YD-07`, `YD-08`, `YD-09`, `UXN-04`, `MC-08`, `MC-09` (исключённый из этой Goal Yandex scope), `SECX-06` BACKLOG (personal email отложен владельцем). Обсуждение filler-word cleaning не становится согласованной feature. Ручная приёмка отсутствует; dogfooding ad-hoc, required CI/delivery остаются обязательными. После merge фактическую main revision/готовность установить по registry и первичным records без metadata-only follow-up PR.
+Current Goal:14 затронутых code AC (8 YD + UXN-04/PM-05 + JOBNOT-05/06 + SECX-01/OBSERV-18) candidate READY по source и synthetic checks. Required current Linux CI/review, merge, schema0043/API/worker/web delivery и scoped external setup/smoke PENDING; это не DONE. Personal остаются SECX-06(DEFER) и REC-01/03/04/06(IN_PROGRESS, F78). F62 — внешняя отложенная процедура, не AC приложения.
 
-### Эпики / features на проверенном main
+### Эпики / features
 
-Таблица существующих эпиков соответствует merged main0cf7f72; MC-06 показан отдельно как main gap и исправленный candidate. Все атомарные статусы: [Colab](delivery/colab.md), [Studio](delivery/studio.md), [extensions](delivery/extensions.md), [commercial](delivery/commercial.md). Проценты эпиков не усредняются.
+Незамерженный candidate показан отдельно; проценты эпиков не усредняются. Полные статусы и ограничения находятся в indexed registries. N/A означает, что весь эпик явно отменён, не неизвестный denominator.
 
-| Эпик | READY / active | Scope | Незакрытые статусы |
+| Эпик | main READY / active | Candidate READY / active | Остаток candidate |
 |---|---|---|---|
-| `COLAB-BATCH-01` | 24/24 = 100.0% | текущий personal | — |
-| `COLAB-REALTIME-01` | 6/6 = 100.0% | текущий personal | — |
-| `COLAB-LIFECYCLE-02` | 2/2 = 100.0% | текущий personal | — |
-| `ENVIRONMENT-CAPABILITIES-01` | 17/50 = 34.0% | будущий commercial / общие technical отдельно | BACKLOG:33 |
-| `COMMERCIAL-INFRA-DATA-01` | 0/15 = 0.0% | будущий commercial / общие technical отдельно | BACKLOG:15 |
-| `COMMERCIAL-IDENTITY-01` | 0/18 = 0.0% | будущий commercial / общие technical отдельно | BACKLOG:18 |
-| `COMMERCIAL-DATA-GOVERNANCE-01` | 0/26 = 0.0% | будущий commercial / общие technical отдельно | BACKLOG:26 |
-| `COMMERCIAL-CROSS-BORDER-01` | 0/14 = 0.0% | будущий commercial / общие technical отдельно | BACKLOG:14 |
-| `COMMERCIAL-STT-QUOTA-01` | 0/16 = 0.0% | будущий commercial / общие technical отдельно | BACKLOG:16 |
-| `COMMERCIAL-SPEAKER-PRIVACY-01` | 0/3 = 0.0% | будущий commercial / общие technical отдельно | BACKLOG:3 |
-| `COMMERCIAL-QUEUE-FAIRNESS-01` | 0/6 = 0.0% | будущий commercial / общие technical отдельно | BACKLOG:6 |
-| `COMMERCIAL-BILLING-01` | 0/27 = 0.0% | будущий commercial / общие technical отдельно | BACKLOG:27 |
-| `COMMERCIAL-ECONOMICS-01` | 0/15 = 0.0% | будущий commercial / общие technical отдельно | BACKLOG:15 |
-| `COMMERCIAL-SECURITY-01` | 0/19 = 0.0% | будущий commercial / общие technical отдельно | BACKLOG:19 |
-| `COMMERCIAL-NOTIFICATIONS-01` | 0/8 = 0.0% | будущий commercial / общие technical отдельно | BACKLOG:8 |
-| `COMMERCIAL-LEGAL-01` | 0/15 = 0.0% | будущий commercial / общие technical отдельно | BACKLOG:15 |
-| `COMMERCIAL-COMPLETENESS-02` | 0/9 = 0.0% | будущий commercial / общие technical отдельно | BACKLOG:9 |
-| `BRAND-VOICEOPS-01` | 5/5 = 100.0% | main0cf7f72 | — |
-| `RESULTS-STUDIO-02` | 9/9 = 100.0% | текущий personal | — |
-| `YANDEX-DISK-01` | 0/8 = 0.0% | текущий personal | BACKLOG:8 |
-| `REALTIME-RECOVERY-03` | 6/6 = 100.0% | текущий personal | — |
-| `PWA-REQUIREMENTS-05` | 5/6 = 83.3% | текущий personal | IN_PROGRESS:1 |
-| `MEDIA-CONTRACT-03` | main5/8=62.5%; candidate6/8=75.0% | текущий personal | main MC-06 gap; MC-08/09 IN_PROGRESS |
-| `PERSONAL-VOICE-02` | 1/5 = 20.0% | текущий и отложенный voice scope | IN_PROGRESS:4 |
-| `SECURITY-LIFECYCLE-03` | 5/6 = 83.3% | текущий personal | BACKLOG:1 |
-| `RECOVERY-DATA-03` | 7/7 = 100.0% | текущий personal | — |
-| `PWA-CORE-01` | 16/16 = 100.0% | текущий personal | — |
-| `PWA-USER-EXPERIENCE-02` | 23/23 = 100.0% | текущий personal | — |
-| `PWA-UX-POLISH-03` | 7/7 = 100.0% | текущий personal | — |
-| `PWA-UX-CONTROLS-04` | 14/14 = 100.0% | текущий personal | — |
-| `PWA-TRANSCRIPTIONS-UX-01` | 4/4 = 100.0% | текущий personal | — |
-| `PWA-INGEST-01` | 11/11 = 100.0% | текущий personal | — |
-| `PWA-GOOGLE-PICKER-UX-01` | 9/9 = 100.0% | текущий personal | — |
-| `PWA-SEGMENTS-01` | 5/5 = 100.0% | текущий personal | — |
-| `PWA-BATCH-01` | 11/11 = 100.0% | текущий personal | — |
-| `PWA-AUDIO-PREPARATION-01` | 31/31 = 100.0% | текущий personal | — |
-| `PWA-SPEAKER-IDENTITY-01` | 5/5 = 100.0% | отложенная voice identity | — |
-| `PWA-MANIFEST-01` | 6/7 = 85.7% | текущий personal | IN_PROGRESS:1 |
-| `PWA-STANDARDIZATION-01` | 14/14 = 100.0% | текущий personal | — |
-| `PWA-TRANSCRIPT-MAINTENANCE-01` | 9/9 = 100.0% | текущий personal | — |
-| `PWA-REALTIME-01` | 13/13 = 100.0% | текущий personal | — |
-| `PWA-OPERABILITY-01` | 18/18 = 100.0% | текущий personal | — |
-| `PWA-SECURITY-HARDENING-02` | 21/21 = 100.0% | текущий personal | — |
-| `GOOGLE-DRIVE-RELIABILITY-02` | 6/6 = 100.0% | текущий personal | — |
-| `STORAGE-LIFECYCLE-02` | 22/22 = 100.0% | текущий personal | — |
-| `STT-PROVIDER-ABSTRACTION-01` | 13/14 = 92.9% | текущий personal | IN_PROGRESS:1 |
-| `YANDEX-STT-01` | 2/5 = 40.0% | текущий personal | IN_PROGRESS:3 |
-| `PWA-DICTIONARIES-01` | 1/1 = 100.0% | текущий personal | — |
-| `PWA-WORKER-ISOLATION-02` | 3/3 = 100.0% | текущий personal | — |
-| `PWA-DATABASE-LEAST-PRIVILEGE-03` | 8/8 = 100.0% | текущий personal | — |
-| `JOB-RELIABILITY-02` | 17/17 = 100.0% | текущий personal | — |
-| `JOB-NOTIFICATIONS-01` | 6/6 = 100.0% | текущий personal | — |
-| `REALTIME-CONTINUITY-02` | 5/5 = 100.0% | текущий personal | — |
-| `TRANSCRIPT-EXPORTS-02` | 3/3 = 100.0% | текущий personal | — |
-| `USAGE-COST-ACCOUNTING-01` | 6/6 = 100.0% | текущий personal | — |
-| `OBSERVABILITY-AUDIT-02` | 35/35 = 100.0% | текущий personal | — |
-| `RELEASE-SAFETY-02` | 5/5 = 100.0% | текущий personal | — |
-| `PERSONAL-TECHNICAL-01` | 5/5 = 100.0% | текущий personal | — |
+| `COLAB-BATCH-01` | 24/24 | 24/24 | — |
+| `COLAB-REALTIME-01` | 6/6 | 6/6 | — |
+| `COLAB-LIFECYCLE-02` | 2/2 | 2/2 | — |
+| `PWA-CORE-01` | 16/16 | 16/16 | — |
+| `PWA-USER-EXPERIENCE-02` | 23/23 | 23/23 | — |
+| `PWA-UX-POLISH-03` | 7/7 | 7/7 | — |
+| `PWA-UX-CONTROLS-04` | 14/14 | 14/14 | — |
+| `PWA-TRANSCRIPTIONS-UX-01` | 4/4 | 4/4 | — |
+| `PWA-INGEST-01` | 11/11 | 11/11 | — |
+| `PWA-GOOGLE-PICKER-UX-01` | 9/9 | 9/9 | — |
+| `PWA-SEGMENTS-01` | 5/5 | 5/5 | — |
+| `PWA-BATCH-01` | 11/11 | 11/11 | — |
+| `PWA-AUDIO-PREPARATION-01` | 31/31 | 31/31 | — |
+| `PWA-SPEAKER-IDENTITY-01` | 5/5 | 5/5 | — |
+| `PWA-MANIFEST-01` | 6/7 | 7/7 | — |
+| `PWA-STANDARDIZATION-01` | 14/14 | 14/14 | — |
+| `PWA-TRANSCRIPT-MAINTENANCE-01` | 9/9 | 9/9 | — |
+| `PWA-REALTIME-01` | 13/13 | 13/13 | — |
+| `PWA-OPERABILITY-01` | 18/18 | 18/18 | — |
+| `PWA-SECURITY-HARDENING-02` | 21/21 | 21/21 | — |
+| `GOOGLE-DRIVE-RELIABILITY-02` | 6/6 | 6/6 | — |
+| `STORAGE-LIFECYCLE-02` | 22/22 | 22/22 | — |
+| `STT-PROVIDER-ABSTRACTION-01` | 14/14 | 14/14 | — |
+| `YANDEX-STT-01` | 5/5 | 5/5 | — |
+| `PWA-DICTIONARIES-01` | 1/1 | 1/1 | — |
+| `PWA-WORKER-ISOLATION-02` | 3/3 | 3/3 | — |
+| `PWA-DATABASE-LEAST-PRIVILEGE-03` | 8/8 | 8/8 | — |
+| `JOB-RELIABILITY-02` | 17/17 | 17/17 | — |
+| `JOB-NOTIFICATIONS-01` | 6/6 | 2/2 | — |
+| `REALTIME-CONTINUITY-02` | 5/5 | 5/5 | — |
+| `TRANSCRIPT-EXPORTS-02` | 3/3 | 3/3 | — |
+| `USAGE-COST-ACCOUNTING-01` | 6/6 | 6/6 | — |
+| `OBSERVABILITY-AUDIT-02` | 35/35 | 35/35 | — |
+| `RELEASE-SAFETY-02` | 5/5 | 5/5 | — |
+| `PERSONAL-TECHNICAL-01` | 5/5 | 5/5 | — |
+| `BRAND-VOICEOPS-01` | 5/5 | 5/5 | — |
+| `RESULTS-STUDIO-02` | 9/9 | 9/9 | — |
+| `YANDEX-DISK-01` | 0/8 | 8/8 | — |
+| `REALTIME-RECOVERY-03` | 6/6 | 6/6 | — |
+| `PWA-REQUIREMENTS-05` | 5/6 | 6/6 | — |
+| `MEDIA-CONTRACT-03` | 8/8 | 8/8 | — |
+| `PERSONAL-VOICE-02` | 1/5 | 0/0 N/A | SUPERSEDED |
+| `SECURITY-LIFECYCLE-03` | 5/6 | 5/6 | BACKLOG:1 |
+| `RECOVERY-DATA-03` | 3/7 | 3/7 | IN_PROGRESS:4 |
+| `ENVIRONMENT-CAPABILITIES-01` | 17/50 | 17/50 | BACKLOG:33 |
+| `COMMERCIAL-INFRA-DATA-01` | 0/15 | 0/15 | BACKLOG:15 |
+| `COMMERCIAL-IDENTITY-01` | 0/18 | 0/18 | BACKLOG:18 |
+| `COMMERCIAL-DATA-GOVERNANCE-01` | 0/26 | 0/26 | BACKLOG:26 |
+| `COMMERCIAL-CROSS-BORDER-01` | 0/14 | 0/14 | BACKLOG:14 |
+| `COMMERCIAL-STT-QUOTA-01` | 0/16 | 0/16 | BACKLOG:16 |
+| `COMMERCIAL-SPEAKER-PRIVACY-01` | 0/3 | 0/3 | BACKLOG:3 |
+| `COMMERCIAL-QUEUE-FAIRNESS-01` | 0/6 | 0/6 | BACKLOG:6 |
+| `COMMERCIAL-BILLING-01` | 0/27 | 0/27 | BACKLOG:27 |
+| `COMMERCIAL-ECONOMICS-01` | 0/15 | 0/15 | BACKLOG:15 |
+| `COMMERCIAL-SECURITY-01` | 0/19 | 0/19 | BACKLOG:19 |
+| `COMMERCIAL-NOTIFICATIONS-01` | 0/8 | 0/8 | BACKLOG:8 |
+| `COMMERCIAL-LEGAL-01` | 0/15 | 0/15 | BACKLOG:15 |
+| `COMMERCIAL-COMPLETENESS-02` | 0/9 | 0/9 | BACKLOG:9 |
 
 ## Validation Plan и Evidence
 
@@ -484,13 +520,13 @@ Config Settings env→defaults, explicit database URL/secret-file boundaries, Co
 | ID | Статус / приоритет / область | Evidence и влияние | Действие / основание / зависимости | Confidence |
 |---|---|---|---|---|
 | F01 | CLOSED / P1 · RS-01/02/06/08/10/11/13, TRANSC-01..03 | Durable unfinished cache до full document/cancel, export-only retry без STT; Live DOCX/MD/timed export и отдельные capture clocks; JSON manifest выбранной Drive folder идемпотентен. Format/privacy/worker/UI/fake Google checks PASS. Code f20ce3e, CI37428475481/Studio37428475455 PASS06Oct; dependency audit37426076418 reused по identity graphs. Paths: realtimeTranscript.ts, job_cached_transcript.py, transcript_manifest_export.py. | FIX/IMPLEMENT выполнено в выбранном scope с содержательными regressions; external provider calls/user data не использовались. PR326 merged1937658; web/API/migration37430070252 и worker37431465267 SUCCESS; current main bc5150eb189b44867101ca45b9da201921a99227 проверен A20261010-CI/RUNTIME. | HIGH code/protocol/format evidence; реальный внешний provider не проверялся |
-| F02 | DEFER / P1 · YD-01..05/07..09 | SourceType/routes/config/UI не содержат Yandex Disk adapter; Speech Kit не является Disk. Q008/Q043..046 сохраняют optional подключение personal. | DEFER по решению владельца24Oct2026; IMPLEMENT в будущей выбранной Goal: Добавить owner-scoped optional Disk connector/source/folder/DOCX destination с readback/idempotency; не ждать retained ordinary artifact. | HIGH: проверены entrypoints/config/provider registry |
+| F02 | FIX / P1 · candidate READY · YD-01..05/07..09 | PERSONAL-INTEGRATIONS-20261025 candidate23e796f/f65c342: owner/session/PKCE OAuth, encrypted refresh/revoke, account/version handles, paginated file/folder/empty selection, folder-only filter, source/audio intake, deterministic DOCX receipt/create-only/readback и cache-only recovery. Local focused backend245/115 и UI94 + App5 PASS; группы пересекаются. Browser layout3 PASS390/768/1280px, synthetic API. Current Linux PG/CI и exact-main CD PENDING; реальный Disk grant ещё не проверен, paid STT не выполнялся. | IMPLEMENT выбран владельцем25Oct2026; один PR, dependent OAuth/Telegram config и CI/CD gates остаются обязательными. | HIGH code/synthetic boundaries; actual external grant PENDING |
 | F03 | CLOSED / P1 · RTC-01..04/06 | Новые single-use capabilities в одной сессии, bounded unsent replay, явные gaps и indexed final corrections; client/protocol/relay checks PASS. Реальная provider/poor-network сессия не запускалась. Code f20ce3e, CI37428475481/Studio37428475455 PASS06Oct; dependency audit37426076418 reused по identity graphs. Paths: realtimeSession.ts/realtimeSegmentStream.ts/yandex_realtime_events.py. | FIX/IMPLEMENT выполнено в выбранном scope с содержательными regressions; external provider calls/user data не использовались. PR326 merged1937658; web/API/migration37430070252 и worker37431465267 SUCCESS; current main bc5150eb189b44867101ca45b9da201921a99227 проверен A20261010-CI/RUNTIME. | HIGH client/wire/regressions; реальные poor-network/provider условия не проверялись |
-| F04 | FIX / P1 · YANDEX-01/02/05, MC-08 · code READY; CI/CD PENDING | Baseline f0c93e0 теряет string timing/nested channel. Code854c0d7 нормализует REST int64/probability, nested/legacy tags, result gateway/finalRefinement; terminal ciphertext reload без повторного submit. Combined193 focused checks PASS24Oct. | FIX выполнен в code; current required Linux/API CI, merge/API/worker delivery REQUIRED/PENDING до закрытия Goal. No paid canary/config enable. | HIGH parser/transport/regression evidence; реальный provider outcome не проверен |
-| F05 | FIX / P1 · STTPRO-05, MC-09; YANDEX-03 compatibility · code READY; CI/CD PENDING | Code7151628: catalog Yandex realtime diarization=false, unsupported selection rejected; relay REAL_TIME/SPEAKER_LABELING_DISABLED unchanged, FULL_DATA batch true. Combined193 focused checks PASS24Oct; authenticated catalog regression added. | FIX truthful capability без скрытого deferred Live. Required Linux/API CI, merge/API/worker CD PENDING; actual Yandex disabled не включается. | HIGH catalog/selection/wire evidence; actual provider outcome не заявляется |
+| F04 | CLOSED / P1 · YANDEX-01/02/05, MC-08 | PR341 merged24Oct/mainb323cfd799a5be6a8ac44efa3971faf31eabf1af; current PR CI40080175294, API40080899685, worker40081158508 SUCCESS (readback25Oct). Official int64 strings/channel/probability/finalRefinement и durable encrypted terminal reload подтверждены193 focused checks. Real paid Yandex canary не выполнялся. | FIX выполнен и поставлен; новый Disk scope не возобновляет эту завершённую Goal. | HIGH code/tests/primary CI/CD records; actual paid provider outcome не заявляется |
+| F05 | CLOSED / P1 · STTPRO-05, MC-09 | PR341/mainb323cfd; CI40080175294/API40080899685/worker40081158508 SUCCESS, primary readback25Oct. REAL_TIME catalog/selection diarization=false; disabled wire labels retained, FULL_DATA batch remains capable. Synthetic catalog/relay checks PASS; paid runtime disabled unchanged. | FIX выполнен и поставлен; unsupported Live diarization не включается. | HIGH catalog/wire/primary records |
 | F06 | CLOSED / P1 · PB-10, MC-08 metadata, UXN-06/07, PO-14 | PR327/main bc5150eb189b44867101ca45b9da201921a99227: transcription_metadata.py, job_google_docs_output.py, transcription_analytics.py; actual immutable provider/model, omit unknown recording date, source/transform provenance. CI37500894207 и main37502013651 SUCCESS06Oct; metadata/legacy/owner regressions PASS. CD37502621690/37504355706 SUCCESS, A20261010-RUNTIME. | FIX выполнен. Numeric-string REST F04 и независимые media contract gaps не входят в closure; historical documents не переписывались. | HIGH code/tests/primary records; реальные новые Google документы не создавались в AUDIT |
 | F07 | CLOSED / P2 · UXN-02, PTM-01 | Authoritative known UTC metadata naming без fabricated date; fragment bounds по measured whole source; parser/API/worker/UI checks PASS. Code f20ce3e, CI37428475481/Studio37428475455 PASS06Oct; dependency audit37426076418 reused по identity graphs. Paths: audioOutputNaming.ts/AudioPreparationPage.tsx/TranscriptCatalogMigrationPanel.tsx. | FIX/IMPLEMENT выполнено в выбранном scope с содержательными regressions; external provider calls/user data не использовались. PR326 merged1937658; web/API/migration37430070252 и worker37431465267 SUCCESS; current main bc5150eb189b44867101ca45b9da201921a99227 проверен A20261010-CI/RUNTIME. | HIGH source/component/decoder tests; UI поставлена, current web identity bc5150eb189b44867101ca45b9da201921a99227 PASS10Oct |
-| F08 | OPEN / FUTURE · VID-01..04, SP-01..05 | Q009/Q089..092 явно откладывают automatic voice identity; manual names/roles/samples существуют, matcher нет. | DEFER: Сохранить existing manual functionality, не включать voiceprints до отдельного решения; не блокировать обычную diarization/current readiness. | HIGH актуальное прямое требование |
+| F08 | WITHDRAWN · VID-01..05 | Владелец25Oct2026 исключил automatic voice identification окончательно; source Doc scoped edit/readback и stable SUPERSEDED IDs сохранены. | REMOVE requirement: matcher/voiceprints не реализуются; обычная diarization и manual names/roles не удаляются. | HIGH explicit owner decision |
 | F09 | OPEN / FUTURE · commercial/EVC contour-specific | Один personal stack; нет commercial registration/billing/RLS/contour rollout/capability presets. Q004/Q005: будущий scope. | DEFER: Сохранить roadmap/AC; implementation только отдельная выбранная Goal и необходимые legal/product decisions. | HIGH repo scope; внешняя неучтённая инфраструктура не проверялась |
 | F10 | CLOSED / P1 · AP-14/16, STORAG, REC | Selected originals3/7/30, отсутствие finished S3 writer, fenced leases/all-full-docs retirement, bounded version cleanup/readback и page membership; storage/API/PG/lifecycle checks PASS. External production deletion не выполнялась. Code f20ce3e, CI37428475481/Studio37428475455 PASS06Oct; dependency audit37426076418 reused по identity graphs. Paths: audio_result_rendering.py/source_deletion.py/source_storage.py/rehearse_studio_restore.py. | FIX/IMPLEMENT выполнено в выбранном scope с содержательными regressions; external provider calls/user data не использовались. PR326 merged1937658; web/API/migration37430070252 и worker37431465267 SUCCESS; current main bc5150eb189b44867101ca45b9da201921a99227 проверен A20261010-CI/RUNTIME. | HIGH code/local lifecycle tests; MEDIUM runtime schedules/deletion/recovery evidence |
 | F11 | CLOSED / P2 · USAGEC-02 | Immutable provider-specific nominal public USD snapshot/confirmed duration/rounding; unknown Yandex price не ноль и не ElevenLabs. Accounting tests PASS; runtime Yandex tariff UNSET, invoice debit не заявляется. Code f20ce3e, CI37428475481/Studio37428475455 PASS06Oct; dependency audit37426076418 reused по identity graphs. Paths: provider_usage_accounting.py/JobUsageCostSummary.tsx. | FIX/IMPLEMENT выполнено в выбранном scope с содержательными regressions; external provider calls/user data не использовались. PR326 merged1937658; web/API/migration37430070252 и worker37431465267 SUCCESS; current main bc5150eb189b44867101ca45b9da201921a99227 проверен A20261010-CI/RUNTIME. | HIGH code/rounding/immutable/cross-provider tests; MEDIUM runtime tariff applicability |
@@ -544,13 +580,13 @@ Config Settings env→defaults, explicit database URL/secret-file boundaries, Co
 | F59 | CLOSED / P2 · AP-31 | metadata-only output, worker regeneration из retained originals без STT/S3; independent download/Drive/handoff, selected retention и512-point waveform/sample. Audio/API/lease/cleanup/component regressions PASS; real synthetic FFmpeg local PASS,5 Linux FFmpeg skips без binary. Code f20ce3e, CI37428475481/Studio37428475455 PASS06Oct; dependency audit37426076418 reused по identity graphs. Paths: audio_analysis.py/AudioWaveform.tsx/AudioResultDownload.tsx. | FIX/IMPLEMENT выполнено в выбранном scope с содержательными regressions; external provider calls/user data не использовались. PR326 merged1937658; web/API/migration37430070252 и worker37431465267 SUCCESS; current main bc5150eb189b44867101ca45b9da201921a99227 проверен A20261010-CI/RUNTIME. | HIGH synthetic decoder/component/worker evidence; real provider calls не выполнялись |
 | F60 | CLOSED / P2 · reconciliation scaling | Выбранное исправление реализовано; module/caller/dependency/docs/query contracts и соответствующие regressions проверены. Code f20ce3e, CI37428475481/Studio37428475455 PASS06Oct; dependency audit37426076418 reused по identity graphs. Paths: storage_reconciliation.py/0040_text_lifecycle.py. | REFACTOR: page-bounded membership и composite index0040; SQLite/PG queries/schema PASS, production load не измерен. PR326 merged1937658; web/API/migration37430070252 и worker37431465267 SUCCESS; current main bc5150eb189b44867101ca45b9da201921a99227 проверен A20261010-CI/RUNTIME. | HIGH code/current Linux regressions и exact primary records; current runtime identity/health PASS10Oct; production guarantees вне проверенного сценария не заявляются. |
 | F61 | CLOSED / P2 · локальные ignored материалы | 06Oct:32 завершённых owned per-run synthetic dirs,1048files/283844773bytes удалены; reviewed inventory и zero-remaining readback, absolute containment/no reparse/no tracked/no active process references/unchanged inventory. | REMOVE выполнен в выбранной Goal; active env/store/node_modules, unknown и чужие материалы сохранены. Tracked generated protobuf/notebooks не затронуты. | HIGH lifecycle проверки конкретной выборки; остальные ignored материалы не объявлены мусором |
-| F62 | OPEN / SPEC-GAP-OPS-01 · внешние процедуры Q301..308 | Источник задаёт owner-triggered аудит лекций через модель/Drive и сравнение cleaned mode, без LLM API в Studio. Нет выбранных материалов/разрешённого экспериментального scope; выполнение операции не измеряется кодом приложения. | DOCUMENT: при отдельном поручении закрепить operational Goal, материалы, способ аудио-сверки, наблюдаемые результаты и ограничения. Не добавлять несогласованную app feature; не блокирует current personal. | HIGH source boundary; MEDIUM применимость доступного аудио-инструмента без выбранных файлов |
+| F62 | DEFER / SPEC-GAP-OPS-01 · Q301..308 | Это owner-triggered аудит полноты/терминов лекций и сравнение normal/cleaned ElevenLabs на одинаковых материалах, без LLM API feature Studio. Материалы и экспериментальный scope не выбраны. | DEFER по явному решению владельца; отдельная operational Goal с материалами, аудио-сверкой и разрешением расхода. Текущую personal Goal не блокирует. | HIGH source boundary; MEDIUM применимость аудио-инструмента без выбранных файлов |
 | F63 | CLOSED / P2 · CI duration/cost | PR327 исправил budget/selection/reuse: PR37500894207 success, elapsed265s/sum542runner-s; main37502013651 success, elapsed273s/sum560runner-s; reference623runner-s/263elapsed. Main full fallback выполнен из-за разных runner images, а не слепой reuse. | REFACTOR/DOCUMENT выполнено: verified equivalent validation context или полный fallback, docs-only selection, required aggregate, cleanup входит в budget. Обещание отсутствия любого повторного run не вводится; included minutes UNSET. | HIGH primary job times/source checks; MEDIUM будущая стоимость при изменении workload |
 | F64 | CLOSED / P1 · AP-02/04/05, audio processing | Production a666df1: failed20%, processing_failed. PR325/main21d2e45 исправляет insertion progress flags между -fs/value. Synthetic/real FFmpeg regressions PASS; Linux CI1889 PASS, Studio/E2E PASS. API migration37357194265 и worker37358884874 SUCCESS05Oct, exact revision/health подтверждены. | FIX выполнен: global flags после executable; output budget/progress сохранены. Реальное пользовательское аудио не перезапускалось; результат новой пользовательской обработки не утверждается. | HIGH code/regressions/CD records; старый stderr отсутствует |
 | F65 | CLOSED / P1 · diagnostics/owner isolation | Audio diagnostics job_id ссылался только на transcription_jobs. PR325/main21d2e45 добавляет отдельную nullable audio FK, one-job constraint/index и owner filtering; enforced-FK/legacy/privacy regressions PASS. Protected migration37357194265 поставила0039; worker37358884874 SUCCESS05Oct. | FIX выполнен: category/exit-only diagnostics, bounded stderr16KiB без raw provider/private payload. CI и applicable API/worker delivery PASS; старый production SQL exception не извлекался. | HIGH enforced-FK reproduction,0039 и exact CD records |
 | F66 | DEFER / P2 · SECX-06 | Source Q268/S257 требует собственный домен для системных писем. PR329/main5601f1a содержит inactive encrypted outbox/reset/security events, CI38141779639 synthetic delivery/auth/PG PASS; SMTP disabled, реальных писем не отправляли. | DEFER: решение владельца 11Oct2026 «Отложить почту для personal»; убрать недоступную recovery CTA из Login. Future activation с собственным доменом — отдельный scope; не блокирует текущую Goal. | HIGH: явное решение владельца и code/CI; future SMTP/domain configuration не проверялись |
 | F67 | CLOSED / P2 · MC-01 | main bc5150eb189b44867101ca45b9da201921a99227, проверка10Oct2026: media_preparation.py:214/534: до STT проверяется format.duration, не audio stream/codec/полная целостность. Synthetic video-only MP4 с объявленным audio/mp4 проходит один provider part. | FIX: реальный stream/container/codec и bounded integrity preflight до первого provider call; video-only/mislabeled/truncated fixtures. Source limits сохраняются. Закрыто PR329/main5601f1a, CI38141779639 и exact web/API/worker delivery records выше PASS; применимые ограничения сохранены. | HIGH: исполняемый synthetic FFmpeg reproduction на main; реальные пользовательские файлы не проверялись |
-| F68 | FIX / P2 · MC-06 · candidate READY, CI/delivery PENDING | Read-only23Oct: six owner documents/DB attempts, 5 parts →23 labels, 2 parts →10; main0cf7f72 namespaces labels safely but unnecessarily splits diarization and prepends exhaustive mapping. | Whole-request preference within file/duration/project guards; retain old paid multipart plan and part-local identity fallback; one compact note after speech. Earlier ambiguity fix PR329 retained. Owner authorizes one PR/new documents only; no voice matching or old-doc edits. Focused synthetic/SQLite/real-media PASS; current required CI/merge/CD pending. | HIGH for observed mapping/assembly; acoustic correctness not verified |
+| F68 | CLOSED / P2 · MC-06 | PR338/main8c25efa627b6eeebf13e87e26161e65a96975942; CI40014806617/API40015574555/worker40017882902 SUCCESS, primary readback25Oct. Whole/clip diarization within provider/project guards, immutable old multipart plan, compact limitation after speech; no prefix legend. Synthetic/real-media regressions PASS; no acoustic accuracy claim, old documents not changed. | FIX выполнен и поставлен; manual speaker names и numbered diarization сохраняются. | HIGH assembly/code/records; acoustic identity не проверялась |
 | F69 | CLOSED / P2 · UXN-05 | main bc5150eb189b44867101ca45b9da201921a99227, проверка10Oct2026: App.tsx composer и AudioPreparationPage.tsx reuse передают prepared source, но явно не обозначают, к какой версии длительности относятся интервалы/таймкоды после сокращения пауз. Provenance PR327 не заменяет UI-пояснение. | FIX: указать выбранную версию/шкалу и изменённую длительность в fragmentation/preflight; компонентный regression для оригинала и prepared source. Закрыто PR329/main5601f1a, CI38141779639 и exact web/API/worker delivery records выше PASS; применимые ограничения сохранены. | MEDIUM: source/UI/component inventory; новый реальный prepared upload в AUDIT не создавался |
 | F70 | CLOSED / P2 · EVC-35/41/43/48, coupling | main bc5150eb189b44867101ca45b9da201921a99227, проверка10Oct2026: main.py связывает конкретные Google/Auth/Docs DTO и token lifecycle; App.tsx остаётся central orchestration. F15 закрыл bounded extraction, не full replaceability. Existing adapters/providers/storage/notifications работают. | REFACTOR: выделить только требуемые replaceable auth/cloud/document boundaries с preserving compatibility, owner and transaction contracts. Без total rewrite; depends on adapter contracts. Закрыто PR329/main5601f1a, CI38141779639 и exact web/API/worker delivery records выше PASS; применимые ограничения сохранены. | MEDIUM: explicit imports/handlers и большой change surface; нагрузочный bottleneck этим не доказан |
 | F71 | CLOSED / P2 · DBLP-08, RELEAS-02 | main bc5150eb189b44867101ca45b9da201921a99227, проверка10Oct2026: worker rollback/scripts и synthetic dump→quarantine→authenticated API decrypt есть; полного tested release rollback API/web/worker после schema/credential switch в доступном Evidence нет. REC restore AC этим не отменяются. | IMPLEMENT/DOCUMENT: isolated compatible release rollback rehearsal с explicit schema/config recovery, bounded smoke и без bootstrap credential в runtime. Production restore в AUDIT запрещён. Закрыто PR329/main5601f1a, CI38141779639 и exact web/API/worker delivery records выше PASS; применимые ограничения сохранены. | MEDIUM: test/procedure inventory; отсутствие полного доступного record не доказывает отсутствие внешнего operator drill |
@@ -560,6 +596,9 @@ Config Settings env→defaults, explicit database URL/secret-file boundaries, Co
 | F75 | CLOSED / P2 · STORAG-06, Q162..164/Q178 | main bc5150eb189b44867101ca45b9da201921a99227, проверка10Oct2026: source_policy.py:9 и App.tsx:216 принимают 1h/24h для новых transcription inputs; production settings10Oct показывают эти варианты. Q162 задаёт 3/7/30. Audio-specific retention3/7/30 реализован отдельно. | FIX: согласовать новые transcription uploads/preferences с 3/7/30, preserve existing expiry/legacy reads и отдельную audio policy; API/UI/expiry regressions. Закрыто PR329/main5601f1a, CI38141779639 и exact web/API/worker delivery records выше PASS; применимые ограничения сохранены. | MEDIUM: extra options подтверждены code/UI; эксклюзивность перечня3/7/30 выведена из Q162, при явном разрешении других сроков scope finding пересматривается; legacy values не менялись |
 
 | F76 | CLOSED / P2 · regression suite / audio | mainbc5150e CI37502013651:5 real FFmpeg tone/envelope/wav/flac/copy tests SKIPPED; tests explicitly label Linux media profile, workflow не устанавливает FFmpeg. Mock commands не покрывают реальные codec/progress/decoder изменения (см. F64). Local10Oct4 real FFmpeg cases PASS; это не future CI gate. | IMPLEMENT/DOCUMENT: выбрать дешёвый affected media profile с настоящим FFmpeg и fail-closed применимостью, сохранить docs-only selection и bounded CI budget. Один smoke на codec family, без размножения одинаковых pipeline runs. Required gate менять только в выбранной implementation/tooling Goal. Закрыто PR329/main5601f1a, CI38141779639 и exact web/API/worker delivery records выше PASS; применимые ограничения сохранены. | HIGH primary skip list/workflow/tests; влияние на future regressions, current codec defect этим не доказан |
+
+| F77 | CLOSED / changed policy · OBSERV-18, REC-02/04 | Прежний missing/stale Studio backup был исправлен18Oct;25Oct владелец отключил10h schedule и выбрал Cloudkeep. Старое наблюдение не выдаётся за current defect. | DOCUMENT/FIX: Cloudkeep owns regular freshness, Studio tracks actual failed protected backup only; existing R2 snapshots/pre-migration backup сохранены. Candidate tests PASS, monitoring CD PENDING. | HIGH explicit decision/config evidence; external recovery limits в F78 |
+| F78 | OPEN / P2 · REC-01/03/04/06 | После перехода на Cloudkeep не подтверждены retention policy, новый RPO и восстановление именно созданного им Studio dump до рабочей application. Schedule3days + success record не доказывают эти условия. | DOCUMENT/IMPLEMENT в отдельном bounded recovery scope: установить retention/RPO и провести разрешённое isolated restore/decrypt/deletion-inventory drill. Production restore/смена targets в текущей Goal не выполняются. | HIGH known Evidence gap; actual recovery outcome UNSET |
 
 ## Документы, мусор и консолидация
 
@@ -575,21 +614,19 @@ Config Settings env→defaults, explicit database URL/secret-file boundaries, Co
 
 | Приоритет | Bounded work | Зависимости / закрытие |
 |---|---|---|
-| P1 | Yandex wire/capability F04/F05 | MC-08/09, YANDEX/STTPRO: faithful REST/grpc fixtures, truthful interactive mode; no paid canary без выбора владельца |
-| DEFER по решению владельца24Oct | Optional Yandex Disk F02 |8 YD AC + UXN-04/PM-05; scoped owner connector/source/folder/DOCX/retry/revocation, без commercial/legal rollout |
+| DONE | Yandex wire/capability F04/F05 | PR341/mainb323cfd, CI/API/worker records SUCCESS; paid canary не запускался |
+| CURRENT | Personal integrations F02 + Telegram/Cloudkeep/recovery |8 YD AC + UXN-04/PM-05, JOBNOT-05/06, SECX-01, OBSERV-18; один PR и поставка, без paid STT |
 | DONE | Media/input contract F67/F68/F69/F73, retention F75 | MC-01/06/07, UXN-05, STORAG-06: stream/codec/integrity before STT, part/timeline/remaining ranges, prepared version, new3/7/30 writes with legacy compatibility |
 | DONE | Real media regression F76 | Affected FFmpeg profile вместо пяти unconditional skips; synthetic inputs и bounded runtime, no paid provider canary |
 | DONE | Guidance F74 | PUX-08 + state-dependent batch diarization copy; reconnect/recovery wording соответствует code |
 | DEFER | Personal emails F66 | SECX-06; owner11Oct2026 отложил. Future own-domain transport/config — отдельная Goal |
 | DONE | Replaceability/recovery F70/F71 |4 technical EVC, DBLP-08/RELEAS-02; preserving auth/Google/owner/transaction APIs и isolated compatible rollback |
 | DONE | F72 | Сверить architecture/processing lifecycle и incoming links, не перенести отменённое поведение обратно в code |
-| DEFER/FUTURE | F08/F09/F62 | Voice identity/commercial future; cleaned experiment и lecture audit только отдельный operational scope |
+| WITHDRAWN / DEFER | F08 / F09,F62 | Automatic voice identity исключена; commercial, cleaned experiment и lecture audit отложены |
 
-## Следующая bounded Goal — предложение, не активировано
+## Следующий шаг
 
-`YANDEX-CONTRACT-02`: исправить F04/F05, закрыть MC-08/09 и затронутые YANDEX-01/02/05/STTPRO-05; сохранить READY YANDEX-03 по regression tests по faithful protocol evidence. Результат — сохранённые таймкоды/метки официальных REST ответов и truthful realtime capabilities без скрытой смены provider/режима.
-
-Required Evidence: numeric string/number/null/bool/non-finite/out-of-range finalIndex/time/channel fixtures; multi-final/refinement/order/dedup, dictionary/mode compatibility, fake transport polls/circuit/timeout; affected API/UI tests, exact current PR CI/merge, applicable versioned API/worker/web delivery и safe smoke. Non-goals: Yandex Disk, commercial, voice identity, cleanup filler words, user data reprocessing, paid provider canary, другие findings. Dependencies: provider contract/capability registry и current output standard. Blocker только выбор Goal владельцем; real Yandex runtime включение/credential/canary не считается разрешённым аудитом и не требуется для synthetic correctness proof.
+Завершить текущую PERSONAL-INTEGRATIONS-20261025: current CI/review, merge, protected schema0043/API и совместимые web/worker, runtime identity/roles/health; owner credential staging и scoped Disk/Telegram smoke. Следующая implementation Goal ещё не выбрана. F62/F66/commercial отложены, voice identification исключена.
 
 ## Audit quality review
 

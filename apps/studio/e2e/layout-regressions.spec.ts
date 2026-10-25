@@ -292,3 +292,30 @@ test('a reset link is usable in an already authenticated browser without retaini
   await expect(page.getByRole('button', {name: 'Забыли пароль?', exact: true})).toHaveCount(0);
   expect(await page.evaluate(() => window.location.hash)).toBe('');
 });
+
+for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:1280,height:720}]) {
+  test(`Yandex folder picker remains usable and returns focus at ${viewport.width}px`, async ({page}) => {
+    await page.setViewportSize(viewport);
+    await fixtures(page);
+    const folder = {path:'disk:/', name:'Мой диск', is_folder:true, fingerprint:'f'.repeat(64), mime_type:null, size_bytes:null, modified:null};
+    await page.route('**/api/yandex/resources/list', route => route.fulfill({json:{folder, items:Array.from({length:20},(_,i)=>({...folder,path:`disk:/Folder${i}`,name:`Длинное название папки ${i} ${'результаты '.repeat(12)}`})),next_offset:null}}));
+    await page.route('**/api/yandex/resources/select', route => route.fulfill({json:{...folder,id:'6f5d76f9-1ced-44a4-abf5-9ff96092687e'}}));
+    await page.route('**/api/projects/*/output-folders/yandex-disk/verify', route => route.fulfill({json:{name:'Мой диск',web_view_url:'https://disk.yandex.ru/client/disk/',provider:'yandex_disk'}}));
+    await page.goto('/transcriptions');
+    const trigger=page.getByRole('button',{name:'Выбрать папку Яндекс Диска для задачи 1',exact:true});
+    await trigger.click();
+    const dialog=page.getByRole('dialog',{name:'Выберите папку Яндекс Диска',exact:true});
+    await expect(dialog.getByRole('button',{name:'Выбрать эту папку'})).toBeEnabled();
+    await noHorizontalOverflow(page);
+    expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth+1)).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await trigger.click();
+    await dialog.getByRole('button',{name:'Выбрать эту папку'}).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByText('Яндекс Диск · DOCX',{exact:false})).toBeVisible();
+    await noHorizontalOverflow(page);
+    expect(await page.evaluate(()=>Object.values(sessionStorage).some(value=>value.includes('"provider":"yandex_disk"')))).toBe(true);
+  });
+}

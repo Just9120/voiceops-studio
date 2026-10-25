@@ -475,7 +475,15 @@ Backup/restore rehearsal is manual and isolated:
 - destroy only the temporary target after verification;
 - never delete, overwrite, prune, or reset live production data from the rehearsal path.
 
-Personal backup schedule is defined by
+Regular personal database backups are owned by Cloudkeep from25Oct2026 by the
+owner's explicit decision. The Studio host timer was disabled/stopped; existing
+R2 snapshots, credentials and protected pre-migration backups remain intact.
+Cloudkeep's selected database job and its verified per-target executions are
+the source of regular backup/freshness evidence. Studio does not infer their
+success or failure from absence/age of a Studio snapshot. A reported failed
+Studio pre-migration backup still raises an owner-scoped incident.
+
+The historical Studio backup schedule is defined by
 [studio-postgres-backup.timer](../../deploy/studio/systemd/studio-postgres-backup.timer):
 every 10 hours after the previous activation. The
 [backup script](../../scripts/backup_studio_postgres_r2.sh) keeps scheduled
@@ -484,12 +492,16 @@ snapshots are kept within 90 days. These retention rules are not a fixed expiry
 for every snapshot. Repository configuration alone does not prove that the
 host timer is enabled or that a scheduled backup succeeded. Confirm those
 conditions and the latest snapshot age from host/backup records before recovery.
-The owner selected a 12-hour personal RPO (43200 seconds) and a 4-hour RTO
-(14400 seconds) on 2026-10-06. The existing R2 backup remains in use. The
-10-hour interval is not itself a verified RPO; actual snapshot age and recovery
-measurements must be checked against the selected targets.
+The former fixed12-hour personal RPO and10-hour Studio schedule were superseded
+by the owner25Oct2026 in favour of Cloudkeep scheduling. A replacement guaranteed
+RPO is UNSET; a schedule and SQL delivery records alone do not establish it.
+The4-hour RTO remains unchanged. Recovery measurements must identify the actual
+selected Cloudkeep version/target, available Studio decryption keys and complete
+application recovery. Existing R2 pre-migration snapshots remain in use.
 
-Host installation is an explicit operator step, not a consequence of component
+The following is the historical/reactivation procedure, not an instruction to
+enable the disabled timer during delivery. Reactivation needs an explicit owner
+decision. Host installation is an explicit operator step, not a consequence of component
 CD. From the verified current-main checkout at `/opt/elevenlabs-studio`, verify
 the two unit files with `systemd-analyze verify`, install them root-owned0644
 into `/etc/systemd/system`, run `systemctl daemon-reload` and
@@ -502,14 +514,13 @@ success. Preserve the existing repository, credentials, snapshots and retention.
 
 Configure `STUDIO_ALERT_OWNER_USER_ID` in root0600 host
 `/etc/elevenlabs-studio/backup.env` to the verified active personal administrator.
-The same non-secret UUID goes in runtime `.env` as
-`STUDIO_BACKUP_MONITOR_OWNER_USER_ID` for API and worker. Backup credentials
-remain host-only. Only this explicitly selected owner receives a missing-backup
-incident; an existing owner's backup audit stream also detects stale success
-or latest failure. A missing success or age of12h triggers the existing
-`backup_failure` incident without disclosing repository/credential data; a fresh
-successful backup clears the condition through the normal incident lifecycle.
-An empty recipient means unassigned, not proof that backups are healthy.
+`STUDIO_BACKUP_MONITOR_OWNER_USER_ID` remains a deprecated compatibility input;
+it no longer requires regular Studio snapshots. Backup credentials remain
+host-only. Studio retains reported success/failure audit events and alerts for
+an actual latest failed protected backup; a subsequent reported success clears
+that operation's failure. Neither a missing event nor an old success is treated
+as a Cloudkeep failure or proof of a healthy external backup. Regular Cloudkeep
+delivery/overdue/target failures are evaluated in its existing monitoring contour.
 
 The bounded automated rehearsal is
 [rehearse_studio_restore.py](../../scripts/rehearse_studio_restore.py), run from
@@ -521,7 +532,7 @@ nonce verification; performs a real custom-format PostgreSQL dump and restore
 of current-model synthetic data with encrypted Live drafts; and removes only
 its verified containers. Its report includes snapshot age at the synthetic incident, one measured post-snapshot metadata loss, and elapsed time
 to a quarantined restored state. The Linux suite requires this rehearsal;
-unavailable local Docker remains an explicit local limitation, not PASS. The default comparison uses the owner-approved personal targets12h/4h; an explicit diagnostic override must supply both `--rpo-seconds` and `--rto-seconds`. Invalid or one-sided targets fail before container creation. The loss window is measured at the incident, excluding subsequent restore time; an exceeded RPO or already-over-budget quarantine fails. An in-budget quarantine reports full RTO as PENDING, never PASS, because service reactivation is outside that measurement.
+unavailable local Docker remains an explicit local limitation, not PASS. The default synthetic comparison retains the historical12h/4h reference solely as a regression fixture; it is not the current Cloudkeep RPO or production recovery Evidence. Current Cloudkeep RPO is UNSET and RTO4h. An explicit diagnostic override must supply both `--rpo-seconds` and `--rto-seconds`. Invalid or one-sided targets fail before container creation. The loss window is measured at the incident, excluding subsequent restore time; an exceeded RPO or already-over-budget quarantine fails. An in-budget quarantine reports full RTO as PENDING, never PASS, because service reactivation is outside that measurement.
 
 The Linux integration test also checks authenticated application access on the
 restored synthetic target. The Linux host accesses the owned internal bridge
@@ -851,6 +862,47 @@ audit history or delete storage as alert remediation.
 
 ## Personal access/security email
 
+Personal mail remains deferred by the owner25Oct2026. Task notifications use
+Telegram only. The inactive security-mail implementation below is retained for
+future separately selected activation, and is not needed for operator recovery.
+
+### Personal owner recovery without email
+
+Use a saved one-time recovery code when only the authenticator is lost. When
+the owner has lost the local password, an authorized operator uses the existing
+SSH/root boundary on Contabo167.86.68.98. Verify the current deployment, local
+active admin identity and absence of another recovery operation first. Determine
+the exact existing owner UUID through a private read-only account lookup; never
+create another bootstrap account or put a password into shell args/env/history.
+
+From an interactive authorized root console in `/opt/elevenlabs-studio`:
+
+```bash
+docker --host unix:///var/run/docker.sock compose \
+  --env-file deploy/studio/.env -f deploy/studio/compose.platform.yml \
+  exec studio-api python -m studio_api.container_entrypoint --drop-only \
+  python -m studio_api.cli recover-local-owner OWNER_UUID
+```
+
+The command requires a terminal, exact email confirmation and twice-entered
+hidden password. It changes only an existing active local admin, revokes all
+its sessions/trusted browsers and pending reset capabilities, and records an
+operator recovery event without impersonating a browser session. TOTP remains
+enabled by default. If both authenticator and saved codes are unavailable,
+select `--reset-totp` only after separately verifying the owner and explicitly
+typing the additional second-factor confirmation. This retires only that
+owner's factor/codes, records a distinct audit event and requires new TOTP
+enrollment after the owner logs in. No email or Telegram reset link is sent.
+
+After a successful command, the owner logs in with the new password and retained
+TOTP/recovery code (or enrolls a new factor after explicit factor retirement).
+Confirm old sessions/trust are rejected and the scoped audit event exists.
+Unknown outcome requires state inspection, not a blind repeat. This procedure
+must be tested with synthetic accounts; never reset the real owner's credentials
+as a delivery smoke check.
+
+### Deferred security-mail transport
+
 `STUDIO_SECURITY_EMAIL_ENABLED` is false by default. Enable it only after the
 owner selects the sender domain, SMTP service and From address. Set
 `STUDIO_SECURITY_EMAIL_SENDER_DOMAIN` to the exact From domain; the API and
@@ -885,11 +937,13 @@ secret or role stops dependent activation without blocking unrelated UI fixes.
 ## Automatic retry and owner job notifications
 
 Migration `0035_job_notifications` adds the automatic-retry schedule, explicit
-owner channel preferences, encrypted Web Push subscriptions and a durable
-terminal-delivery outbox. Every channel is disabled by default. A completed or
-failed job creates delivery rows only for channels the owner already enabled;
+owner channel preferences, historical encrypted Web Push subscriptions and a durable
+terminal-delivery outbox. From25Oct2026 only Telegram task notifications are supported;
+email/Web Push activation is rejected and legacy preferences cannot enqueue sends.
+The historical tables/DTO keys remain compatible during rolling delivery. A completed or
+failed job creates Telegram delivery rows only when the owner already enabled it;
 retry/recovery suppresses obsolete pending rows before a new attempt. Claim and
-completion use separate transactions, so SMTP, Web Push and Telegram network
+completion use separate transactions, so Telegram network
 I/O never holds a database transaction. Stale claims, retry attempts and
 backoff are bounded; transport bodies, provider URLs, transcript text,
 filenames, document IDs and credentials are not persisted in delivery status.
@@ -904,27 +958,23 @@ timeout/unavailability, partial/returned result, Google handoff or output
 reconciliation uncertainty stays terminal and requires the existing explicit
 owner recovery flow. Never requeue such a job with direct SQL.
 
-To activate Web Push, generate one VAPID key pair outside the repository and
-store only the private key in a distinct operator-managed root-owned `0600`
-file. Set `STUDIO_JOB_WEB_PUSH_ENABLED=true`, the public key and a `mailto:` or
-HTTPS subject in the host `.env`, and set
-`STUDIO_JOB_WEB_PUSH_VAPID_PRIVATE_KEY_FILE` to that file. Do not reuse a
-Google, R2, database or provider credential. The browser still requires an
-explicit permission grant and creates an encrypted owner-scoped subscription;
-server configuration alone does not opt the owner in.
-
-Email uses `STUDIO_JOB_EMAIL_ENABLED=true`, SMTP host/port, a validated From
-address and exactly one TLS mode. When SMTP authentication is required, place
-the password in the distinct `STUDIO_JOB_SMTP_PASSWORD_FILE`; never place it in
-`.env`. Telegram job notifications are separate from operational alerts and
-use their own bot-token/chat-ID files with
-`STUDIO_JOB_TELEGRAM_ENABLED=true`. Do not reuse the operational-alert bot
-credentials implicitly. The owner must enable email or Telegram separately in
-Settings even after the transport is configured.
+Telegram job notifications are separate from operational alerts and use their
+own bot-token/chat-ID files with `STUDIO_JOB_TELEGRAM_ENABLED=true`. Configure
+`STUDIO_JOB_TELEGRAM_OWNER_USER_ID` to the exact existing personal owner UUID;
+other/disabled owners cannot opt in or claim deliveries for that configured chat.
+Keep the token and exact selected chat ID in separate operator-managed secret
+files referenced by `STUDIO_JOB_TELEGRAM_BOT_TOKEN_FILE` and
+`STUDIO_JOB_TELEGRAM_CHAT_ID_FILE`; never put the token in `.env` or chat/logs.
+The recipient must first start the owner-selected bot. Do not reuse an alert
+bot or another project's credentials implicitly. Both API and worker need the
+same owner/configuration, and Settings still requires the owner's explicit opt-in.
+The transport requires Telegram's positive message acknowledgment rather than
+HTTP200 alone. Outbox rows/claims are deduplicated; a lost network acknowledgment
+can still make a bounded retry send a duplicate externally (at-least-once transport).
 
 Safe rollout order is: reviewed additive migration and grant re-apply/verify →
 API/web deployment → stopped-worker configuration and role verification →
-worker deployment/status. With all three transports disabled, bounded LIVE may
+worker deployment/status. With Telegram disabled, bounded LIVE may
 verify schema, API preferences, service-worker assets, worker health and zero
 external sends. Enabling a transport or sending a real notification requires
 separate action-time owner authorization. Stop on an unexpected enabled
@@ -933,6 +983,38 @@ cross-owner delivery, sensitive payload or any provider/Google call made only
 for notification testing.
 
 ## Provider-neutral STT and Yandex SpeechKit
+
+### Optional personal Yandex Disk
+
+Disk and SpeechKit are separate integrations. Configure `STUDIO_YANDEX_DISK_OAUTH_CLIENT_ID`
+and `STUDIO_YANDEX_DISK_OAUTH_CLIENT_SECRET_FILE` for both API and worker. The secret is a
+root-owned regular0600 file outside the checkout; Compose mounts it read-only and the
+reviewed bootstrap copies it into the existing private runtime tmpfs. The callback is
+`STUDIO_APP_ORIGIN` plus `/api/yandex/oauth/callback`; the exact grant is
+`cloud_api:disk.read cloud_api:disk.write cloud_api:disk.info`. Do not request basic
+profile/email scopes, reuse Cloudkeep credentials or put tokens in browser storage.
+
+Schema0043 adds owner/account/version resource handles, encrypted Disk credentials,
+provider-bound destinations and immutable DOCX receipts. Apply it through the existing
+protected migration lane and re-apply/verify runtime roles before the compatible worker.
+Downgrade fails closed when Disk data exists. Historical Google destination defaults and
+field names stay compatible; an old worker must remain stopped after this migration.
+
+Settings starts a session-bound one-use PKCE flow. The owner must finish consent in the
+same browser; disconnect erases local tokens before attempting remote revocation and
+reports unconfirmed revocation honestly. Reconnect does not require prior disconnect.
+Source removal affects only Studio metadata. The picker reads current-folder pages,
+including empty folders; ordinary output is DOCX, prepared-audio output remains Google
+Drive/download under its separate contract.
+
+Before external output creation the worker commits the exact path, content hash/size
+and opaque receipt. Creation never overwrites. Recovery accepts only exact content
+proof; modified files conflict, missing permissions/network never prove absence.
+After confirmed absence, explicit retry restores cached text without another STT call.
+Quota/access errors retain that text; successful full-document persistence or explicit
+terminal cancellation retires only temporary text atomically, preserving history/usage.
+No historical sweep is part of rollout. A real Disk smoke must use marked synthetic
+objects and verify cleanup; it must not start paid recognition or modify owner documents.
 
 Migration `0036_stt_multiprovider` adds the explicit batch operating mode,
 owner dictionaries, durable Yandex operation authority and provider/mode

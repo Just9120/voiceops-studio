@@ -54,11 +54,12 @@ class NotificationSettings(SimpleNamespace):
         return bool(self.telegram)
 
 
-def settings(*, web_push=False, email=False, telegram=False, max_attempts=2):
+def settings(*, web_push=False, email=False, telegram=False, owner=None, max_attempts=2):
     return NotificationSettings(
         web_push=web_push,
         email=email,
         telegram=telegram,
+        job_telegram_owner_user_id=owner,
         job_notification_max_attempts=max_attempts,
         job_notification_claim_seconds=60,
         job_notification_retry_seconds=30,
@@ -129,7 +130,7 @@ def job_fixture(db, *, status=m.JobStatus.failed, attempt_count=1):
 def test_job_notification_migration_is_additive_single_head():
     script = ScriptDirectory.from_config(Config(str(ROOT / "apps/studio-api/alembic.ini")))
     revision = script.get_revision("0035_job_notifications")
-    assert script.get_heads() == ["0042_totp_replay"]
+    assert script.get_heads() == ["0043_yandex_disk"]
     assert revision.down_revision == "0034_personal_security"
     assert revision.module.release_safety == "additive"
     assert {"retry_not_before_at", "automatic_retry_reason"} <= set(
@@ -199,13 +200,13 @@ def test_terminal_intents_are_opt_in_and_deduplicated(db):
     )
     db.flush()
 
-    assert ensure_terminal_notification_intents(db, job=job, now=NOW) == 2
+    assert ensure_terminal_notification_intents(db, job=job, now=NOW) == 1
     assert ensure_terminal_notification_intents(db, job=job, now=NOW) == 0
     db.commit()
     assert {
         (row.channel, row.terminal_status, row.attempt_number)
         for row in db.query(m.JobNotificationDelivery).all()
-    } == {("email", "completed", 1), ("telegram", "completed", 1)}
+    } == {("telegram", "completed", 1)}
 
 
 def test_delivery_claims_retry_with_a_bound_and_then_suppress(db):
@@ -213,7 +214,7 @@ def test_delivery_claims_retry_with_a_bound_and_then_suppress(db):
     db.add(
         m.UserNotificationPreference(
             user_id=owner.id,
-            email_enabled=True,
+            telegram_enabled=True,
             created_at=NOW,
             updated_at=NOW,
         )
@@ -221,10 +222,10 @@ def test_delivery_claims_retry_with_a_bound_and_then_suppress(db):
     db.flush()
     ensure_terminal_notification_intents(db, job=job, now=NOW)
     db.commit()
-    configured = settings(email=True, max_attempts=2)
+    configured = settings(telegram=True, owner=owner.id, max_attempts=2)
 
     first = claim_next_job_notification(db, settings=configured, now=NOW)
-    assert first is not None and first.recipient_email == owner.email
+    assert first is not None and first.channel == "telegram"
     assert complete_job_notification(
         db,
         claim=first,
@@ -391,13 +392,13 @@ def test_telegram_transport_covers_success_and_failure_without_job_content(
 
     def post(url, *, json, timeout):
         sent.update(url=url, body=json, timeout=timeout)
-        return SimpleNamespace(status_code=200)
+        return SimpleNamespace(status_code=200, json=lambda: {"ok": True, "result": {"message_id": 1}})
 
     claim = JobNotificationClaim(
         delivery_id="delivery",
         claim_token="claim",
         owner_user_id="owner",
-        job_id="job",
+        job_id="private-job-123",
         terminal_status=terminal_status,
         attempt_number=1,
         channel="telegram",
@@ -406,6 +407,7 @@ def test_telegram_transport_covers_success_and_failure_without_job_content(
     transport_settings = SimpleNamespace(
         job_telegram_credentials=lambda: ("12345678901234567890:token", "123"),
         job_telegram_timeout_seconds=5,
+        app_origin="https://studio.cloud-nodes.net/",
     )
 
     assert _send_telegram(claim, settings=transport_settings, post=post) == (
@@ -415,6 +417,39 @@ def test_telegram_transport_covers_success_and_failure_without_job_content(
     assert sent["body"]["chat_id"] == "123"
     assert "Транскрибация" in sent["body"]["text"]
     assert "recording.mp3" not in sent["body"]["text"]
+    assert "private-job-123" not in sent["body"]["text"]
+    assert sent["body"]["text"].endswith("\nhttps://studio.cloud-nodes.net/transcriptions")
+
+
+def test_retired_channels_never_enqueue_even_with_legacy_opt_ins(db):
+    owner, job, _relation = job_fixture(db, status=m.JobStatus.completed)
+    db.add(m.UserNotificationPreference(user_id=owner.id, email_enabled=True, web_push_enabled=True))
+    db.flush()
+    assert ensure_terminal_notification_intents(db, job=job, now=NOW)==0
+    assert claim_next_job_notification(db, settings=settings(email=True,web_push=True),now=NOW) is None
+    assert db.query(m.JobNotificationDelivery).count()==0
+
+
+@pytest.mark.parametrize("reason", ["other_owner", "disabled", "opt_out"])
+def test_telegram_cannot_deliver_for_wrong_or_inactive_owner(db, reason):
+    owner, job, _relation = job_fixture(db,status=m.JobStatus.completed)
+    pref=m.UserNotificationPreference(user_id=owner.id,telegram_enabled=True)
+    db.add(pref);db.flush()
+    assert ensure_terminal_notification_intents(db,job=job,now=NOW)==1
+    config=settings(telegram=True,owner=owner.id)
+    if reason=="other_owner":config.job_telegram_owner_user_id="another-owner"
+    if reason=="disabled":owner.status=m.UserStatus.disabled
+    if reason=="opt_out":pref.telegram_enabled=False
+    db.commit()
+    assert claim_next_job_notification(db,settings=config,now=NOW) is None
+    assert db.query(m.JobNotificationDelivery).one().state=="suppressed"
+
+
+@pytest.mark.parametrize("ack", [{"ok":False}, {}, {"ok":True}, {"ok":True,"result":{"message_id":True}}])
+def test_telegram_http_200_without_message_ack_is_not_delivered(ack):
+    claim=JobNotificationClaim("delivery","claim","owner","job","completed",1,"telegram","configured")
+    config=SimpleNamespace(job_telegram_credentials=lambda:("12345678901234567890:token","123"),job_telegram_timeout_seconds=5)
+    assert _send_telegram(claim,settings=config,post=lambda *a,**kw:SimpleNamespace(status_code=200,json=lambda:ack))==(False,"transport_rejected")
 
 
 def test_automatic_retry_only_accepts_allowlisted_durable_transient_failure(db):
@@ -423,7 +458,7 @@ def test_automatic_retry_only_accepts_allowlisted_durable_transient_failure(db):
         [
             m.UserNotificationPreference(
                 user_id=owner.id,
-                email_enabled=True,
+                telegram_enabled=True,
                 created_at=NOW,
                 updated_at=NOW,
             ),

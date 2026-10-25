@@ -133,17 +133,18 @@ def _job_for_source(db, m, user, project, src, *, status, relation_status=None, 
     return job, rel
 
 
-def _complete_document(db, m, job, rel, now):
+def _complete_document(db, m, job, rel, now, output_kind="google_docs_transcript"):
     db.add(m.TranscriptionJobOutput(job_id=job.id, job_source_id=rel.id,
         document_id=f"document-{rel.id}", web_view_url="https://docs.google.test/synthetic",
-        output_drive_folder_id="synthetic-folder", output_kind="google_docs_transcript",
+        output_drive_folder_id="synthetic-folder", output_kind=output_kind,
         transcript_standard="transcript_doc_v1.2", document_character_count=20,
         document_created_at=now, persisted_at=now, lease_generation=1))
     db.flush()
 
 
 @pytest.mark.parametrize("remaining", ["queued", "processing", "failed", "cancelled", "missing_document", "completed"])
-def test_one_shot_source_waits_for_every_full_document(sqlite_db, remaining):
+@pytest.mark.parametrize("output_kind", ["google_docs_transcript", "yandex_disk_docx_transcript"])
+def test_one_shot_source_waits_for_every_full_document(sqlite_db, remaining, output_kind):
     from studio_api.source_deletion import mark_one_fully_exported_source_for_cleanup
 
     db = sqlite_db
@@ -153,17 +154,17 @@ def test_one_shot_source_waits_for_every_full_document(sqlite_db, remaining):
     src.delete_after_transcripts = True
     first, rel = _job_for_source(db, m, user, project, src, status=m.JobStatus.completed)
     first.media_clip_start_seconds, first.media_clip_end_seconds = 0, 60
-    _complete_document(db, m, first, rel, now)
+    _complete_document(db, m, first, rel, now, output_kind)
     second, other = _job_for_source(db, m, user, project, src, status=m.JobStatus.completed if remaining == "missing_document" else m.JobStatus(remaining))
     second.media_clip_start_seconds, second.media_clip_end_seconds = 60, 120
     if remaining == "completed":
-        _complete_document(db, m, second, other, now)
+        _complete_document(db, m, second, other, now, output_kind)
     db.commit()
     assert mark_one_fully_exported_source_for_cleanup(db, now=now) is (remaining == "completed")
     if remaining != "completed":
         assert src.deleted_at is None and src.upload_status == m.SourceUploadStatus.uploaded
         second.status = m.JobStatus.completed
-        _complete_document(db, m, second, other, now)
+        _complete_document(db, m, second, other, now, output_kind)
         db.commit()
         assert mark_one_fully_exported_source_for_cleanup(db, now=now)
     assert src.delete_reason == "all_transcripts_exported"
@@ -243,14 +244,15 @@ def test_download_rendering_keeps_input_until_its_active_lease_expires(sqlite_db
     assert source.upload_status == m.SourceUploadStatus.expired
 
 
-def test_google_drive_source_deletion_is_logical_and_not_applicable(sqlite_db):
+@pytest.mark.parametrize("source_kind", ["google_drive", "yandex_disk"])
+def test_external_source_deletion_is_logical_and_not_applicable(sqlite_db, source_kind):
     from studio_api.source_deletion import request_source_deletion
 
     m, user, project = _owner_project(sqlite_db)
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     src = m.Source(
         project_id=project.id,
-        source_type=m.SourceType.google_drive,
+        source_type=m.SourceType(source_kind),
         original_filename="drive.mp3",
         drive_file_id="drive-file",
         drive_file_url="https://drive.google.com/file/d/drive-file/view",

@@ -88,7 +88,7 @@ def build_batch_preflight_payload(
         source_type = getattr(source, "source_type", None)
         if hasattr(source_type, "value"):
             source_type = source_type.value
-        if source_type not in {"local_upload", "google_drive"}:
+        if source_type not in {"local_upload", "google_drive", "yandex_disk"}:
             source_type = "unknown"
         size_bytes = getattr(source, "size_bytes", None)
         items.append(

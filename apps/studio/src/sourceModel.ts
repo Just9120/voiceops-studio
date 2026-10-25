@@ -2,7 +2,7 @@ export type Source = {
   prepared_audio?: { job_id: string; input_duration_ms: number; output_duration_ms: number; pauses_removed: boolean };
   id: string;
   project_id: string;
-  source_type: "local_upload" | "google_drive";
+  source_type: "local_upload" | "google_drive" | "yandex_disk";
   original_filename: string;
   mime_type: string | null;
   size_bytes: number | null;
@@ -12,6 +12,7 @@ export type Source = {
   source_created_at: string | null;
   source_created_at_provenance:
     | "google_drive_created_time"
+    | "yandex_disk_created_time"
     | "embedded_media_metadata"
     | null;
   expires_at: string | null;
@@ -23,6 +24,10 @@ export type Source = {
 
 export function preparedAudioContext(source: Source) {
   return parsePreparedAudioContext(source.prepared_audio);
+}
+
+export function sourceLocationLabel(kind: string | null) {
+  return kind === "google_drive" ? "Google Drive" : kind === "yandex_disk" ? "Яндекс Диск" : "Studio";
 }
 
 export function knownSourceDurationSeconds(source: Source | null | undefined): number | null {
@@ -59,7 +64,7 @@ export function isUsableJobSource(source: Source) {
     source.upload_status === "uploaded" &&
     !source.deleted_at &&
     (expiresAt == null || expiresAt > Date.now()) &&
-    (source.source_type === "google_drive" ||
+    (source.source_type === "google_drive" || source.source_type === "yandex_disk" ||
       source.source_type === "local_upload")
   );
 }

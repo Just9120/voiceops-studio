@@ -76,6 +76,33 @@ def materialize_audio_inputs(
                 ).open_read(source.s3_object_key)
             except SourceObjectReadError as exc:
                 raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable) from exc
+        elif source.source_type is SourceType.yandex_disk and source.drive_file_id:
+            from .yandex_disk import YandexDiskClient, YandexDiskError
+            from .yandex_disk_access import access_token, verify_selected_resource
+            owner_id, handle = job.owner_user_id, source.drive_file_id
+            try:
+                resource = verify_selected_resource(db, owner_user_id=owner_id,
+                    resource_id=handle, settings=settings, is_folder=False)
+                token = access_token(db, user_id=owner_id, settings=settings)
+                db.rollback()
+                def disk_check():
+                    check()
+                    if shutil.disk_usage(root).free < _SCRATCH_RESERVE_BYTES:
+                        raise AudioPreparationServiceError(AudioPreparationServiceReason.input_too_large)
+                with path.open("wb") as target:
+                    copied = YandexDiskClient(token).download_to(resource, target,
+                        maximum_bytes=min(settings.source_max_upload_bytes, max(0, budget-total_copied)),
+                        check=disk_check)
+                verify_selected_resource(db, owner_user_id=owner_id,
+                    resource_id=handle, settings=settings, is_folder=False)
+                db.rollback()
+            except YandexDiskError as exc:
+                raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable) from exc
+            if copied <= 0:
+                raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
+            total_copied += copied
+            paths.append(path)
+            continue
         elif source.source_type is SourceType.google_drive and source.drive_file_id:
             if "token" not in token_cache:
                 token_cache["token"] = drive_token_resolver(db, user_id=job.owner_user_id, settings=settings)

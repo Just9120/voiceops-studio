@@ -1,3 +1,4 @@
+from typing import Literal
 import hashlib, json, logging, re
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -94,7 +95,6 @@ from .job_notifications import (
     notification_preference,
     notification_preferences_payload,
     revoke_web_push_subscription,
-    upsert_web_push_subscription,
 )
 from .google_docs_output import OUTPUT_RECONCILIATION_APP_PROPERTY
 from .google_drive import GoogleDriveReconciliationError, list_reconciliation_candidates
@@ -110,7 +110,7 @@ from .source_deletion import (
 )
 from .transcript_catalog import (
     ExistingResultMatchStatus,
-    GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND,
+    TRANSCRIPT_OUTPUT_KINDS,
     ProviderAttemptAuthorityStatus,
     current_effective_settings,
     elevenlabs_effective_settings,
@@ -607,6 +607,7 @@ class BatchJobItemIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_id: str=Field(min_length=1,max_length=36)
     output_folder_id: str=Field(min_length=1,max_length=256)
+    output_provider: Literal["google_drive", "yandex_disk"] = "google_drive"
     title: str|None=Field(default=None,max_length=160)
     reprocess_existing: StrictBool=False
     media_clip_start_seconds: StrictInt|None=Field(default=None, ge=0, le=604800)
@@ -1091,15 +1092,10 @@ def update_notification_preferences(
 ):
     _,user=pair
     limiter.check("notifications:preferences:update:"+user.id,30,3600)
-    if data.web_push_enabled is True:
-        if not settings.job_web_push_configured():
-            raise HTTPException(409,"Web Push пока не настроен администратором")
-        subscription_count=db.query(WebPushSubscription).filter_by(owner_user_id=user.id,revoked_at=None).count()
-        if subscription_count < 1:
-            raise HTTPException(409,"Сначала разрешите уведомления в этом браузере")
-    if data.email_enabled is True and not settings.job_email_configured():
-        raise HTTPException(409,"Email-уведомления пока не настроены администратором")
-    if data.telegram_enabled is True and not settings.job_telegram_configured():
+    if data.web_push_enabled is True or data.email_enabled is True:
+        raise HTTPException(410,"Для уведомлений о задачах используется только Telegram")
+    from .job_notifications import telegram_owner_allowed
+    if data.telegram_enabled is True and not telegram_owner_allowed(settings, user.id):
         raise HTTPException(409,"Telegram-уведомления пока не настроены администратором")
     preference=notification_preference(db,owner_user_id=user.id)
     changed=[]
@@ -1124,30 +1120,7 @@ def create_web_push_subscription(
 ):
     _,user=pair
     limiter.check("notifications:web-push:subscribe:"+user.id,20,3600)
-    if not settings.job_web_push_configured():
-        raise HTTPException(409,"Web Push пока не настроен администратором")
-    try:
-        subscription=upsert_web_push_subscription(
-            db,
-            owner_user_id=user.id,
-            endpoint=data.endpoint,
-            p256dh=data.p256dh,
-            auth=data.auth,
-            master_key_b64=settings.master_key_b64(),
-            key_id=settings.credential_key_id,
-        )
-    except ValueError as exc:
-        raise HTTPException(422,"Браузер вернул неподдерживаемую подписку") from exc
-    preference=notification_preference(db,owner_user_id=user.id)
-    preference.web_push_enabled=True
-    preference.updated_at=utcnow()
-    audit(db,"notifications.web_push_subscribed",actor_user_id=user.id,subject_user_id=user.id)
-    db.commit()
-    _browser_capability_cache_headers(response)
-    return {
-        "subscription_id":subscription.id,
-        "preferences":notification_preferences_payload(db,owner_user_id=user.id,settings=settings),
-    }
+    raise HTTPException(410,"Для уведомлений о задачах используется только Telegram")
 
 @app.delete("/api/notifications/web-push/subscriptions")
 def delete_web_push_subscriptions(
@@ -1254,7 +1227,7 @@ def revoke_other(
     return {"revoked": revoked}
 
 def project_payload(p: Project):
-    return {"id": p.id, "title": p.title, "description": p.description, "output_drive_folder_id": p.output_drive_folder_id, "output_drive_folder_url": p.output_drive_folder_url, "output_drive_folder_name": p.output_drive_folder_name, "created_at": p.created_at.isoformat(), "updated_at": p.updated_at.isoformat(), "archived_at": p.archived_at.isoformat() if p.archived_at else None}
+    return {"id": p.id, "title": p.title, "description": p.description, "output_provider": getattr(p,"output_provider","google_drive"), "output_drive_folder_id": p.output_drive_folder_id, "output_drive_folder_url": p.output_drive_folder_url, "output_drive_folder_name": p.output_drive_folder_name, "created_at": p.created_at.isoformat(), "updated_at": p.updated_at.isoformat(), "archived_at": p.archived_at.isoformat() if p.archived_at else None}
 
 def source_payload(s: Source):
     return {**({"prepared_audio": context} if (context := prepared_audio_context_payload(s.prepared_audio_context_json)) else {}), "id": s.id, "project_id": s.project_id, "source_type": s.source_type.value, "original_filename": s.original_filename, "mime_type": s.mime_type, "size_bytes": s.size_bytes, "drive_file_url": s.drive_file_url, "upload_status": s.upload_status.value, "uploaded_at": s.uploaded_at.isoformat() if s.uploaded_at else None, "source_created_at": s.source_created_at.isoformat() if s.source_created_at else None, "source_created_at_provenance": s.source_created_at_provenance, "expires_at": s.expires_at.isoformat() if s.expires_at else None, "deleted_at": s.deleted_at.isoformat() if s.deleted_at else None, "delete_reason": s.delete_reason, "created_at": s.created_at.isoformat(), "updated_at": s.updated_at.isoformat()}
@@ -1340,10 +1313,16 @@ def safe_job_output_folder_payload(job: TranscriptionJob):
     if not job.output_drive_folder_id:
         return None
     try:
-        url=clean_drive_url(job.output_drive_folder_url)
+        if getattr(job,"output_provider","google_drive") == "yandex_disk":
+            from .job_output_read import normalize_output_web_view_url
+            from .transcript_docx import DOCX_OUTPUT_KIND
+            url=normalize_output_web_view_url(job.output_drive_folder_url,DOCX_OUTPUT_KIND)
+        else:
+            url=clean_drive_url(job.output_drive_folder_url)
     except HTTPException:
         url=None
-    return {"name": clean_optional_name(job.output_drive_folder_name) or "Папка Google Drive", "web_view_url": url}
+    fallback="Папка Яндекс Диска" if getattr(job,"output_provider","google_drive") == "yandex_disk" else "Папка Google Drive"
+    return {"name": clean_optional_name(job.output_drive_folder_name) or fallback, "web_view_url": url}
 
 def browser_batch_reference(job: TranscriptionJob):
     key=getattr(job,"batch_idempotency_key",None)
@@ -1359,7 +1338,7 @@ def job_payload(job: TranscriptionJob, include_sources=False):
     media_clip=None if clip_start is None and clip_end is None else {"start_seconds":clip_start,"end_seconds":clip_end}
     terminal_dismissed_at=getattr(job,"terminal_dismissed_at",None)
     attention_resolved_at=getattr(job,"history_attention_resolved_at",None)
-    payload={"id": job.id, "project_id": job.project_id, "status": job.status.value, "title": job.title, "provider": job.provider, "operating_mode": getattr(job,"operating_mode","standard"), "language_mode": browser_language_mode(getattr(job, "language", None)), "diarization_enabled": job_diarization_enabled(getattr(job, "options_json", None)), "media_clip": media_clip, "terminal_dismissed_at": terminal_dismissed_at.isoformat() if terminal_dismissed_at else None, "history_attention_resolved_at": attention_resolved_at.isoformat() if attention_resolved_at else None, "history_attention_resolution": getattr(job,"history_attention_resolution",None), "history_attention_linked_job_id": getattr(job,"history_attention_linked_job_id",None), "source_count": len(job.sources), "created_at": job.created_at.isoformat(), "updated_at": job.updated_at.isoformat(), "cancelled_at": job.cancelled_at.isoformat() if job.cancelled_at else None, "cancel_requested_at": job.cancel_requested_at.isoformat() if job.cancel_requested_at else None, "attempt_count": job.attempt_count or 0, "started_at": job.started_at.isoformat() if job.started_at else None, "finished_at": job.finished_at.isoformat() if job.finished_at else None, "error_code": safe_failure_metadata_value(job.error_code), "error_message": safe_failure_metadata_value(job.error_message), "output_folder": safe_job_output_folder_payload(job), "speaker_identities": [job_speaker_payload(row) for row in sorted(getattr(job, "speakers", ()), key=lambda row: row.display_ordinal)], "usage_cost": job_usage_cost_payload(job)}
+    payload={"id": job.id, "project_id": job.project_id, "status": job.status.value, "title": job.title, "provider": job.provider, "operating_mode": getattr(job,"operating_mode","standard"), "language_mode": browser_language_mode(getattr(job, "language", None)), "diarization_enabled": job_diarization_enabled(getattr(job, "options_json", None)), "media_clip": media_clip, "terminal_dismissed_at": terminal_dismissed_at.isoformat() if terminal_dismissed_at else None, "history_attention_resolved_at": attention_resolved_at.isoformat() if attention_resolved_at else None, "history_attention_resolution": getattr(job,"history_attention_resolution",None), "history_attention_linked_job_id": getattr(job,"history_attention_linked_job_id",None), "source_count": len(job.sources), "created_at": job.created_at.isoformat(), "updated_at": job.updated_at.isoformat(), "cancelled_at": job.cancelled_at.isoformat() if job.cancelled_at else None, "cancel_requested_at": job.cancel_requested_at.isoformat() if job.cancel_requested_at else None, "attempt_count": job.attempt_count or 0, "started_at": job.started_at.isoformat() if job.started_at else None, "finished_at": job.finished_at.isoformat() if job.finished_at else None, "error_code": safe_failure_metadata_value(job.error_code), "error_message": safe_failure_metadata_value(job.error_message), "output_provider": getattr(job,"output_provider","google_drive"), "output_folder": safe_job_output_folder_payload(job), "speaker_identities": [job_speaker_payload(row) for row in sorted(getattr(job, "speakers", ()), key=lambda row: row.display_ordinal)], "usage_cost": job_usage_cost_payload(job)}
     payload["source_names"]=[entry.source.original_filename for entry in sorted(job.sources, key=lambda item: item.position)[:3]]
     batch=browser_batch_reference(job)
     if batch is not None: payload["batch"]=batch
@@ -1390,7 +1369,7 @@ def validate_job_sources(db: Session, project_id: str, source_ids: list[str], *,
         src=by_id.get(sid)
         if not src or src.deleted_at is not None:
             raise HTTPException(422, "Один или несколько источников недоступны для задания")
-        if src.source_type==SourceType.google_drive:
+        if src.source_type in {SourceType.google_drive, SourceType.yandex_disk}:
             usable=bool(src.drive_file_id) and src.upload_status==SourceUploadStatus.uploaded
         elif src.source_type==SourceType.local_upload:
             usable=src.upload_status==SourceUploadStatus.uploaded and src.s3_object_key is not None
@@ -1850,6 +1829,7 @@ def set_google_picker_output_folder(project_id: str, data: GooglePickerOutputFol
     _,user=pair; limiter.check("project:gpicker:folder:"+user.id, 60, 3600); p=owned_project_or_404(db,user,project_id)
     access_token=refreshed_google_drive_access_token(db, user)
     verified=verify_output_folder_selection(access_token, data.folder_id)
+    p.output_provider="google_drive"
     p.output_drive_folder_id=verified.id
     p.output_drive_folder_url=verified.web_view_url
     p.output_drive_folder_name=verified.name
@@ -2596,7 +2576,7 @@ def _normalize_batch_creation_input(data: TranscriptionJobBatchCreateIn):
     for item in data.items:
         sid=item.source_id.strip(); fid=clean_drive_id(item.output_folder_id, "ID папки Google Drive")
         clip=normalize_media_clip_range(item.media_clip_start_seconds, item.media_clip_end_seconds)
-        pair_key=(sid,fid,clip.start_seconds,clip.end_seconds)
+        pair_key=(sid,item.output_provider,fid,clip.start_seconds,clip.end_seconds)
         if pair_key in pairs: duplicate_pair_found=True
         pairs.add(pair_key); source_ids.append(sid); folder_ids.append(fid); titles.append(clean_job_title(item.title)); reprocess_existing.append(item.reprocess_existing); media_clips.append(clip)
     hash_items=[]
@@ -2609,10 +2589,12 @@ def _normalize_batch_creation_input(data: TranscriptionJobBatchCreateIn):
         if not clip.is_full_source:
             hash_item["media_clip_start_seconds"]=clip.start_seconds
             hash_item["media_clip_end_seconds"]=clip.end_seconds
+        output_provider=data.items[len(hash_items)].output_provider
+        if output_provider != "google_drive": hash_item["output_provider"]=output_provider
         hash_items.append(hash_item)
     return language, options_json, explicit_provider_credential_id, duplicate_pair_found, source_ids, folder_ids, titles, reprocess_existing, media_clips, hash_items
 
-def _validate_new_batch_targets(db: Session, user: User, project: Project, *, provider, operating_mode, language, diarization_enabled, dictionary_ids, explicit_provider_credential_id, duplicate_pair_found, source_ids, folder_ids, media_clips):
+def _validate_new_batch_targets(db: Session, user: User, project: Project, *, provider, operating_mode, language, diarization_enabled, dictionary_ids, explicit_provider_credential_id, duplicate_pair_found, source_ids, folder_ids, media_clips, output_providers=None):
     try:
         capability=validate_selection(settings,provider=provider,mode=operating_mode,language=language,diarization=diarization_enabled,dictionary_count=len(dictionary_ids))
     except SttCapabilityError as exc:
@@ -2635,9 +2617,17 @@ def _validate_new_batch_targets(db: Session, user: User, project: Project, *, pr
         raise HTTPException(422, "Повторяющиеся source/folder пары не допускаются")
     sources=validate_job_sources(db, project.id, source_ids)
     _require_known_batch_clip_bounds(sources, media_clips)
-    unique_folders=list(dict.fromkeys(folder_ids))
-    access_token=refreshed_google_drive_access_token(db, user)
-    verified_by_id={fid: verify_output_folder_selection(access_token, fid) for fid in unique_folders}
+    from .yandex_disk_routes import verify_yandex_output_folder
+    output_providers=output_providers or ["google_drive"] * len(folder_ids)
+    access_token=None
+    verified_by_id={}
+    for destination,fid in dict.fromkeys(zip(output_providers,folder_ids,strict=True)):
+        key=_output_folder_key(destination,fid)
+        if destination == "yandex_disk":
+            verified_by_id[key]=verify_yandex_output_folder(db,owner_user_id=user.id,folder_id=fid,settings=settings)
+        else:
+            if access_token is None: access_token=refreshed_google_drive_access_token(db,user)
+            verified_by_id[key]=verify_output_folder_selection(access_token,fid)
     return provider_credential_id, sources, verified_by_id, capability, snapshot_dictionary_terms(dictionaries)
 
 def _require_known_batch_clip_bounds(sources, media_clips):
@@ -2717,14 +2707,14 @@ def _require_batch_preflight_decisions(sources, media_clips, matches, provider_a
 def preflight_transcription_jobs_batch(project_id: str, data: TranscriptionJobBatchCreateIn, request: Request, response: Response, pair=Depends(require_csrf), db: Session=Depends(get_db)):
     _,user=pair; limiter.check("job:batch:preflight:"+user.id, 60, 3600); _browser_capability_cache_headers(response); p=owned_project_or_404(db,user,project_id)
     language, _options_json, explicit_provider_credential_id, duplicate_pair_found, source_ids, folder_ids, titles, reprocess_existing, media_clips, _hash_items=_normalize_batch_creation_input(data)
-    _provider_credential_id, sources, verified_by_id, capability, dictionary_terms=_validate_new_batch_targets(db,user,p,provider=data.provider,operating_mode=data.operating_mode,language=language,diarization_enabled=data.options.diarize,dictionary_ids=data.options.dictionary_ids,explicit_provider_credential_id=explicit_provider_credential_id,duplicate_pair_found=duplicate_pair_found,source_ids=source_ids,folder_ids=folder_ids,media_clips=media_clips)
+    _provider_credential_id, sources, verified_by_id, capability, dictionary_terms=_validate_new_batch_targets(db,user,p,provider=data.provider,operating_mode=data.operating_mode,language=language,diarization_enabled=data.options.diarize,dictionary_ids=data.options.dictionary_ids,explicit_provider_credential_id=explicit_provider_credential_id,duplicate_pair_found=duplicate_pair_found,source_ids=source_ids,folder_ids=folder_ids,media_clips=media_clips,output_providers=[item.output_provider for item in data.items])
     existing_result_matches=_load_batch_existing_result_matches(db,user,sources,media_clips,provider=data.provider.value,model=capability.model,language=language,diarization_enabled=data.options.diarize)
     include_attention_job_id=request.headers.get("x-studio-preflight-recovery") == "1"
     attention_job_ids={} if include_attention_job_id else None
     provider_attempt_authorities=_load_batch_provider_attempt_authorities(db,user,sources,media_clips,provider=data.provider.value,model=capability.model,language=language,diarization_enabled=data.options.diarize,attention_job_ids=attention_job_ids)
     return build_batch_preflight_payload(
         sources=sources,
-        output_folders=[verified_by_id[fid] for fid in folder_ids],
+        output_folders=[verified_by_id[_output_folder_key(item.output_provider,fid)] for item,fid in zip(data.items,folder_ids,strict=True)],
         titles=titles,
         language_mode=language,
         diarization_enabled=data.options.diarize,
@@ -2753,7 +2743,7 @@ def create_transcription_jobs_batch(project_id: str, data: TranscriptionJobBatch
         if not _existing_batch_is_complete(existing, request_hash, len(data.items)):
             raise HTTPException(409, "Idempotency-Key already used with a different request")
         return {"jobs":[job_payload(j, include_sources=True) for j in existing], "created_count": len(existing), "replayed": True}
-    provider_credential_id, sources, verified_by_id, capability, dictionary_terms=_validate_new_batch_targets(db,user,p,provider=data.provider,operating_mode=data.operating_mode,language=language,diarization_enabled=data.options.diarize,dictionary_ids=data.options.dictionary_ids,explicit_provider_credential_id=explicit_provider_credential_id,duplicate_pair_found=duplicate_pair_found,source_ids=source_ids,folder_ids=folder_ids,media_clips=media_clips)
+    provider_credential_id, sources, verified_by_id, capability, dictionary_terms=_validate_new_batch_targets(db,user,p,provider=data.provider,operating_mode=data.operating_mode,language=language,diarization_enabled=data.options.diarize,dictionary_ids=data.options.dictionary_ids,explicit_provider_credential_id=explicit_provider_credential_id,duplicate_pair_found=duplicate_pair_found,source_ids=source_ids,folder_ids=folder_ids,media_clips=media_clips,output_providers=[item.output_provider for item in data.items])
     request_hash=_batch_hash(p.id,provider_credential_id,language,options_json,hash_items,provider=data.provider.value,operating_mode=data.operating_mode.value)
     try:
         jobs=[]
@@ -2764,7 +2754,7 @@ def create_transcription_jobs_batch(project_id: str, data: TranscriptionJobBatch
         provider_attempt_authorities=_load_batch_provider_attempt_authorities(db,user,sources,media_clips,provider=data.provider.value,model=capability.model,language=language,diarization_enabled=data.options.diarize)
         _require_batch_preflight_decisions(sources,media_clips,existing_result_matches,provider_attempt_authorities,reprocess_existing)
         for idx,(src,fid,title,media_clip) in enumerate(zip(sources,folder_ids,titles,media_clips,strict=True)):
-            vf=verified_by_id[fid]
+            vf=verified_by_id[_output_folder_key(data.items[idx].output_provider,fid)]
             job_options_json=stored_transcription_options(
                 data.options.diarize,
                 existing_result_reprocess_authorized=reprocess_existing[idx],
@@ -2772,6 +2762,9 @@ def create_transcription_jobs_batch(project_id: str, data: TranscriptionJobBatch
                 model=capability.model,
             )
             job=TranscriptionJob(project_id=p.id, owner_user_id=user.id, trace_id=getattr(request.state,"trace_id",None), status=JobStatus.queued, provider=data.provider.value, operating_mode=data.operating_mode.value, provider_credential_id=provider_credential_id, title=title, language=language, options_json=job_options_json, batch_idempotency_key=key, batch_request_hash=request_hash, batch_position=idx, media_clip_start_seconds=media_clip.start_seconds, media_clip_end_seconds=media_clip.end_seconds)
+            job.output_provider=getattr(vf,"provider","google_drive")
+            if job.output_provider != data.items[idx].output_provider:
+                raise HTTPException(409,detail={"reason":"output_provider_conflict"})
             job.apply_output_folder_snapshot(folder_id=vf.id, folder_url=vf.web_view_url, folder_name=vf.name)
             db.add(job); db.flush(); db.add(TranscriptionJobSource(job_id=job.id, source_id=src.id, position=0, status=JobSourceStatus.queued)); jobs.append(job)
         audit(db,"job.batch_created",actor_user_id=user.id,subject_user_id=user.id,project_id=p.id,created_count=len(jobs))
@@ -3513,8 +3506,7 @@ def history_attention_required_expression():
         .where(
             TranscriptionJobOutput.job_source_id
             == TranscriptionJobSourceAttempt.job_source_id,
-            TranscriptionJobOutput.output_kind
-            == GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND,
+            TranscriptionJobOutput.output_kind.in_(TRANSCRIPT_OUTPUT_KINDS),
         )
         .correlate(TranscriptionJobSourceAttempt)
         .exists()
@@ -3663,6 +3655,7 @@ def create_transcription_job(project_id: str, data: TranscriptionJobCreateIn, re
     ):
         raise HTTPException(409, "Используйте пакетную проверку для явного решения")
     job=TranscriptionJob(project_id=p.id, owner_user_id=user.id, trace_id=getattr(request.state,"trace_id",None), status=JobStatus.queued, provider_credential_id=provider_credential_id, title=clean_job_title(data.title), language=language, options_json=options_json)
+    job.output_provider=p.output_provider
     job.apply_output_folder_snapshot(folder_id=output_folder_id, folder_url=p.output_drive_folder_url, folder_name=p.output_drive_folder_name)
     db.add(job); db.flush()
     for idx, src in enumerate(sources):
@@ -3772,6 +3765,21 @@ def post_job_retry(job_id: str, request: Request, data: JobRetryIn | None = None
     _,user=pair; limiter.check("job:retry:post:"+user.id, 10, 3600)
     job=owned_job_or_404(db,user,job_id)
     initial_readiness = compute_explicit_retry_readiness(db, job, now=utcnow().replace(tzinfo=None))
+    if job.output_provider == "yandex_disk" and initial_readiness.reason.value == "output_reconciliation_required":
+        from .yandex_output_reconciliation import check_yandex_output_reconciliation
+        try:
+            checked=check_yandex_output_reconciliation(db,owner_user_id=user.id,job_id=job.id,
+                settings=settings,now=utcnow().replace(tzinfo=None))
+        except OutputReconciliationError:
+            db.rollback()
+            raise HTTPException(409,detail={"reason":"yandex_disk_reconciliation_unavailable"}) from None
+        db.refresh(job)
+        if job.status == JobStatus.completed:
+            return compute_explicit_retry_readiness(db,job,now=utcnow().replace(tzinfo=None)).payload(job)
+        if checked.conflicts or checked.unavailable:
+            reason="yandex_disk_document_conflict" if checked.conflicts else "yandex_disk_reconciliation_unavailable"
+            raise HTTPException(409,detail={"reason":reason})
+        initial_readiness=compute_explicit_retry_readiness(db,job,now=utcnow().replace(tzinfo=None))
     if job.error_code == "media_duration_too_long":
         raise HTTPException(
             409,
@@ -3914,6 +3922,18 @@ def check_output_reconciliation(job_id: str, request: Request, pair=Depends(requ
     job=owned_job_or_404(db,user,job_id)
     if job.status in {JobStatus.queued, JobStatus.processing}:
         raise HTTPException(409, "Output reconciliation unavailable")
+    if getattr(job,"output_provider","google_drive") == "yandex_disk":
+        from .yandex_output_reconciliation import check_yandex_output_reconciliation
+        try:
+            result=check_yandex_output_reconciliation(db,owner_user_id=user.id,job_id=job.id,
+                settings=settings,now=utcnow().replace(tzinfo=None))
+        except OutputReconciliationError:
+            db.rollback()
+            raise HTTPException(409,detail={"reason":"yandex_disk_reconciliation_unavailable"}) from None
+        audit(db,"job.output_reconciliation_checked",actor_user_id=user.id,subject_user_id=user.id)
+        db.commit()
+        return {"job_id":job.id,"checked":result.checked,"resolved":result.resolved,
+            "unresolved":result.unresolved,"conflicts":result.conflicts,"unavailable":result.unavailable}
     if not reconciliation_status_payload(db, owner_user_id=user.id, job_id=job.id)["available"]:
         # No lookup was possible: do not refresh Google credentials or claim not-found.
         return {"job_id": job.id, "checked": 0, "resolved": 0, "unresolved": 0, "conflicts": 0}
@@ -5104,3 +5124,12 @@ def audit_events(
     rows=query.order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).limit(page_size+1).all()
     rows,next_cursor=page_envelope(rows, page_size=page_size, timestamp_attribute="created_at", secret=sess.csrf_hash, owner_user_id=user.id, surface="audit-events")
     return {"events":[{"id":r.id,"type":r.event_type,"outcome":r.outcome or "legacy_unknown","trace_id":r.trace_id if valid_trace_id(r.trace_id) else None,"metadata":json.loads(r.metadata_json),"created_at":r.created_at.isoformat()} for r in rows], "next_cursor": next_cursor, "page_size": page_size}
+
+
+from .yandex_disk_routes import build_router as build_yandex_disk_router
+app.include_router(build_yandex_disk_router(recent_auth=require_recent_auth, limiter=limiter,
+    project_loader=owned_project_or_404, source_serializer=source_payload, project_serializer=project_payload))
+
+
+def _output_folder_key(provider, folder_id):
+    return folder_id if provider == "google_drive" else (provider, folder_id)

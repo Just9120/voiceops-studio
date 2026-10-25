@@ -100,6 +100,8 @@ services:
       STUDIO_AUDIO_PREPARATION_MAX_OUTPUT_BYTES: ${STUDIO_AUDIO_PREPARATION_MAX_OUTPUT_BYTES:-2147483647}
       STUDIO_AUDIO_DELIVERY_DIRECTORY: /run/studio-audio-delivery
       STUDIO_GOOGLE_OAUTH_CLIENT_ID: ${STUDIO_GOOGLE_OAUTH_CLIENT_ID:-}
+      STUDIO_YANDEX_DISK_OAUTH_CLIENT_ID: ${STUDIO_YANDEX_DISK_OAUTH_CLIENT_ID:-}
+      STUDIO_YANDEX_DISK_OAUTH_CLIENT_SECRET_FILE: /run/studio-runtime-secrets/studio_yandex_disk_oauth_client_secret
       STUDIO_GOOGLE_OAUTH_CLIENT_SECRET_FILE: /run/studio-runtime-secrets/studio_google_oauth_client_secret
       STUDIO_GOOGLE_OAUTH_REDIRECT_URI: ${STUDIO_GOOGLE_OAUTH_REDIRECT_URI:-}
       STUDIO_GOOGLE_OAUTH_SCOPES: ${STUDIO_GOOGLE_OAUTH_SCOPES:-openid email https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly}
@@ -144,6 +146,7 @@ services:
       STUDIO_JOB_SMTP_STARTTLS: ${STUDIO_JOB_SMTP_STARTTLS:-true}
       STUDIO_JOB_SMTP_TIMEOUT_SECONDS: ${STUDIO_JOB_SMTP_TIMEOUT_SECONDS:-10}
       STUDIO_JOB_TELEGRAM_ENABLED: ${STUDIO_JOB_TELEGRAM_ENABLED:-false}
+      STUDIO_JOB_TELEGRAM_OWNER_USER_ID: ${STUDIO_JOB_TELEGRAM_OWNER_USER_ID:-}
       STUDIO_JOB_TELEGRAM_BOT_TOKEN_FILE: /run/studio-runtime-secrets/studio_job_telegram_bot_token
       STUDIO_JOB_TELEGRAM_CHAT_ID_FILE: /run/studio-runtime-secrets/studio_job_telegram_chat_id
       STUDIO_JOB_TELEGRAM_TIMEOUT_SECONDS: ${STUDIO_JOB_TELEGRAM_TIMEOUT_SECONDS:-5}
@@ -156,6 +159,7 @@ services:
       - studio_audio_reference_s3_access_key_id
       - studio_audio_reference_s3_secret_access_key
       - studio_google_oauth_client_secret
+      - studio_yandex_disk_oauth_client_secret
       - studio_google_maintenance_oauth_client_secret
       - studio_alert_telegram_bot_token
       - studio_alert_telegram_chat_id
@@ -248,6 +252,8 @@ services:
       STUDIO_AUDIO_PREPARATION_MAX_OUTPUT_BYTES: ${STUDIO_AUDIO_PREPARATION_MAX_OUTPUT_BYTES:-2147483647}
       STUDIO_AUDIO_DELIVERY_DIRECTORY: /run/studio-audio-delivery
       STUDIO_GOOGLE_OAUTH_CLIENT_ID: ${STUDIO_GOOGLE_OAUTH_CLIENT_ID:-}
+      STUDIO_YANDEX_DISK_OAUTH_CLIENT_ID: ${STUDIO_YANDEX_DISK_OAUTH_CLIENT_ID:-}
+      STUDIO_YANDEX_DISK_OAUTH_CLIENT_SECRET_FILE: /run/studio-runtime-secrets/studio_yandex_disk_oauth_client_secret
       STUDIO_GOOGLE_OAUTH_CLIENT_SECRET_FILE: /run/studio-runtime-secrets/studio_google_oauth_client_secret
       STUDIO_GOOGLE_OAUTH_REDIRECT_URI: ${STUDIO_GOOGLE_OAUTH_REDIRECT_URI:-}
       STUDIO_GOOGLE_OAUTH_SCOPES: ${STUDIO_GOOGLE_OAUTH_SCOPES:-openid email https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly}
@@ -299,6 +305,7 @@ services:
       STUDIO_JOB_SMTP_STARTTLS: ${STUDIO_JOB_SMTP_STARTTLS:-true}
       STUDIO_JOB_SMTP_TIMEOUT_SECONDS: ${STUDIO_JOB_SMTP_TIMEOUT_SECONDS:-10}
       STUDIO_JOB_TELEGRAM_ENABLED: ${STUDIO_JOB_TELEGRAM_ENABLED:-false}
+      STUDIO_JOB_TELEGRAM_OWNER_USER_ID: ${STUDIO_JOB_TELEGRAM_OWNER_USER_ID:-}
       STUDIO_JOB_TELEGRAM_BOT_TOKEN_FILE: /run/studio-runtime-secrets/studio_job_telegram_bot_token
       STUDIO_JOB_TELEGRAM_CHAT_ID_FILE: /run/studio-runtime-secrets/studio_job_telegram_chat_id
       STUDIO_JOB_TELEGRAM_TIMEOUT_SECONDS: ${STUDIO_JOB_TELEGRAM_TIMEOUT_SECONDS:-5}
@@ -313,6 +320,7 @@ services:
       - studio_audio_reference_s3_access_key_id
       - studio_audio_reference_s3_secret_access_key
       - studio_google_oauth_client_secret
+      - studio_yandex_disk_oauth_client_secret
       - studio_google_maintenance_oauth_client_secret
       - studio_alert_telegram_bot_token
       - studio_alert_telegram_chat_id
@@ -382,6 +390,8 @@ services:
       timeout: 3s
       retries: 5
 secrets:
+  studio_yandex_disk_oauth_client_secret:
+    file: ${STUDIO_YANDEX_DISK_OAUTH_CLIENT_SECRET_FILE:-./optional-empty-secret}
   studio_postgres_password:
     file: ${STUDIO_POSTGRES_PASSWORD_FILE:?secret file required}
   studio_worker_postgres_password:

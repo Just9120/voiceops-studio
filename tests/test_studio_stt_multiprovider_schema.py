@@ -27,7 +27,7 @@ def test_stt_multiprovider_migration_is_additive_single_head():
     )
     revision = script.get_revision("0036_stt_multiprovider")
 
-    assert script.get_heads() == ["0042_totp_replay"]
+    assert script.get_heads() == ["0043_yandex_disk"]
     assert revision.down_revision == "0035_job_notifications"
     assert revision.module.release_safety == "additive"
     assert CredentialProvider.yandex.value == "yandex"

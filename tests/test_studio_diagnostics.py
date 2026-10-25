@@ -715,9 +715,9 @@ def test_api_job_create_batch_replay_and_cancel_diagnostics(monkeypatch, db):
     sess=m.Session(user_id=u.id, token_hash="hash", csrf_hash="csrf", expires_at=datetime(2027,1,1)); db.add(sess); db.commit()
     def override_db(): yield db
     def override_current(): return sess,u
-    main.app.dependency_overrides[main.get_db]=override_db
-    main.app.dependency_overrides[main.current_session]=override_current
-    main.app.dependency_overrides[main.require_csrf]=override_current
+    monkeypatch.setitem(main.app.dependency_overrides, main.get_db, override_db)
+    monkeypatch.setitem(main.app.dependency_overrides, main.current_session, override_current)
+    monkeypatch.setitem(main.app.dependency_overrides, main.require_csrf, override_current)
     monkeypatch.setattr(main.limiter, "check", lambda *a, **k: None)
     events=[]
     def capture(**kw):

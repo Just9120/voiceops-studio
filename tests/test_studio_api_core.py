@@ -160,7 +160,7 @@ def test_database_role_manifest_lets_real_migrator_extend_existing_enum(tmp_path
                 conn.execute(text("ALTER ROLE studio_migrator NOLOGIN"))
 
         with temp_engine.connect() as conn:
-            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0042_totp_replay"
+            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0043_yandex_disk"
             assert conn.execute(
                 text(
                     "SELECT count(*) FROM pg_enum e "
@@ -490,7 +490,7 @@ def test_alembic_upgrade_and_readiness_current():
     c = TestClient(app)
     r = c.get("/api/healthz")
     assert r.status_code == 200
-    assert r.json() == {"ok": True, "database": "reachable", "migrations": "current", "schema_revision": "0042_totp_replay", "redis": "reachable"}
+    assert r.json() == {"ok": True, "database": "reachable", "migrations": "current", "schema_revision": "0043_yandex_disk", "redis": "reachable"}
     assert c.get("/api/readyz").json() == r.json()
     assert c.get("/api/livez").json() == {"ok": True, "status": "alive"}
 
@@ -701,6 +701,9 @@ def test_worker_manifest_supports_readiness_with_restricted_postgresql_login(mon
                 # Operational alert evaluation reads the current provider
                 # account snapshot, but never mutates provider accounting.
                 conn.execute(text("SELECT id FROM provider_account_snapshots LIMIT 0"))
+                conn.execute(text("SELECT user_id FROM yandex_disk_connections FOR UPDATE"))
+                conn.execute(text("UPDATE yandex_disk_connections SET token_ciphertext=token_ciphertext WHERE false"))
+                conn.execute(text("SELECT id FROM yandex_disk_resources LIMIT 0"))
                 with pytest.raises(ProgrammingError) as failure:
                     conn.execute(
                         text(
@@ -718,6 +721,10 @@ def test_worker_manifest_supports_readiness_with_restricted_postgresql_login(mon
                     "TRUNCATE alembic_version",
                     "CREATE TABLE public.worker_must_not_create (id integer)",
                     "SELECT * FROM sessions LIMIT 0",
+                    "UPDATE yandex_disk_connections SET account_uid=account_uid",
+                    "UPDATE yandex_disk_connections SET status=status",
+                    "DELETE FROM yandex_disk_connections",
+                    "DELETE FROM yandex_disk_resources",
                 ):
                     with pytest.raises(ProgrammingError) as failure:
                         conn.execute(text(statement))
@@ -727,7 +734,8 @@ def test_worker_manifest_supports_readiness_with_restricted_postgresql_login(mon
             script = (ROOT / "scripts/configure_studio_worker_db_role.sh").read_text(encoding="utf-8")
             queries = [query.replace("${ROLE_NAME}", role_name)
                        for query in re.findall(r'psql_admin -Atqc "([^"]+)"', script)]
-            assert len(queries) == 6
+            assert len(queries) == 7
+            assert "has_column_privilege" in queries[-1] and "yandex_disk_connections" in queries[-1]
             with temp_engine.begin() as conn:
                 assert all(conn.execute(text(query)).scalar_one() is True for query in queries)
                 conn.execute(text(f"REVOKE SELECT ON alembic_version FROM {role_name}"))
@@ -1269,9 +1277,9 @@ def test_job_notification_preferences_are_owner_scoped_opt_in_and_fail_closed():
         json={"email_enabled": True},
         headers=headers,
     )
-    assert blocked.status_code == 409
+    assert blocked.status_code == 410
     assert blocked.json() == {
-        "detail": "Email-уведомления пока не настроены администратором"
+        "detail": "Для уведомлений о задачах используется только Telegram"
     }
     assert c.post(
         "/api/notifications/web-push/subscriptions",
@@ -1281,7 +1289,7 @@ def test_job_notification_preferences_are_owner_scoped_opt_in_and_fail_closed():
             "auth": "A" * 20,
         },
         headers=headers,
-    ).status_code == 409
+    ).status_code == 410
 
 
 def test_source_upload_policy_is_authenticated_safe_and_not_cached(monkeypatch):
@@ -1591,7 +1599,7 @@ def test_elevenlabs_account_routes_are_owner_scoped_no_store_and_never_echo_secr
         json={"provider": "elevenlabs", "label": "Основной", "raw_value": secret},
         headers={"origin": "https://studio.test", "x-csrf-token": owner_csrf},
     )
-    assert created.status_code == 200
+    assert created.status_code == 200, created.text
     credential_id = created.json()["id"]
 
     response = owner.get("/api/provider-accounts/elevenlabs")
@@ -4601,7 +4609,7 @@ def test_job_lease_migration_real_0005_shape_upgrades_to_head():
             assert {"lease_owner_id", "lease_generation", "claimed_at", "lease_expires_at", "attempt_count", "cancel_requested_at"}.issubset(cols)
             indexes = [idx["name"] for idx in inspector.get_indexes("transcription_jobs")]
             assert indexes.count("ix_transcription_jobs_status_lease_expires_created") == 1
-            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0042_totp_replay"
+            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0043_yandex_disk"
 
 
 
@@ -4665,7 +4673,7 @@ def test_job_output_migration_clean_chain_constraints_and_0007_roundtrip():
         run_alembic("head", env=env)
         with temp_engine.begin() as conn:
             assert "transcription_job_outputs" in inspect(conn).get_table_names()
-            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0042_totp_replay"
+            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0043_yandex_disk"
 
 
 
@@ -8253,6 +8261,38 @@ def test_batch_jobs_key_scoped_by_project_and_integrity_replay_guards(monkeypatc
         db.rollback(); db.close()
 
 
+def test_batch_mixed_drive_destinations_are_provider_bound_and_idempotent(monkeypatch):
+    from studio_api.job_output_folder_selection import VerifiedOutputFolderSelection
+    import studio_api.yandex_disk_routes as disk_routes
+    calls = _install_batch_folder_mocks(monkeypatch)
+    c, csrf, user_id, pid, source_a, source_b, cred_id = _batch_setup("batch-disk@example.com")
+    disk_calls = []
+    handle = "6f5d76f9-1ced-44a4-abf5-9ff96092687e"
+    def verify(db, *, owner_user_id, folder_id, settings):
+        assert owner_user_id == user_id and folder_id == handle
+        disk_calls.append((owner_user_id, folder_id))
+        return VerifiedOutputFolderSelection(handle, "Папка Яндекс Диска",
+            "https://disk.yandex.ru/client/disk/Docs", utcnow(), provider="yandex_disk")
+    monkeypatch.setattr(disk_routes, "verify_yandex_output_folder", verify)
+    body = _batch_body(source_a, source_b, folder_a="google-folder", folder_b=handle, credential_id=cred_id)
+    body["items"][1]["output_provider"] = "yandex_disk"
+    preview = c.post(f"/api/projects/{pid}/jobs/batch/preflight", json=body, headers=_batch_headers(csrf))
+    assert preview.status_code == 200
+    assert preview.json()["items"][1]["output_destination"]["name"] == "Папка Яндекс Диска"
+    created = c.post(f"/api/projects/{pid}/jobs/batch", json=body, headers=_batch_headers(csrf))
+    assert created.status_code == 200
+    jobs = created.json()["jobs"]
+    assert [job["output_provider"] for job in jobs] == ["google_drive", "yandex_disk"]
+    assert jobs[1]["output_folder"]["web_view_url"].startswith("https://disk.yandex.ru/")
+    calls.clear(); disk_calls.clear()
+    replay = c.post(f"/api/projects/{pid}/jobs/batch", json=body, headers=_batch_headers(csrf))
+    assert replay.status_code == 200 and replay.json()["replayed"] is True
+    assert calls == disk_calls == []
+    changed = {**body, "items": [body["items"][0], {**body["items"][1], "output_provider": "google_drive"}]}
+    assert c.post(f"/api/projects/{pid}/jobs/batch", json=changed, headers=_batch_headers(csrf)).status_code == 409
+    assert calls == disk_calls == []
+
+
 
 def test_batch_jobs_integrity_error_replays_concurrent_winner(monkeypatch):
     calls = _install_batch_folder_mocks(monkeypatch)
@@ -8943,7 +8983,7 @@ def test_job_destination_migration_0008_0009_upgrade_downgrade_backfill(tmp_path
         with temp_engine.begin() as conn:
             assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0009_job_output_destinations"
         cfg = Config(str(ALEMBIC))
-        assert ScriptDirectory.from_config(cfg).get_current_head() == "0042_totp_replay"
+        assert ScriptDirectory.from_config(cfg).get_current_head() == "0043_yandex_disk"
     finally:
         temp_engine.dispose()
         cleanup_engine = create_engine(admin_url, isolation_level="AUTOCOMMIT")

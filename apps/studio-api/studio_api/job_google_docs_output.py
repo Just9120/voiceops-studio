@@ -77,6 +77,11 @@ class JobGoogleDocsOutputReason(str, Enum):
     existing_reconciliation_case = "existing_reconciliation_case"
     output_reconciliation_conflict = "output_reconciliation_conflict"
     reconciliation_case_persistence_failed = "reconciliation_case_persistence_failed"
+    yandex_disk_quota_exceeded = "yandex_disk_quota_exceeded"
+    yandex_disk_permission_denied = "yandex_disk_permission_denied"
+    yandex_disk_reauthorization_required = "yandex_disk_access_expired"
+    yandex_disk_document_conflict = "yandex_disk_document_conflict"
+    yandex_disk_unavailable = "yandex_disk_unavailable"
 
 
 class JobGoogleDocsOutputError(RuntimeError):
@@ -111,6 +116,7 @@ class _OutputJobSnapshot:
     model: str
     clip_start: int | None
     clip_end: int | None
+    output_provider: str = "google_drive"
 
 
 @contextmanager
@@ -134,6 +140,15 @@ def create_processing_job_google_doc_from_transcript(
     artifact: GoogleDocsTranscriptArtifact | None = None
     _require_no_persisted_output(db, job_source_id)
     snap = _load_output_job_snapshot(db, job_id, lease_owner_id, lease_generation, check_now)
+    if snap.output_provider == "yandex_disk":
+        from .job_yandex_docx_output import create_processing_job_yandex_docx
+        with create_processing_job_yandex_docx(db, job_id=job_id, job_source_id=job_source_id,
+                lease_owner_id=lease_owner_id, lease_generation=lease_generation,
+                transcript=transcript, settings=settings, now=check_now, clock=clock) as disk_artifact:
+            yield disk_artifact
+        return
+    if snap.output_provider != "google_drive":
+        raise JobGoogleDocsOutputError(JobGoogleDocsOutputReason.output_folder_unavailable)
     source_snap = _load_source_snapshot(db, job_id, job_source_id, lease_owner_id, lease_generation, check_now, settings)
     try:
         try:
@@ -149,29 +164,7 @@ def create_processing_job_google_doc_from_transcript(
             raise JobGoogleDocsOutputError(JobGoogleDocsOutputReason.output_folder_unavailable) from exc
         _compare_or_before(_load_output_job_snapshot(db, job_id, lease_owner_id, lease_generation, clock()), snap)
         _compare_source_or_before(_load_source_snapshot(db, job_id, job_source_id, lease_owner_id, lease_generation, clock(), settings), source_snap)
-        try:
-            transcript_text = transcript.text
-            diarization_enabled = job_diarization_enabled(snap.options_json)
-            if diarization_enabled:
-                transcript_text = build_speaker_labeled_transcript(
-                    transcript.words,
-                    fallback_text=transcript_text,
-                )
-        except (ElevenLabsTranscriptionError, GoogleDocsOutputError) as exc:
-            raise JobGoogleDocsOutputError(JobGoogleDocsOutputReason.transcript_context_closed) from exc
-        title = choose_transcript_document_title(job_title=snap.title, original_filename=source_snap.original_filename)
-        provenance = _source_provenance_snapshot(db, source_snap)
-        formatted = format_transcript_doc(
-            title=title,
-            transcript_text=transcript_text,
-            job_language=snap.language,
-            detected_language_code=transcript.detected_language_code,
-            created_at=provenance[1],
-            provider=selected_provider(snap.provider or "elevenlabs"),
-            model=snap.model,
-            provenance_lines=provenance[0] + ((f"Recording date provenance: {provenance[2]}",) if provenance[1] else ()) + ((f"Clip: {snap.clip_start or 0}-{snap.clip_end if snap.clip_end is not None else 'end'} seconds; source timeline",) if snap.clip_start is not None or snap.clip_end is not None else ()),
-            diarization_enabled=diarization_enabled,
-        )
+        formatted, provenance = format_job_transcript(db, snap, source_snap, transcript)
         _compare_or_before(_load_output_job_snapshot(db, job_id, lease_owner_id, lease_generation, clock()), snap)
         _compare_source_or_before(_load_source_snapshot(db, job_id, job_source_id, lease_owner_id, lease_generation, clock(), settings), source_snap)
         if _source_provenance_snapshot(db, source_snap) != provenance:
@@ -337,7 +330,7 @@ def _load_output_job_snapshot(db: Session, job_id: str, owner: str, generation: 
             table.project_id == job.project_id).distinct().all())
     if identities:
         model = next(iter(identities))[1] if len(identities) == 1 and next(iter(identities))[0] == provider else "unknown"
-    return _OutputJobSnapshot(job.id, job.owner_user_id, project.id, job.title, job.language, job.options_json, job.output_drive_folder_id, job.lease_owner_id, job.lease_generation, job.cancel_requested_at, project.archived_at, project.owner_user_id, job.provider, model, job.media_clip_start_seconds, job.media_clip_end_seconds)
+    return _OutputJobSnapshot(job.id, job.owner_user_id, project.id, job.title, job.language, job.options_json, job.output_drive_folder_id, job.lease_owner_id, job.lease_generation, job.cancel_requested_at, project.archived_at, project.owner_user_id, job.provider, model, job.media_clip_start_seconds, job.media_clip_end_seconds, job.output_provider)
 
 
 def _source_provenance_snapshot(db, source_snap):
@@ -434,3 +427,30 @@ def _utc_iso(value: datetime) -> str:
 def _require_no_persisted_output(db: Session, job_source_id: str) -> None:
     if db.query(TranscriptionJobOutput.id).filter(TranscriptionJobOutput.job_source_id == job_source_id).first() is not None:
         raise JobGoogleDocsOutputError(JobGoogleDocsOutputReason.output_already_persisted)
+
+
+def format_job_transcript(db, snap, source_snap, transcript):
+    try:
+        transcript_text = transcript.text
+        diarization_enabled = job_diarization_enabled(snap.options_json)
+        if diarization_enabled:
+            transcript_text = build_speaker_labeled_transcript(
+                transcript.words,
+                fallback_text=transcript_text,
+            )
+    except (ElevenLabsTranscriptionError, GoogleDocsOutputError) as exc:
+        raise JobGoogleDocsOutputError(JobGoogleDocsOutputReason.transcript_context_closed) from exc
+    title = choose_transcript_document_title(job_title=snap.title, original_filename=source_snap.original_filename)
+    provenance = _source_provenance_snapshot(db, source_snap)
+    formatted = format_transcript_doc(
+        title=title,
+        transcript_text=transcript_text,
+        job_language=snap.language,
+        detected_language_code=transcript.detected_language_code,
+        created_at=provenance[1],
+        provider=selected_provider(snap.provider or "elevenlabs"),
+        model=snap.model,
+        provenance_lines=provenance[0] + ((f"Recording date provenance: {provenance[2]}",) if provenance[1] else ()) + ((f"Clip: {snap.clip_start or 0}-{snap.clip_end if snap.clip_end is not None else 'end'} seconds; source timeline",) if snap.clip_start is not None or snap.clip_end is not None else ()),
+        diarization_enabled=diarization_enabled,
+    )
+    return formatted, provenance

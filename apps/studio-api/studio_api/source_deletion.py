@@ -203,7 +203,7 @@ def _no_active_audio_reference_predicate(now):
 def deletion_readiness(db: Session, source: Source, *, now: datetime, locked_jobs: list[TranscriptionJob] | None = None, discard_failed_retry: bool = False) -> SourceDeletionReason:
     if source.deleted_at is not None or source.upload_status == SourceUploadStatus.deleted:
         return SourceDeletionReason.source_already_deleted
-    if source.source_type not in {SourceType.local_upload, SourceType.google_drive}:
+    if source.source_type not in {SourceType.local_upload, SourceType.google_drive, SourceType.yandex_disk}:
         return SourceDeletionReason.unsupported_source_state
     for job in locked_jobs if locked_jobs is not None else _referencing_jobs(db, source.id, lock=False):
         if job.status == JobStatus.queued:
@@ -337,7 +337,7 @@ def request_source_deletion(db: Session, *, owner_user_id: str, source_id: str, 
         source.updated_at = now
     elif source.delete_reason is None:
         source.delete_reason = "user_deleted"
-    if source.source_type == SourceType.google_drive:
+    if source.source_type in {SourceType.google_drive, SourceType.yandex_disk}:
         source.storage_cleanup_status = SourceStorageCleanupStatus.not_applicable
         source.storage_cleanup_not_before_at = None
     else:
@@ -398,10 +398,11 @@ def mark_one_fully_exported_source_for_cleanup(db: Session, *, now: datetime) ->
     Source row locking fences new job admission. Historical sources and audio
     preparation references are never enrolled implicitly.
     """
+    from .transcript_catalog import TRANSCRIPT_OUTPUT_KINDS
     document = exists(select(TranscriptionJobOutput.id).where(
         TranscriptionJobOutput.job_source_id == TranscriptionJobSource.id,
         TranscriptionJobOutput.job_id == TranscriptionJobSource.job_id,
-        TranscriptionJobOutput.output_kind == "google_docs_transcript",
+        TranscriptionJobOutput.output_kind.in_(TRANSCRIPT_OUTPUT_KINDS),
         TranscriptionJobOutput.document_character_count > 0,
         TranscriptionJobOutput.document_id != "",
     ))

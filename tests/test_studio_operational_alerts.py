@@ -95,16 +95,16 @@ def test_backup_monitor_owner_configuration_is_optional_but_bounded():
 
 
 @pytest.mark.parametrize("events,configured,expected", [
-    ([], True, True),
+    ([], True, False),
     ([], False, False),
     ([(3600, "success")], True, False),
     ([(43199, "success")], True, False),
-    ([(43200, "success")], True, True),
-    ([(46800, "success")], False, True),
+    ([(43200, "success")], True, False),
+    ([(46800, "success")], False, False),
     ([(3600, "success"), (60, "failed")], True, True),
     ([(3600, "failed"), (60, "success")], True, False),
 ])
-def test_backup_missing_stale_failure_and_recovery(events, configured, expected):
+def test_cloudkeep_owns_freshness_but_reported_migration_failure_still_alerts(events, configured, expected):
     engine, _factory, db, owner = database()
     now = datetime(2026, 10, 18, 12)
     config = settings()
@@ -123,11 +123,14 @@ def test_backup_missing_stale_failure_and_recovery(events, configured, expected)
     engine.dispose()
 
 
-def test_another_owners_fresh_backup_does_not_mask_missing_backup():
+def test_another_owners_fresh_backup_does_not_mask_reported_failure():
     engine, _factory, db, owner = database()
     now = datetime(2026, 10, 18, 12)
     other = User(email="backup-other@example.test", status=UserStatus.active)
     db.add(other); db.flush()
+    db.add(AuditEvent(actor_user_id=owner.id, subject_user_id=owner.id,
+                      event_type="ops.postgres_backup", outcome="failed",
+                      metadata_json="{}", created_at=now - timedelta(minutes=1)))
     db.add(AuditEvent(actor_user_id=other.id, subject_user_id=other.id,
                       event_type="ops.postgres_backup", outcome="success",
                       metadata_json="{}", created_at=now))

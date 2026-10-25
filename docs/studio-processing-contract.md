@@ -2,10 +2,25 @@
 
 ## Уточнение согласованного scope 2026-09-30
 
-Согласованный источник revision 2994 отменяет прежнюю необходимость постоянной полной копии обычной транскрипции внутри Studio: успешный результат — полный внешний документ, Studio хранит status/link. Временный STT text должен сохраняться только для незавершённого export recovery без нового STT; это ещё не реализовано полностью. Manifest success устанавливается только после полного документа. PostgreSQL владеет workflow metadata. Текущие audio output bytes используют ограниченную retention по существующей реализации; новое требование об отсутствии отдельной сохранённой S3-копии готового аудио требует дальнейшей архитектурной сверки. F42 в [delivery dashboard](delivery-plan.md) отслеживает оставшиеся расхождения; источником продуктового scope остаётся [project spec](project-spec.md).
+Согласованный источник revision2994: успешный обычный результат — полный внешний Google Doc либо DOCX на выбранном Яндекс Диске, Studio хранит status/link. Временный STT text сохраняется для незавершённого export-only recovery без нового STT, затем очищается после полного документа либо явной terminal cancellation; история и расход сохраняются. Manifest success устанавливается только после полного документа. PostgreSQL владеет workflow metadata. Готовое подготовленное аудио не получает отдельную постоянную S3-копию: скачивание/экспорт собирает его из доступных исходников по сохранённым параметрам. Источник продуктового scope — [project spec](project-spec.md), Evidence и ограничения — [delivery dashboard](delivery-plan.md).
 
 
 This is the current Studio processing contract. It is not a delivery plan, PR history, deployment runbook, or proof of production-live processing. Product scope lives in `docs/project-spec.md`; architecture lives in `docs/architecture.md`; rollout procedure lives in `docs/runbooks/studio-platform-ops.md`.
+
+## Yandex Disk destination boundary
+
+`output_provider` distinguishes Google Drive and Yandex Disk independently of the STT
+provider. Legacy folder/document field names remain API-compatible; Disk IDs are opaque
+owner/account/version handles, not Google file IDs. Source materialization and output
+creation recheck account, source, destination, project and lease authority around I/O.
+
+Disk creates a deterministic full DOCX with canonical provider/model/language and
+conditional provenance. A committed receipt pins path, SHA256, MD5 and size before
+create-only upload; exact strong readback is required before accepted output. A lost
+response can recover the same file, while an edited file is never silently replaced.
+Confirmed absence permits explicit cache-only export retry; permission/network failures
+do not establish absence. Numbered diarization and manual speaker names remain available;
+automatic voice identification is not part of this contract.
 
 ## Authority
 
@@ -104,7 +119,7 @@ If cancellation, lease loss, owner/generation mismatch, project/source mutation,
 
 - Output read access is explicit, authenticated, and owner-scoped.
 - Partial outputs may be returned for an owned job; job status remains the lifecycle authority.
-- Browser payloads may include only validated safe Google web URL metadata and aggregate output metadata.
+- Browser payloads may include only validated safe Google or selected Yandex Disk web URL metadata and aggregate output metadata. Output provider is pinned per job and folder handle; the STT provider is independent.
 - Browser payloads must not include transcript body, Google document ID, folder ID, lease metadata, provider payloads, Google payloads, source bytes, object keys, private paths, or secret values.
 - Browser progress may expose only the safe source display name, fixed stage states, and bounded completed/total provider-part counters. Percentage must derive only from confirmed checkpoints; time-based simulated movement is prohibited.
 

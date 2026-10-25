@@ -23,6 +23,13 @@ function reconciliation(
 }
 
 describe("OutputReconciliationNotice", () => {
+  it("checks the selected Disk without promising a Google document", async () => {
+    const onCheck = vi.fn();
+    render(<OutputReconciliationNotice jobId="disk-job" outputProvider="yandex_disk" state={reconciliation()} onCheck={onCheck} />);
+    await userEvent.click(screen.getByRole("button", { name: "Проверить созданный документ на Яндекс Диске" }));
+    expect(onCheck).toHaveBeenCalledWith("disk-job");
+    expect(document.body.textContent).not.toContain("Google");
+  });
   it("starts an explicit reconciliation check for the current job", async () => {
     const onCheck = vi.fn();
     render(

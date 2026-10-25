@@ -12,7 +12,7 @@ from .google_connection_access import active_google_connection_for_user, require
 from .google_drive_upload import upload_file_resumable, GoogleDriveUploadError, GoogleDriveUploadReason, _safe_drive_identifier
 from .job_output_destination import _fetch_drive_folder_authorization_metadata, _validate_metadata
 from .models import TranscriptCatalogEntry, TranscriptionJob, TranscriptionJobOutput, TranscriptionJobSource, User
-from .transcript_catalog import GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND
+from .transcript_catalog import TRANSCRIPT_OUTPUT_KINDS
 from .transcription_options import job_diarization_enabled
 
 MAX_ENTRIES = 5000
@@ -27,7 +27,7 @@ def manifest_snapshot(db, *, user_id):
         TranscriptionJob, TranscriptionJob.id == TranscriptionJobOutput.job_id).join(
         TranscriptionJobSource, TranscriptionJobSource.id == TranscriptionJobOutput.job_source_id).where(
         TranscriptionJob.owner_user_id == user_id,
-        TranscriptionJobOutput.output_kind == GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND,
+        TranscriptionJobOutput.output_kind.in_(TRANSCRIPT_OUTPUT_KINDS),
         TranscriptionJobOutput.document_character_count > 0)
     catalog = select(TranscriptCatalogEntry).where(TranscriptCatalogEntry.owner_user_id == user_id)
     if user.manifest_reset_at is not None:
@@ -38,6 +38,7 @@ def manifest_snapshot(db, *, user_id):
     if len(rows) + len(imported) > MAX_ENTRIES:
         raise ValueError("manifest_export_limit")
     entries = [{"origin": "studio", "document_id": output.document_id,
+        "output_provider": job.output_provider, "output_kind": output.output_kind,
         "source_id": source.source_id, "provider": job.provider, "operating_mode": job.operating_mode,
         "language": job.language, "diarization_enabled": job_diarization_enabled(job.options_json),
         "clip_start_seconds": job.media_clip_start_seconds, "clip_end_seconds": job.media_clip_end_seconds,

@@ -13,7 +13,7 @@ class CredentialProvider(str, enum.Enum): elevenlabs="elevenlabs"; yandex="yande
 class CredentialStatus(str, enum.Enum): active="active"; revoked="revoked"; deleted="deleted"
 class GoogleConnectionStatus(str, enum.Enum): active="active"; revoked="revoked"; error="error"
 class GoogleProvider(str, enum.Enum): google="google"
-class SourceType(str, enum.Enum): local_upload="local_upload"; google_drive="google_drive"
+class SourceType(str, enum.Enum): local_upload="local_upload"; google_drive="google_drive"; yandex_disk="yandex_disk"
 class SourceReferenceClass(str, enum.Enum): transcription="transcription"; audio_processing="audio_processing"
 class SourceUploadProtocol(str, enum.Enum): single_put="single_put"; multipart="multipart"
 class SourceUploadStatus(str, enum.Enum): pending="pending"; uploaded="uploaded"; deleted="deleted"; expired="expired"; failed="failed"
@@ -273,6 +273,34 @@ class GoogleConnection(Base):
     updated_at: Mapped[datetime]=mapped_column(DateTime(timezone=True), default=now, onupdate=now)
     __table_args__=(UniqueConstraint("user_id","provider", name="uq_google_connection_user_provider"),)
 
+class YandexDiskConnection(Base):
+    __tablename__="yandex_disk_connections"
+    user_id: Mapped[str]=mapped_column(ForeignKey("users.id"), primary_key=True)
+    account_uid: Mapped[str]=mapped_column(String(128), nullable=False)
+    status: Mapped[str]=mapped_column(String(16), default="active", nullable=False)
+    token_ciphertext: Mapped[bytes|None]=mapped_column(LargeBinary)
+    token_nonce: Mapped[bytes|None]=mapped_column(LargeBinary)
+    key_id: Mapped[str]=mapped_column(String(80), nullable=False)
+    credential_revision: Mapped[int]=mapped_column(Integer, default=1, nullable=False)
+    connected_at: Mapped[datetime]=mapped_column(DateTime(timezone=True), default=now, nullable=False)
+    updated_at: Mapped[datetime]=mapped_column(DateTime(timezone=True), default=now, nullable=False)
+    revoked_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
+    __table_args__=(CheckConstraint("status IN ('active','revoked','error')", name="ck_yandex_disk_connection_status"),)
+
+
+class YandexDiskResource(Base):
+    """An owner/account-bound handle for a selected file version or directory."""
+    __tablename__="yandex_disk_resources"
+    id: Mapped[str]=mapped_column(String(36), primary_key=True)
+    owner_user_id: Mapped[str]=mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    account_uid: Mapped[str]=mapped_column(String(128), nullable=False)
+    path: Mapped[str]=mapped_column(Text, nullable=False)
+    is_folder: Mapped[bool]=mapped_column(Boolean, nullable=False)
+    version_fingerprint: Mapped[str]=mapped_column(String(64), nullable=False)
+    metadata_json: Mapped[str]=mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True), default=now, nullable=False)
+
+
 class GoogleOAuthState(Base):
     __tablename__="google_oauth_states"
     id: Mapped[str]=mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -295,6 +323,7 @@ class Project(Base):
     updated_at: Mapped[datetime]=mapped_column(DateTime(timezone=True), default=now, onupdate=now, index=True)
     archived_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True), index=True)
     output_drive_folder_id: Mapped[str|None]=mapped_column(String(256))
+    output_provider: Mapped[str]=mapped_column(String(32), default="google_drive", server_default=text("'google_drive'"), nullable=False)
     output_drive_folder_url: Mapped[str|None]=mapped_column(Text)
     output_drive_folder_name: Mapped[str|None]=mapped_column(String(512))
     history_reset_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
@@ -355,7 +384,7 @@ class Source(Base):
     created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime]=mapped_column(DateTime(timezone=True), default=now, onupdate=now)
     project: Mapped[Project]=relationship("Project", back_populates="sources")
-    __table_args__=(CheckConstraint("audio_retention_days IS NULL OR audio_retention_days IN (3,7,30)", name="ck_sources_audio_retention_days"), Index("ix_sources_storage_identity", "reference_class", "s3_bucket", "s3_object_key"), Index("ix_sources_project_status", "project_id", "upload_status", "created_at"), Index("ix_sources_project_deleted_created_id", "project_id", "deleted_at", "created_at", "id"), Index("ix_sources_storage_cleanup_selection", "storage_cleanup_status", "storage_cleanup_not_before_at", "storage_cleanup_lease_expires_at"), CheckConstraint("storage_cleanup_attempt_count >= 0", name="ck_sources_storage_cleanup_attempt_count_nonnegative"), CheckConstraint("storage_cleanup_generation >= 0", name="ck_sources_storage_cleanup_generation_nonnegative"), CheckConstraint("reference_class IN ('transcription','audio_processing')", name="ck_sources_reference_class"), CheckConstraint("upload_protocol IN ('single_put','multipart')", name="ck_sources_upload_protocol"), CheckConstraint("((upload_protocol = 'single_put' AND multipart_upload_id IS NULL AND multipart_part_size_bytes IS NULL AND multipart_part_count IS NULL AND multipart_completed_at IS NULL) OR (upload_protocol = 'multipart' AND multipart_upload_id IS NOT NULL AND multipart_part_size_bytes >= 5242880 AND multipart_part_count >= 1))", name="ck_sources_multipart_authority"), CheckConstraint("((source_created_at IS NULL AND source_created_at_provenance IS NULL) OR (source_created_at IS NOT NULL AND source_created_at_provenance IN ('google_drive_created_time', 'embedded_media_metadata')))", name="ck_sources_creation_authority"),)
+    __table_args__=(CheckConstraint("audio_retention_days IS NULL OR audio_retention_days IN (3,7,30)", name="ck_sources_audio_retention_days"), Index("ix_sources_storage_identity", "reference_class", "s3_bucket", "s3_object_key"), Index("ix_sources_project_status", "project_id", "upload_status", "created_at"), Index("ix_sources_project_deleted_created_id", "project_id", "deleted_at", "created_at", "id"), Index("ix_sources_storage_cleanup_selection", "storage_cleanup_status", "storage_cleanup_not_before_at", "storage_cleanup_lease_expires_at"), CheckConstraint("storage_cleanup_attempt_count >= 0", name="ck_sources_storage_cleanup_attempt_count_nonnegative"), CheckConstraint("storage_cleanup_generation >= 0", name="ck_sources_storage_cleanup_generation_nonnegative"), CheckConstraint("reference_class IN ('transcription','audio_processing')", name="ck_sources_reference_class"), CheckConstraint("upload_protocol IN ('single_put','multipart')", name="ck_sources_upload_protocol"), CheckConstraint("((upload_protocol = 'single_put' AND multipart_upload_id IS NULL AND multipart_part_size_bytes IS NULL AND multipart_part_count IS NULL AND multipart_completed_at IS NULL) OR (upload_protocol = 'multipart' AND multipart_upload_id IS NOT NULL AND multipart_part_size_bytes >= 5242880 AND multipart_part_count >= 1))", name="ck_sources_multipart_authority"), CheckConstraint("((source_created_at IS NULL AND source_created_at_provenance IS NULL) OR (source_created_at IS NOT NULL AND source_created_at_provenance IN ('google_drive_created_time', 'yandex_disk_created_time', 'embedded_media_metadata')))", name="ck_sources_creation_authority"),)
 
 class TranscriptionJob(Base):
     __tablename__="transcription_jobs"
@@ -371,6 +400,7 @@ class TranscriptionJob(Base):
     language: Mapped[str|None]=mapped_column(String(40))
     options_json: Mapped[str|None]=mapped_column(Text)
     output_drive_folder_id: Mapped[str|None]=mapped_column(String(256))
+    output_provider: Mapped[str]=mapped_column(String(32), default="google_drive", server_default=text("'google_drive'"), nullable=False)
     output_drive_folder_url: Mapped[str|None]=mapped_column(Text)
     output_drive_folder_name: Mapped[str|None]=mapped_column(String(512))
     batch_idempotency_key: Mapped[str|None]=mapped_column(String(128))
@@ -414,8 +444,27 @@ class TranscriptionJob(Base):
 
     def apply_output_folder_snapshot(self, *, folder_id=None, folder_url=None, folder_name=None):
         from .job_output_folder_selection import normalize_drive_id, normalize_drive_url, normalize_optional_name
-        self.output_drive_folder_id = normalize_drive_id(folder_id, "ID папки Google Drive")
-        self.output_drive_folder_url = normalize_drive_url(folder_url)
+        provider = self.output_provider or "google_drive"
+        if provider == "yandex_disk":
+            from fastapi import HTTPException
+            from .job_output_read import normalize_output_web_view_url
+            from .transcript_docx import DOCX_OUTPUT_KIND
+            try:
+                if folder_id is not None and str(uuid.UUID(folder_id)) != folder_id:
+                    raise ValueError()
+            except (ValueError, TypeError, AttributeError):
+                raise HTTPException(422, "Некорректный ID папки Яндекс Диска") from None
+            self.output_drive_folder_id = folder_id
+            self.output_drive_folder_url = normalize_output_web_view_url(folder_url, DOCX_OUTPUT_KIND)
+            if folder_url is not None and self.output_drive_folder_url is None:
+                raise HTTPException(422, "Некорректная ссылка Яндекс Диска")
+        elif provider == "google_drive":
+            self.output_drive_folder_id = normalize_drive_id(folder_id, "ID папки Google Drive")
+            self.output_drive_folder_url = normalize_drive_url(folder_url)
+        else:
+            from fastapi import HTTPException
+            raise HTTPException(422, "Неизвестное хранилище результата")
+        self.output_provider = provider
         self.output_drive_folder_name = normalize_optional_name(folder_name)
         if not self.output_drive_folder_id:
             self.output_drive_folder_url = None
@@ -867,6 +916,11 @@ class TranscriptionOutputReconciliation(Base):
     status: Mapped[OutputReconciliationStatus]=mapped_column(Enum(OutputReconciliationStatus), nullable=False, default=OutputReconciliationStatus.prepared)
     uncertainty_reason: Mapped[str|None]=mapped_column(String(80))
     expected_output_drive_folder_id: Mapped[str]=mapped_column(String(256), nullable=False)
+    expected_output_provider: Mapped[str]=mapped_column(String(32), default="google_drive", server_default=text("'google_drive'"), nullable=False)
+    expected_docx_path: Mapped[str|None]=mapped_column(Text)
+    expected_document_sha256: Mapped[str|None]=mapped_column(String(64))
+    expected_document_md5: Mapped[str|None]=mapped_column(String(32))
+    expected_document_size_bytes: Mapped[int|None]=mapped_column(BigInteger)
     expected_document_title: Mapped[str|None]=mapped_column(String(160))
     expected_document_title_hash: Mapped[str|None]=mapped_column(String(64))
     expected_document_character_count: Mapped[int]=mapped_column(Integer, nullable=False)

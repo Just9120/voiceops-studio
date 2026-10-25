@@ -1,3 +1,4 @@
+import { isApprovedTranscriptUrl } from "./outputUrls";
 import { api } from "./apiClient";
 import {
   isTranscriptionLanguageMode,
@@ -332,14 +333,14 @@ function parseSource(
   const creationAuthorityIsValid =
     (rawSourceCreatedAt === null && creationProvenance === null) ||
     (isIsoDate(rawSourceCreatedAt) &&
-      (creationProvenance === "google_drive_created_time" ||
+      (creationProvenance === "google_drive_created_time" || creationProvenance === "yandex_disk_created_time" ||
         creationProvenance === "embedded_media_metadata"));
   if (
     !id ||
     candidateProjectId !== projectId ||
     !originalFilename ||
     (candidate.source_type !== "local_upload" &&
-      candidate.source_type !== "google_drive") ||
+      candidate.source_type !== "google_drive" && candidate.source_type !== "yandex_disk") ||
     !SOURCE_STATUSES.has(String(candidate.upload_status)) ||
     mimeType === undefined ||
     driveFileUrl === undefined ||
@@ -406,7 +407,7 @@ function parseJobOutput(
     candidate.transcript_standard,
     80,
   );
-  const webViewUrl = nullableBoundedString(candidate.web_view_url, 2_000);
+  const webViewUrl = nullableBoundedString(candidate.web_view_url, 50_000);
   if (
     !sourceId ||
     !isNonNegativeInteger(candidate.source_position) ||
@@ -415,7 +416,7 @@ function parseJobOutput(
     outputKind === undefined ||
     transcriptStandard === undefined ||
     webViewUrl === undefined ||
-    (webViewUrl !== null && !isApprovedGoogleUrl(webViewUrl)) ||
+    (webViewUrl !== null && !isApprovedTranscriptUrl(webViewUrl, outputKind)) ||
     typeof candidate.link_available !== "boolean" ||
     candidate.link_available !== (webViewUrl !== null) ||
     !isNullableNonNegativeInteger(candidate.document_character_count) ||
@@ -448,11 +449,12 @@ function parseJob(
   const candidateProjectId = boundedString(candidate.project_id, 36);
   const title = nullableBoundedString(candidate.title, 160);
   const provider = nullableBoundedString(candidate.provider, 40);
+  const outputProvider = candidate.output_provider;
   const errorCode = nullableBoundedString(candidate.error_code, 80);
   const errorMessage = nullableBoundedString(candidate.error_message, 512);
   const mediaClip = parseOptionalMediaClip(candidate.media_clip);
   const outputFolder = parseOptionalOutputFolder(candidate.output_folder);
-  const primaryOutputUrl = candidate.primary_output_url === undefined ? undefined : boundedString(candidate.primary_output_url, 2_000);
+  const primaryOutputUrl = candidate.primary_output_url === undefined ? undefined : boundedString(candidate.primary_output_url, 50_000);
   const batch = parseOptionalBatchReference(candidate.batch);
   const languageMode = candidate.language_mode;
   const diarizationEnabled = candidate.diarization_enabled;
@@ -472,11 +474,12 @@ function parseJob(
     !JOB_STATUSES.has(String(candidate.status)) ||
     title === undefined ||
     provider === undefined ||
+    (outputProvider !== undefined && outputProvider !== "google_drive" && outputProvider !== "yandex_disk") ||
     errorCode === undefined ||
     errorMessage === undefined ||
     mediaClip === false ||
     outputFolder === false ||
-    (candidate.primary_output_url !== undefined && (!primaryOutputUrl || !isApprovedGoogleUrl(primaryOutputUrl))) ||
+    (candidate.primary_output_url !== undefined && (!primaryOutputUrl || !isApprovedTranscriptUrl(primaryOutputUrl))) ||
     batch === false ||
     speakerIdentities === false ||
     usageCost === false ||
@@ -519,6 +522,7 @@ function parseJob(
     status: candidate.status as TranscriptionJob["status"],
     title,
     provider,
+    ...(outputProvider !== undefined ? { output_provider: outputProvider as "google_drive" | "yandex_disk" } : {}),
     ...(primaryOutputUrl ? { primary_output_url: primaryOutputUrl } : {}),
     ...(languageMode !== undefined ? { language_mode: languageMode } : {}),
     ...(diarizationEnabled !== undefined
@@ -738,7 +742,7 @@ function parseOptionalOutputFolder(
   if (candidate === null) return null;
   if (!isRecord(candidate)) return false;
   const name = boundedString(candidate.name, 512);
-  const webViewUrl = nullableBoundedString(candidate.web_view_url, 2_000);
+  const webViewUrl = nullableBoundedString(candidate.web_view_url, 50_000);
   if (!name || webViewUrl === undefined) return false;
   return { name, web_view_url: webViewUrl };
 }
@@ -790,22 +794,6 @@ function isIsoCalendarDate(value: unknown): value is string {
   }
   const parsed = new Date(`${value}T00:00:00Z`);
   return Number.isFinite(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
-}
-
-function isApprovedGoogleUrl(value: string) {
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === "https:" &&
-      !url.username &&
-      !url.password &&
-      !url.port &&
-      (url.hostname === "docs.google.com" ||
-        url.hostname === "drive.google.com")
-    );
-  } catch {
-    return false;
-  }
 }
 
 function hasUniqueIds(items: Array<{ id: string }>) {

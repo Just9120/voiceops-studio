@@ -22,8 +22,8 @@ const payload = {
       subscription_count: 0,
       vapid_public_key: null,
     },
-    email: { enabled: false, configured: true },
-    telegram: { enabled: false, configured: false },
+    email: { enabled: false, configured: false },
+    telegram: { enabled: false, configured: true },
   },
   recent_deliveries: [],
 };
@@ -35,7 +35,7 @@ describe("NotificationsPanel", () => {
       ...payload,
       channels: {
         ...payload.channels,
-        email: { enabled: true, configured: true },
+        telegram: { enabled: true, configured: true },
       },
     });
   });
@@ -45,17 +45,14 @@ describe("NotificationsPanel", () => {
     expect(parseNotificationPreferences(payload)).not.toBeNull();
   });
 
-  it("shows unavailable channels honestly and opts email in explicitly", async () => {
+  it("offers only Telegram and opts in explicitly", async () => {
     const onCsrf = vi.fn();
     render(<NotificationsPanel csrf="csrf-safe" onCsrf={onCsrf} />);
 
-    expect(await screen.findByText("Уведомления в браузере")).toBeInTheDocument();
-    expect(screen.getAllByText("Пока не настроено на сервере")).toHaveLength(2);
-
-    const buttons = screen.getAllByRole("button", { name: "Включить" });
-    expect(buttons[0]).toBeDisabled();
-    expect(buttons[2]).toBeDisabled();
-    await userEvent.click(buttons[1]);
+    expect(await screen.findByText("Telegram")).toBeInTheDocument();
+    expect(screen.queryByText("Уведомления в браузере")).not.toBeInTheDocument();
+    expect(screen.queryByText("Email")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Включить" }));
 
     await waitFor(() =>
       expect(mutateWithCsrfRetry).toHaveBeenCalledWith(
@@ -64,7 +61,7 @@ describe("NotificationsPanel", () => {
         onCsrf,
         expect.objectContaining({
           method: "PATCH",
-          body: JSON.stringify({ email_enabled: true }),
+          body: JSON.stringify({ telegram_enabled: true }),
         }),
       ),
     );
@@ -76,7 +73,7 @@ describe("NotificationsPanel", () => {
       ...payload,
       channels: {
         ...payload.channels,
-        email: { enabled: true, configured: false },
+        telegram: { enabled: true, configured: false },
       },
     });
     vi.mocked(mutateWithCsrfRetry).mockResolvedValue(payload);
@@ -94,7 +91,7 @@ describe("NotificationsPanel", () => {
         onCsrf,
         expect.objectContaining({
           method: "PATCH",
-          body: JSON.stringify({ email_enabled: false }),
+          body: JSON.stringify({ telegram_enabled: false }),
         }),
       ),
     );
