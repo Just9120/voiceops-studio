@@ -1,3 +1,4 @@
+import { isApprovedTranscriptUrl } from "./outputUrls";
 import { formatTime } from "./formatters";
 import type { Source } from "./sourceModel";
 
@@ -95,6 +96,7 @@ export type JobSpeakerIdentity = {
   profile: SpeakerProfileSummary | null;
 };
 export type TranscriptionJob = {
+  output_provider?: "google_drive" | "yandex_disk";
   id: string;
   project_id: string;
   status: JobСтатус;
@@ -177,17 +179,7 @@ export function safeJobSources(job: TranscriptionJob) {
 }
 
 export function isApprovedOutputUrl(value: string | null) {
-  if (!value) return false;
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === "https:" &&
-      (url.hostname === "docs.google.com" ||
-        url.hostname === "drive.google.com")
-    );
-  } catch {
-    return false;
-  }
+  return isApprovedTranscriptUrl(value);
 }
 
 export function outputSourceLabel(output: JobOutput) {

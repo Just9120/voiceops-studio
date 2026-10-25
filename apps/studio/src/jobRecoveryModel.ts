@@ -48,6 +48,7 @@ export type OutputReconciliationCheckResponse = {
   resolved: number;
   unresolved: number;
   conflicts: number;
+  unavailable?: number;
 };
 
 export type OutputReconciliationState = {
@@ -299,8 +300,9 @@ export function parseOutputReconciliationCheckResponse(
     !isNonNegativeInteger(candidate.resolved) ||
     !isNonNegativeInteger(candidate.unresolved) ||
     !isNonNegativeInteger(candidate.conflicts) ||
+    (candidate.unavailable !== undefined && !isNonNegativeInteger(candidate.unavailable)) ||
     candidate.checked !==
-      candidate.resolved + candidate.unresolved + candidate.conflicts
+      candidate.resolved + candidate.unresolved + candidate.conflicts + (typeof candidate.unavailable === "number" ? candidate.unavailable : 0)
   ) {
     return null;
   }
@@ -310,6 +312,7 @@ export function parseOutputReconciliationCheckResponse(
     resolved: candidate.resolved,
     unresolved: candidate.unresolved,
     conflicts: candidate.conflicts,
+    ...(typeof candidate.unavailable === "number" ? { unavailable: candidate.unavailable } : {}),
   };
 }
 

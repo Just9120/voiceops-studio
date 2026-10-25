@@ -433,7 +433,9 @@ describe("AudioPreparationPage", () => {
     await screen.findByRole("heading", { name: "Подготовка аудио" });
 
     const tablist = screen.getByRole("tablist", { name: "Способ получения исходных файлов" });
-    expect(within(tablist).getAllByRole("tab")).toHaveLength(4);
+    expect(within(tablist).getAllByRole("tab")).toHaveLength(5);
+    await userEvent.click(within(tablist).getByRole("tab", { name: "Из Яндекс Диска" }));
+    expect(screen.getByRole("button", { name: "Выбрать файлы на Яндекс Диске" })).toBeEnabled();
     const direct = within(tablist).getByRole("tab", { name: "В Google Drive без обработки" });
     await userEvent.click(direct);
     expect(direct).toHaveAttribute("aria-selected", "true");

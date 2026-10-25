@@ -14,6 +14,7 @@ export type VerifiedOutputFolder = {
   folder_id: string;
   name: string;
   web_view_url: string | null;
+  provider?: "google_drive" | "yandex_disk";
 };
 export type ComposerSegment = {
   id: string;
@@ -45,6 +46,7 @@ export type BatchCreateRequest = {
   items: {
     source_id: string;
     output_folder_id: string;
+    output_provider?: "google_drive" | "yandex_disk";
     title: string | null;
     reprocess_existing: boolean;
     media_clip_start_seconds?: number | null;
@@ -66,7 +68,7 @@ export type BatchPreflightItem = {
   } | null;
   source: {
     name: string;
-    source_type: "local_upload" | "google_drive" | "unknown";
+    source_type: "local_upload" | "google_drive" | "yandex_disk" | "unknown";
     mime_type: string | null;
     size_bytes: number | null;
     duration_seconds: number | null;
@@ -207,6 +209,7 @@ export function composerSignature(
         id: row.id,
         source_id: row.source_id,
         output_folder_id: row.output_folder?.folder_id ?? null,
+        output_provider: row.output_folder?.provider ?? "google_drive",
         segmentation_enabled: row.segmentation_enabled === true,
         segments: row.segments.map((segment) => ({
           id: segment.id,
@@ -216,6 +219,7 @@ export function composerSignature(
           title: segment.title,
           reprocess_existing: segment.reprocess_existing,
           output_folder_id: segment.output_folder?.folder_id ?? null,
+          output_provider: segment.output_folder?.provider ?? null,
         })),
       })),
     });
@@ -318,6 +322,7 @@ export function expandComposerRows(rows: ComposerRow[]): ExpandedComposerItem[] 
         request_item: {
           source_id: row.source_id,
           output_folder_id: row.output_folder?.folder_id ?? "",
+          ...(row.output_folder?.provider === "yandex_disk" ? { output_provider: "yandex_disk" as const } : {}),
           title: segment.title.trim() || null,
           reprocess_existing: segment.reprocess_existing,
         },
@@ -338,6 +343,8 @@ export function expandComposerRows(rows: ComposerRow[]): ExpandedComposerItem[] 
           source_id: row.source_id,
           output_folder_id:
             segment.output_folder?.folder_id ?? row.output_folder?.folder_id ?? "",
+          ...((segment.output_folder ?? row.output_folder)?.provider === "yandex_disk"
+            ? { output_provider: "yandex_disk" as const } : {}),
           title: segment.title.trim() || null,
           reprocess_existing: segment.reprocess_existing,
           ...(fullSource
@@ -476,7 +483,7 @@ function isPreflightItem(value: unknown, expectedPosition: number) {
     !isNullableString(value.title) ||
     !isMediaClip(value.media_clip) ||
     typeof value.source.name !== "string" ||
-    !["local_upload", "google_drive", "unknown"].includes(
+    !["local_upload", "google_drive", "yandex_disk", "unknown"].includes(
       String(value.source.source_type),
     ) ||
     !isNullableString(value.source.mime_type) ||

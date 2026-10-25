@@ -42,3 +42,12 @@ it("restores metadata but never paid bypass consent or arbitrary folder fields",
   expect(composerDraftRows([row,row])).toBeNull();
   expect(composerDraftRows(Array(51).fill(row))).toBeNull();
 });
+it("preserves the Disk destination namespace when restoring a draft", () => {
+  const row = newComposerRow();
+  row.output_folder = { folder_id: "disk-handle", name: "Results", web_view_url: null, provider: "yandex_disk" };
+  row.segments[0].output_folder = { ...row.output_folder };
+  const restored = composerDraftRows([row]);
+  expect(restored?.[0].output_folder?.provider).toBe("yandex_disk");
+  expect(restored?.[0].segments[0].output_folder?.provider).toBe("yandex_disk");
+  expect(composerDraftRows([{ ...row, output_folder: { ...row.output_folder, provider: "unknown" } }])?.[0].output_folder).toBeNull();
+});

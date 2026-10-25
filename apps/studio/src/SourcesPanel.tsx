@@ -72,7 +72,7 @@ function isExpectedDeletionResponse(
   return (
     value.ok === true &&
     value.source_state === "deleted" &&
-    (source.source_type === "google_drive"
+    (source.source_type === "google_drive" || source.source_type === "yandex_disk"
       ? value.storage_cleanup === "not_applicable"
       : value.storage_cleanup === "pending" ||
         value.storage_cleanup === "completed")
@@ -486,7 +486,7 @@ export function SourcesPanel({
           <span>
             {source.source_type === "google_drive"
               ? "Google Drive"
-              : "С устройства"}
+              : source.source_type === "yandex_disk" ? "Яндекс Диск" : "С устройства"}
           </span>
           <span>Статус: {sourceСтатусLabel(source.upload_status)}</span>
           {!isUsableJobSource(source) && (
@@ -505,14 +505,14 @@ export function SourcesPanel({
             {isSafeDisplayUrl(source.drive_file_url) && (
               <ResourceExternalLink
                 href={source.drive_file_url ?? ""}
-                label="Открыть файл в Google Drive"
-                ariaLabel="Открыть файл в Google Drive в новой вкладке"
+                label={source.source_type === "yandex_disk" ? "Открыть файл на Яндекс Диске" : "Открыть файл в Google Drive"}
+                ariaLabel={source.source_type === "yandex_disk" ? "Открыть файл на Яндекс Диске в новой вкладке" : "Открыть файл в Google Drive в новой вкладке"}
               />
             )}
             <div className="source-removal-note">
               {source.source_type === "google_drive"
                 ? "Файл останется на Google Drive."
-                : "Временную копию удалит фоновая очистка Studio."}
+                : source.source_type === "yandex_disk" ? "Файл останется на Яндекс Диске." : "Временную копию удалит фоновая очистка Studio."}
             </div>
             <button
               type="button"
@@ -552,7 +552,7 @@ export function SourcesPanel({
       )}
       <p className="notice">
         Этот раздел предназначен для просмотра безопасных метаданных и удаления
-        файлов из Studio. Исходные файлы Google Drive при этом не удаляются.
+        файлов из Studio. Исходные файлы Google Drive и Яндекс Диска при этом не удаляются.
       </p>
     </section>
   );

@@ -53,12 +53,12 @@ export function JobDetailSection({
       <h5>Папка результата</h5>
       {job.output_folder ? (
         <p>
-          {job.output_folder.name || "Папка Google Drive"}{" "}
+          {job.output_folder.name || "Папка результата"}{" "}
           {isSafeDisplayUrl(job.output_folder.web_view_url) && (
             <ResourceExternalLink
               href={job.output_folder.web_view_url ?? ""}
               label="Открыть папку результата"
-              ariaLabel="Открыть папку результата в Google Drive в новой вкладке"
+              ariaLabel="Открыть папку результата в новой вкладке"
             />
           )}
         </p>
@@ -148,8 +148,8 @@ export function JobDetailSection({
             <div className="resource-actions">
               <ResourceExternalLink
                 href={source.drive_file_url ?? ""}
-                label="Открыть файл в Google Drive"
-                ariaLabel="Открыть файл в Google Drive в новой вкладке"
+                label={source.source_type === "yandex_disk" ? "Открыть файл на Яндекс Диске" : "Открыть файл в Google Drive"}
+                ariaLabel={source.source_type === "yandex_disk" ? "Открыть файл на Яндекс Диске в новой вкладке" : "Открыть файл в Google Drive в новой вкладке"}
               />
             </div>
           )}

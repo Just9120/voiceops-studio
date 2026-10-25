@@ -4,8 +4,10 @@ const bounded = (value: unknown, length: number) => typeof value === "string" &&
 function folder(value: unknown): VerifiedOutputFolder | null {
   if (!value || typeof value !== "object") return null;
   const row = value as Record<string, unknown>;
+  if (row.provider !== undefined && row.provider !== "google_drive" && row.provider !== "yandex_disk") return null;
   return bounded(row.folder_id, 256) && bounded(row.name, 512)
-    ? { folder_id: row.folder_id as string, name: row.name as string, web_view_url: null } : null;
+    ? { folder_id: row.folder_id as string, name: row.name as string, web_view_url: null,
+        ...(row.provider === "yandex_disk" ? { provider: "yandex_disk" as const } : {}) } : null;
 }
 
 export function composerDraftRows(value: unknown): ComposerRow[] | null {

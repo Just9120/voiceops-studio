@@ -1,3 +1,6 @@
+import { openYandexDiskPicker, diskFailureMessage, type DiskPickerMode } from "./YandexDiskPicker";
+import { parseProjectSourceCollection } from "./projectCollectionContracts";
+import { YandexDiskConnectionPanel } from "./YandexDiskConnectionPanel";
 import { auditLabel } from "./auditLabels";
 import { useFormDraft, readFormDraft, clearFormDrafts } from "./formDrafts";
 import { composerDraftRows } from "./composerDraft";
@@ -1662,7 +1665,15 @@ function PreparationPanel({
   clearBatchSubmission: (key: string) => void;
 }) {
   const googlePickerPanelId = useId();
-  const pickerBusy = activeGooglePicker !== null;
+  const [yandexPickerBusy, setYandexPickerBusy] = useState(false);
+  const yandexPickerOperation = useRef<AbortController | null>(null);
+  const yandexScope = useRef(project.id);
+  yandexScope.current = project.id;
+  useEffect(() => {
+    setYandexPickerBusy(false);
+    return () => { yandexPickerOperation.current?.abort(); yandexPickerOperation.current = null; };
+  }, [project.id]);
+  const pickerBusy = activeGooglePicker !== null || yandexPickerBusy;
   const detachedGooglePickerPending =
     activeGooglePicker?.projectId === project.id &&
     activeGooglePicker.panelId !== googlePickerPanelId;
@@ -2115,6 +2126,7 @@ function PreparationPanel({
       const scope = [
         item.source_id,
         item.output_folder_id,
+        item.output_provider ?? "google_drive",
         item.media_clip_start_seconds ?? "full",
         item.media_clip_end_seconds ?? "end",
       ].join("\u0000");
@@ -2645,6 +2657,50 @@ function PreparationPanel({
       );
     }
     return orderedSources;
+  }
+  async function chooseYandex(rowId: string, mode: DiskPickerMode, segmentId?: string) {
+    if (pickerBusy || yandexPickerOperation.current) return;
+    const controller = new AbortController();
+    yandexPickerOperation.current = controller;
+    const projectId = project.id;
+    const active = () => !controller.signal.aborted && yandexScope.current === projectId;
+    setYandexPickerBusy(true);
+    setRowIntakeErrors(current => ({ ...current, [rowId]: "" }));
+    try {
+      const result = await openYandexDiskPicker({ mode, csrf, onCsrf }, controller.signal);
+      if (!result || !active()) return;
+      if (mode === "output-folder" && result.folder) {
+        const folder = result.folder;
+        const verified = await runBoundedRequest(signal => csrfMutate<{name: string; web_view_url: string; provider: string}>(
+          `/projects/${projectId}/output-folders/yandex-disk/verify`, csrf, onCsrf,
+          { method: "POST", body: JSON.stringify({ folder_id: folder.id }), signal }));
+        if (!active()) return;
+        if (verified.status !== "completed" || verified.value.provider !== "yandex_disk" ||
+            typeof verified.value.name !== "string" || !isApprovedOutputUrl(verified.value.web_view_url)) throw new Error("unconfirmed_disk_folder");
+        applyVerifiedOutputFolder(rowId, { folder_id: folder.id, name: verified.value.name,
+          web_view_url: verified.value.web_view_url, provider: "yandex_disk" }, segmentId);
+      } else if (result.resources.length) {
+        const intake = await runBoundedRequest(signal => csrfMutate<unknown>(
+          `/projects/${projectId}/sources/yandex-disk`, csrf, onCsrf,
+          { method: "POST", body: JSON.stringify({ resource_ids: result.resources.map(item => item.id) }), signal }));
+        onReloadSources(projectId);
+        if (!active()) return;
+        const selected = intake.status === "completed" ? parseProjectSourceCollection(intake.value, projectId) : null;
+        if (!selected || selected.length !== result.resources.length || selected.some(item => item.source_type !== "yandex_disk")) throw new Error("unconfirmed_disk_sources");
+        placeSourcesInRows(rowId, selected);
+        setRowIntakeStatus(current => ({ ...current, [rowId]: `Добавлено файлов с Яндекс Диска: ${selected.length}.` }));
+      } else {
+        setRowIntakeStatus(current => ({ ...current, [rowId]: "Папка выбрана. В ней нет подходящих аудио или видео; файлы не добавлены." }));
+      }
+    } catch (error) {
+      onReloadSources(projectId);
+      if (active()) setRowIntakeErrors(current => ({ ...current, [rowId]: diskFailureMessage(error) }));
+    } finally {
+      if (yandexPickerOperation.current === controller) {
+        yandexPickerOperation.current = null;
+        if (active()) setYandexPickerBusy(false);
+      }
+    }
   }
   async function chooseRowDriveSources(rowId: string) {
     const returnFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -4010,13 +4066,19 @@ function PreparationPanel({
       }
       const result = request.value;
       const message =
-        result.checked === 0
+        (result.unavailable ?? 0) > 0
+          ? "Не удалось проверить Диск. Отсутствие документа не подтверждено; восстановите доступ и повторите проверку."
+          : result.checked === 0
           ? "Автоматическая проверка не выполнена: нет данных для поиска документа. Проверьте папку результата вручную; отсутствие документа не подтверждено."
           : result.resolved > 0
           ? "Документ найден и восстановлен."
           : result.conflicts > 0
-            ? "Обнаружено несколько подходящих документов. Автоматическое восстановление заблокировано."
-            : "Документ пока не найден в Google Drive.";
+            ? result.unavailable !== undefined
+              ? "Файл на Яндекс Диске изменён или не совпадает с результатом. Studio его не перезапишет. Переименуйте существующий файл на Диске и повторите проверку."
+              : "Обнаружено несколько подходящих документов. Автоматическое восстановление заблокировано."
+            : result.unavailable !== undefined
+              ? "Документ не найден на Яндекс Диске. Можно повторить сохранение готового текста."
+              : "Документ пока не найден в Google Drive.";
       setReconciliations((current) => ({
         ...current,
         [jobId]: {
@@ -4037,8 +4099,8 @@ function PreparationPanel({
     } catch (err) {
       const message =
         err instanceof ApiError && err.status === 409
-          ? "Google connection недоступен или reconciliation сейчас невозможен."
-          : "Не удалось проверить Google Drive.";
+          ? "Подключение Диска недоступно или проверка сейчас невозможна."
+          : "Не удалось проверить папку результата.";
       setReconciliations((current) => ({
         ...current,
         [jobId]: {
@@ -4881,6 +4943,8 @@ function PreparationPanel({
                         >
                           Папка Google Drive
                         </button>
+                        <button type="button" className="secondary" disabled={pickerBusy} onClick={() => void chooseYandex(row.id, "sources")}>Из Яндекс Диска</button>
+                        <button type="button" className="secondary" disabled={pickerBusy} onClick={() => void chooseYandex(row.id, "source-folder")}>Папка Яндекс Диска</button>
                         <span className="file-picker-control">
                           <label
                             className={`button-like secondary${
@@ -4985,7 +5049,7 @@ function PreparationPanel({
                           <span>
                             {selectedSource.source_type === "google_drive"
                               ? "Google Drive"
-                              : "С устройства"}
+                              : selectedSource.source_type === "yandex_disk" ? "Яндекс Диск" : "С устройства"}
                           </span>
                           <span>
                             Статус:{" "}
@@ -5045,6 +5109,7 @@ function PreparationPanel({
                       </span>
                       <span>
                         {row.output_folder?.name || "Папка не выбрана"}
+                        {row.output_folder?.provider === "yandex_disk" && <small> · Яндекс Диск · DOCX</small>}
                       </span>
                       {row.segmentation_enabled && (
                         <small className="muted">
@@ -5056,7 +5121,7 @@ function PreparationPanel({
                           <ResourceExternalLink
                             href={row.output_folder.web_view_url}
                             label="Открыть папку"
-                            ariaLabel={`Открыть папку результата задачи ${index + 1} в Google Drive`}
+                            ariaLabel={`Открыть папку результата задачи ${index + 1}`}
                           />
                         )}
                       <button
@@ -5066,9 +5131,10 @@ function PreparationPanel({
                         onClick={() => void chooseRowFolder(row.id)}
                         aria-label={`Выбрать папку результата для задачи ${index + 1}`}
                       >
-                        {row.output_folder?.folder_id ? "Изменить" : "Выбрать"}
+                        {row.output_folder?.provider !== "yandex_disk" && row.output_folder?.folder_id ? "Изменить Google Drive" : "Выбрать Google Drive"}
                       </button>
-                      {row.output_folder?.folder_id && (
+                      <button type="button" className="secondary" disabled={pickerBusy} onClick={() => void chooseYandex(row.id, "output-folder")} aria-label={`Выбрать папку Яндекс Диска для задачи ${index + 1}`}>На Яндекс Диск</button>
+                      {row.output_folder?.folder_id && row.output_folder.provider !== "yandex_disk" && (
                         <button
                           type="button"
                           className="secondary"
@@ -5273,6 +5339,7 @@ function PreparationPanel({
                                 >
                                   {segment.output_folder ? "Изменить" : "Выбрать отдельно"}
                                 </button>
+                                <button type="button" className="secondary" disabled={pickerBusy} onClick={() => void chooseYandex(row.id, "output-folder", segment.id)} aria-label={`Папка Яндекс Диска для фрагмента ${segmentIndex + 1} задачи ${index + 1}`}>На Яндекс Диск</button>
                                 {segment.output_folder && (
                                   <button
                                     type="button"
@@ -5713,7 +5780,7 @@ function PreparationPanel({
                       <span>
                         {item.source.source_type === "google_drive"
                           ? "Google Drive"
-                          : "С устройства"}
+                          : item.source.source_type === "yandex_disk" ? "Яндекс Диск" : "С устройства"}
                         {item.source.mime_type
                           ? ` · ${item.source.mime_type}`
                           : ""}
@@ -8979,6 +9046,7 @@ function SettingsPage({
             })}
           </div>
           <SttDictionariesPanel csrf={csrf} onCsrf={onCsrf} />
+          <YandexDiskConnectionPanel csrf={csrf} onCsrf={onCsrf} />
           <h3>Google Drive</h3>
           <p
             className={

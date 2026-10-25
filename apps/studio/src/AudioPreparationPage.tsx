@@ -29,6 +29,8 @@ import * as googlePicker from "./googlePicker";
 import { googlePickerFailureMessage, googlePickerNeedsReconnect } from "./googlePickerErrors";
 import { isUsableJobSource, type Source } from "./sourceModel";
 import { isSafeDisplayUrl } from "./resourceLinks";
+import { diskFailureMessage, openYandexDiskPicker } from "./YandexDiskPicker";
+import { parseProjectSourceCollection } from "./projectCollectionContracts";
 
 type Project = { id: string; title: string };
 type AudioJob = {
@@ -68,10 +70,10 @@ type UploadProgressView = DirectUploadProgress & {
 
 type OperationMode = "separate" | "concat";
 type ProcessingPath = "studio" | "local";
-type SourceMode = "drive" | "local" | "studio" | "direct-drive";
+type SourceMode = "drive" | "yandex" | "local" | "studio" | "direct-drive";
 type LocalResultView = LocalAudioResult & { url: string };
 
-const sourceModes: SourceMode[] = ["drive", "local", "studio", "direct-drive"];
+const sourceModes: SourceMode[] = ["drive", "yandex", "local", "studio", "direct-drive"];
 
 const duration = formatAudioDuration;
 
@@ -205,6 +207,8 @@ export function AudioPreparationPage({ csrf, onCsrf }: Props) {
   const fileInput = useRef<HTMLInputElement>(null);
   const localFileInput = useRef<HTMLInputElement>(null);
   const localAbort = useRef<AbortController | null>(null);
+  const yandexAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => { yandexAbort.current?.abort(); }, []);
   const localResultUrls = useRef<string[]>([]);
   const silenceDetailsRef = useRef<HTMLDetailsElement>(null);
   const thresholdInput = useRef<HTMLInputElement>(null);
@@ -229,7 +233,7 @@ export function AudioPreparationPage({ csrf, onCsrf }: Props) {
       if (["copy", "flac", "wav"].includes(String(draft.format))) setFormat(String(draft.format));
       if (["preserve", "mixdown", "left", "right"].includes(String(draft.mono))) setMono(String(draft.mono));
       if (["title", "date", "dateTime"].includes(String(draft.namingStyle))) setNamingStyle(draft.namingStyle as AudioNamingStyle);
-      if (["drive", "local", "studio", "direct-drive"].includes(String(draft.sourceMode))) setSourceMode(draft.sourceMode as SourceMode);
+      if (sourceModes.includes(draft.sourceMode as SourceMode)) setSourceMode(draft.sourceMode as SourceMode);
       if (["separate", "concat"].includes(String(draft.operationMode))) setOperationMode(draft.operationMode as OperationMode);
       if ([3, 7, 30].includes(Number(draft.audioRetentionDays))) setAudioRetentionDays(Number(draft.audioRetentionDays));
       if (typeof draft.silenceEnabled === "boolean") setSilenceEnabled(draft.silenceEnabled);
@@ -491,6 +495,28 @@ export function AudioPreparationPage({ csrf, onCsrf }: Props) {
       setSelected((current) => [...new Set([...current, ...response.sources.map((source) => source.id)])]);
     } catch (reason) { reportDriveFailure(reason, "Не удалось добавить Google Drive файлы."); }
     finally { setBusy(false); }
+  }
+
+  async function addFromYandex() {
+    if (!project || busy || yandexAbort.current) return;
+    const controller = new AbortController();
+    yandexAbort.current = controller;
+    setBusy(true); setError("");
+    try {
+      const result = await openYandexDiskPicker({ mode: "sources", csrf, onCsrf }, controller.signal);
+      if (!result?.resources.length || controller.signal.aborted) return;
+      const raw = await mutateWithCsrfRetry<unknown>(`/projects/${project.id}/sources/yandex-disk`, csrf, onCsrf, {
+        method: "POST", body: JSON.stringify({ resource_ids: result.resources.map((item) => item.id) }), signal: controller.signal,
+      });
+      const added = parseProjectSourceCollection(raw, project.id);
+      if (!added) throw new Error("invalid_yandex_sources");
+      await reloadSources(project.id);
+      if (controller.signal.aborted) return;
+      if (processingPath === "local") setFormat("copy");
+      setProcessingPath("studio"); setSourceMode("yandex"); setLocalFiles([]);
+      setSelected((current) => [...new Set([...current, ...added.map((source) => source.id)])]);
+    } catch (reason) { if (!controller.signal.aborted) setError(diskFailureMessage(reason)); }
+    finally { if (!controller.signal.aborted) setBusy(false); yandexAbort.current = null; }
   }
 
   async function chooseOutputFolder() {
@@ -873,11 +899,13 @@ export function AudioPreparationPage({ csrf, onCsrf }: Props) {
         <h2>1. Исходные файлы</h2>
         <div className="tabs audio-source-tabs" role="tablist" aria-label="Способ получения исходных файлов">
           <button id="audio-source-tab-drive" type="button" role="tab" aria-selected={sourceMode === "drive"} aria-controls="audio-source-panel-drive" tabIndex={sourceMode === "drive" ? 0 : -1} className={sourceMode === "drive" ? "active" : ""} onClick={() => selectSourceMode("drive")} onKeyDown={(event) => sourceTabKeyDown(event, "drive")}>Из Google Drive</button>
+          <button id="audio-source-tab-yandex" type="button" role="tab" aria-selected={sourceMode === "yandex"} aria-controls="audio-source-panel-yandex" tabIndex={sourceMode === "yandex" ? 0 : -1} className={sourceMode === "yandex" ? "active" : ""} onClick={() => selectSourceMode("yandex")} onKeyDown={(event) => sourceTabKeyDown(event, "yandex")}>Из Яндекс Диска</button>
           <button id="audio-source-tab-local" type="button" role="tab" aria-selected={sourceMode === "local"} aria-controls="audio-source-panel-local" tabIndex={sourceMode === "local" ? 0 : -1} className={sourceMode === "local" ? "active" : ""} onClick={() => selectSourceMode("local")} onKeyDown={(event) => sourceTabKeyDown(event, "local")}>Обработать на устройстве</button>
           <button id="audio-source-tab-studio" type="button" role="tab" aria-selected={sourceMode === "studio"} aria-controls="audio-source-panel-studio" tabIndex={sourceMode === "studio" ? 0 : -1} className={sourceMode === "studio" ? "active" : ""} onClick={() => selectSourceMode("studio")} onKeyDown={(event) => sourceTabKeyDown(event, "studio")}>Загрузить в Studio</button>
           <button id="audio-source-tab-direct-drive" type="button" role="tab" aria-selected={sourceMode === "direct-drive"} aria-controls="audio-source-panel-direct-drive" tabIndex={sourceMode === "direct-drive" ? 0 : -1} className={sourceMode === "direct-drive" ? "active" : ""} onClick={() => selectSourceMode("direct-drive")} onKeyDown={(event) => sourceTabKeyDown(event, "direct-drive")}>В Google Drive без обработки</button>
         </div>
         {sourceMode === "drive" && <div role="tabpanel" id="audio-source-panel-drive" aria-labelledby="audio-source-tab-drive" className="audio-source-mode-panel"><p className="muted">Выберите записи, которые уже находятся в Google Drive.</p><button type="button" onClick={addFromDrive} disabled={busy || !project}>Выбрать файлы в Google Drive</button></div>}
+        {sourceMode === "yandex" && <div role="tabpanel" id="audio-source-panel-yandex" aria-labelledby="audio-source-tab-yandex" className="audio-source-mode-panel"><p className="muted">Выберите записи на подключённом Яндекс Диске. Исходники остаются на Диске; готовое аудио можно скачать или сохранить в Google Drive.</p><button type="button" onClick={() => void addFromYandex()} disabled={busy || !project}>Выбрать файлы на Яндекс Диске</button></div>}
         {sourceMode === "local" && <div role="tabpanel" id="audio-source-panel-local" aria-labelledby="audio-source-tab-local" className="audio-source-mode-panel"><p className="muted">Обработка выполняется в этой вкладке, а исходные файлы не отправляются в Studio.</p><button type="button" onClick={() => localFileInput.current?.click()} disabled={busy}>Выбрать для обработки на устройстве</button><input aria-label="Выбрать файлы для обработки на устройстве" ref={localFileInput} hidden type="file" multiple accept="audio/*,video/*,.ogg" onChange={(event) => chooseLocalFiles(Array.from(event.target.files || []))} /></div>}
         {sourceMode === "studio" && <div role="tabpanel" id="audio-source-panel-studio" aria-labelledby="audio-source-tab-studio" className="audio-source-mode-panel"><p className="muted">Загрузите записи для более совместимой обработки и сохранения результата после закрытия вкладки.</p><details className="technical-details"><summary>Как это работает</summary><p className="muted">Studio хранит временную приватную копию и обрабатывает её на сервере с помощью FFmpeg.</p></details><label>Хранить исходники аудио<select value={audioRetentionDays} disabled={busy} onChange={(event) => setAudioRetentionDays(Number(event.target.value))}><option value="3">3 дня</option><option value="7">7 дней</option><option value="30">30 дней</option></select></label><p className="muted">Срок начинается после завершения загрузки. Обработка не сокращает его; исходник можно убрать отдельно.</p><button type="button" onClick={() => fileInput.current?.click()} disabled={busy || !project}>Выбрать и загрузить в Studio</button><input aria-label="Выбрать файлы для загрузки в Studio" ref={fileInput} hidden type="file" multiple accept="audio/*,video/*,.ogg" onChange={(event) => void addLocalFiles(Array.from(event.target.files || []))} />{uploadProgress && <div className="upload-progress" aria-live="polite"><p><strong>Файл {uploadProgress.fileIndex} из {uploadProgress.fileCount}:</strong> {uploadProgress.filename}</p><progress aria-label="Общий прогресс загрузки в Studio" max="100" value={uploadProgress.aggregatePercent}>{uploadProgress.aggregatePercent}%</progress><small>{uploadProgress.percent}% текущего файла · {formatBytes(uploadProgress.loadedBytes)} из {formatBytes(uploadProgress.totalBytes)} · всего {uploadProgress.aggregatePercent}%</small></div>}</div>}
         {sourceMode === "direct-drive" && project && <DirectDriveUploadPanel projectId={project.id} csrf={csrf} onCsrf={onCsrf} />}
@@ -886,7 +914,7 @@ export function AudioPreparationPage({ csrf, onCsrf }: Props) {
           <summary>Выбрать из сохранённых файлов Studio</summary>
           <div className="audio-source-grid">
             {usable.length === 0 && <p className="notice">Сохранённых файлов пока нет. Добавьте их с устройства или Google Drive.</p>}
-            {usable.map((source) => <label key={source.id} className="audio-source-choice"><input type="checkbox" checked={selected.includes(source.id)} onChange={() => toggleSource(source.id)} /><span>{source.original_filename}<small>{source.source_type === "google_drive" ? "Google Drive" : source.expires_at ? `Временная копия · хранится до ${new Date(source.expires_at).toLocaleString("ru-RU")}` : "Временная копия · срок хранения не определён"}</small></span></label>)}
+            {usable.map((source) => <label key={source.id} className="audio-source-choice"><input type="checkbox" checked={selected.includes(source.id)} onChange={() => toggleSource(source.id)} /><span>{source.original_filename}<small>{source.source_type === "google_drive" ? "Google Drive" : source.source_type === "yandex_disk" ? "Яндекс Диск" : source.expires_at ? `Временная копия · хранится до ${new Date(source.expires_at).toLocaleString("ru-RU")}` : "Временная копия · срок хранения не определён"}</small></span></label>)}
           </div>
         </details>
         {processingPath === "studio" && !busy && unavailableSelected.length > 0 && <div className="notice" role="status"><p>Недоступных файлов в восстановленном плане: {unavailableSelected.length}. Они удалены, просрочены или ещё не готовы. Выберите замену или уберите их из плана.</p><button type="button" className="secondary" onClick={() => {setSelected(current => current.filter(id => usable.some(source => source.id === id)));inputSection.current?.focus();}}>Убрать недоступные файлы из плана</button></div>}
@@ -903,7 +931,7 @@ export function AudioPreparationPage({ csrf, onCsrf }: Props) {
               const source = sources.find((candidate) => candidate.id === id);
               return <li key={id}>
                 <span className="audio-order-index" aria-hidden="true">{index + 1}</span>
-                <span><strong>{source?.original_filename || "Недоступный файл"}</strong><small>{sourceCreatedLabel(source)} · {source?.source_type === "google_drive" ? "Google Drive" : "Studio"}{source?.size_bytes ? ` · ${formatBytes(source.size_bytes)}` : ""}</small></span>
+                <span><strong>{source?.original_filename || "Недоступный файл"}</strong><small>{sourceCreatedLabel(source)} · {source?.source_type === "google_drive" ? "Google Drive" : source?.source_type === "yandex_disk" ? "Яндекс Диск" : "Studio"}{source?.size_bytes ? ` · ${formatBytes(source.size_bytes)}` : ""}</small></span>
                 {operationMode === "concat" && selected.length > 1 && <span className="audio-order-controls"><button type="button" aria-label={`Переместить файл ${index + 1} выше`} onClick={() => move(index, -1)} disabled={index === 0}>↑</button><button type="button" aria-label={`Переместить файл ${index + 1} ниже`} onClick={() => move(index, 1)} disabled={index === selected.length - 1}>↓</button></span>}
               </li>;
             })}

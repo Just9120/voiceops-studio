@@ -119,7 +119,7 @@ describe("JobDetailSection", () => {
     );
     expect(
       within(detail).getByRole("link", {
-        name: "Открыть папку результата в Google Drive в новой вкладке",
+        name: "Открыть папку результата в новой вкладке",
       }),
     ).toHaveAttribute("href", "https://drive.example/folder/safe");
     expect(
