@@ -65,6 +65,22 @@ class DiskSourcesIn(BaseModel):
         return values
 
 
+class DiskFolderIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    folder_id: str = Field(min_length=36, max_length=36)
+
+
+def verify_yandex_output_folder(db, *, owner_user_id, folder_id, settings):
+    from .job_output_folder_selection import VerifiedOutputFolderSelection
+    try:
+        resource = verify_selected_resource(db, owner_user_id=owner_user_id,
+            resource_id=folder_id, settings=settings, is_folder=True)
+        return VerifiedOutputFolderSelection(folder_id, resource.name, disk_web_url(resource.path),
+                                             utcnow(), provider="yandex_disk")
+    except YandexDiskError as error:
+        raise disk_http_error(error) from None
+
+
 def resource_payload(resource):
     return {"path": resource.path, "name": resource.name, "is_folder": resource.is_folder,
             "mime_type": resource.mime_type, "size_bytes": resource.size_bytes,
@@ -76,7 +92,7 @@ def disk_http_error(error):
     return HTTPException(code, detail={"reason": "yandex_disk_" + error.reason}, headers=NO_STORE)
 
 
-def build_router(*, recent_auth, limiter, project_loader=None, source_serializer=None):
+def build_router(*, recent_auth, limiter, project_loader=None, source_serializer=None, project_serializer=None):
     router = APIRouter()
 
     @router.get("/api/yandex/connection")
@@ -109,7 +125,7 @@ def build_router(*, recent_auth, limiter, project_loader=None, source_serializer
                  error: str | None=None, db: Session=Depends(get_db), settings=Depends(get_settings)):
         result = finish_connection(db, state=state, code=code, error=error,
             raw_session=request.cookies.get(settings.cookie_name), settings=settings)
-        return RedirectResponse(settings.app_origin.rstrip("/") + "/?yandex_oauth=" + result,
+        return RedirectResponse(settings.app_origin.rstrip("/") + "/settings/connections?yandex_oauth=" + result,
                                 status_code=303, headers=NO_STORE)
 
     @router.delete("/api/yandex/connection")
@@ -160,7 +176,8 @@ def build_router(*, recent_auth, limiter, project_loader=None, source_serializer
                     or resource.is_folder != data.is_folder
                     or resource_fingerprint(resource) != data.fingerprint):
                 raise YandexDiskError("resource_changed")
-            handle = register_resource(db, owner_user_id=user.id, resource=resource)
+            handle = register_resource(db, owner_user_id=user.id, resource=resource,
+                expected_connection=(account, revision))
             db.commit()
             return {"id": handle.id, **resource_payload(resource)}
         except YandexDiskError as error:
@@ -175,6 +192,7 @@ def build_router(*, recent_auth, limiter, project_loader=None, source_serializer
         response.headers.update(NO_STORE)
         project_loader(db, user, project_id)
         resources = []
+        expected_connection = None
         try:
             for handle in data.resource_ids:
                 resource = verify_selected_resource(db, owner_user_id=user.id, resource_id=handle,
@@ -185,10 +203,18 @@ def build_router(*, recent_auth, limiter, project_loader=None, source_serializer
                 if resource.size_bytes is None or not validate_source_size(resource.size_bytes, settings.source_max_upload_bytes):
                     raise YandexDiskError("too_large")
                 resources.append((handle, resource, mime))
+                connection = active_connection(db, owner_user_id=user.id)
+                identity = (connection.account_uid, connection.credential_revision)
+                if expected_connection is not None and identity != expected_connection:
+                    raise YandexDiskError("connection_changed")
+                expected_connection = identity
                 db.rollback()
             # A single project lock also makes repeated intake idempotent.
             db.scalar(select(Project).where(Project.id == project_id).with_for_update())
             project_loader(db, user, project_id)
+            connection = active_connection(db, owner_user_id=user.id, lock=True)
+            if (connection.account_uid, connection.credential_revision) != expected_connection:
+                raise YandexDiskError("connection_changed")
             created = []
             for handle, resource, mime in resources:
                 row = db.scalar(select(Source).where(Source.project_id == project_id,
@@ -212,5 +238,33 @@ def build_router(*, recent_auth, limiter, project_loader=None, source_serializer
         except YandexDiskError as error:
             db.rollback()
             raise disk_http_error(error) from None
+
+    @router.post("/api/projects/{project_id}/output-folders/yandex-disk/verify")
+    def verify_folder(project_id: str, data: DiskFolderIn, response: Response,
+                      pair=Depends(require_csrf), db: Session=Depends(get_db), settings=Depends(get_settings)):
+        _, user = pair
+        limiter.check("yandex-disk:folder:verify:" + user.id, 120, 3600)
+        response.headers.update(NO_STORE)
+        project_loader(db, user, project_id)
+        selected = verify_yandex_output_folder(db, owner_user_id=user.id, folder_id=data.folder_id, settings=settings)
+        return {"name": selected.name, "web_view_url": selected.web_view_url, "provider": "yandex_disk"}
+
+    @router.post("/api/projects/{project_id}/output-folder/yandex-disk")
+    def set_folder(project_id: str, data: DiskFolderIn, response: Response,
+                   pair=Depends(require_csrf), db: Session=Depends(get_db), settings=Depends(get_settings)):
+        _, user = pair
+        limiter.check("yandex-disk:folder:set:" + user.id, 60, 3600)
+        response.headers.update(NO_STORE)
+        project_loader(db, user, project_id)
+        selected = verify_yandex_output_folder(db, owner_user_id=user.id, folder_id=data.folder_id, settings=settings)
+        project = project_loader(db, user, project_id)
+        project.output_provider = "yandex_disk"
+        project.output_drive_folder_id = selected.id
+        project.output_drive_folder_url = selected.web_view_url
+        project.output_drive_folder_name = selected.name
+        project.updated_at = utcnow()
+        audit(db, "project.output_folder.yandex_disk_set", actor_user_id=user.id, subject_user_id=user.id)
+        db.commit()
+        return project_serializer(project)
 
     return router

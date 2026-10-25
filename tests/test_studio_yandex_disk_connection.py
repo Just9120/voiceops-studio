@@ -125,6 +125,17 @@ def test_oauth_pkce_scopes_secret_is_not_in_authorization_url():
     assert "client_secret" not in query
 
 
+def test_registration_rechecks_connection_revision_under_write_lock(db, config):
+    user, _, connection = connected(db, config)
+    expected = (connection.account_uid, connection.credential_revision)
+    connection.credential_revision += 1
+    db.commit()
+    resource = resource_from_payload({"path": "disk:/Test", "name": "Test", "type": "dir"})
+    with pytest.raises(YandexDiskError, match="connection_changed"):
+        access.register_resource(db, owner_user_id=user.id, resource=resource, expected_connection=expected)
+    assert db.query(m.YandexDiskResource).count() == 0
+
+
 def test_exchange_refresh_revoke_are_body_only_and_bounded():
     requests = []
     def handler(request):

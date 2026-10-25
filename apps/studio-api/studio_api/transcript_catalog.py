@@ -17,6 +17,8 @@ CURRENT_TRANSCRIPTION_PROVIDER = "elevenlabs"
 CURRENT_TRANSCRIPTION_MODEL = "scribe_v2"
 CURRENT_TRANSCRIPT_STANDARD = TRANSCRIPT_DOCUMENT_STANDARD
 GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND = "google_docs_transcript"
+from .transcript_docx import DOCX_OUTPUT_KIND
+TRANSCRIPT_OUTPUT_KINDS = (GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND, DOCX_OUTPUT_KIND)
 CATALOG_QUERY_EVIDENCE_BUDGET = 1000
 CATALOG_SOURCE_LOCK_BUDGET = 1000
 
@@ -258,7 +260,7 @@ def accepted_evidence_from_rows(
             output_kind,
             transcript_standard,
             ) = row
-        if output_kind != GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND:
+        if output_kind not in TRANSCRIPT_OUTPUT_KINDS:
             continue
         identity = catalog_source_identity(
             _SourceIdentityProjection(source_id, source_type, drive_file_id)
@@ -505,8 +507,7 @@ def load_existing_result_matches(
             TranscriptionJob.owner_user_id == owner_user_id,
             Project.owner_user_id == owner_user_id,
             TranscriptionJob.project_id == Source.project_id,
-            TranscriptionJobOutput.output_kind
-            == GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND,
+            TranscriptionJobOutput.output_kind.in_(TRANSCRIPT_OUTPUT_KINDS),
             or_(*identity_filters),
         )
     )
@@ -585,8 +586,7 @@ def load_existing_result_matches(
         .filter(
             TranscriptionJobOutput.document_id
             == TranscriptCatalogEntry.document_id,
-            TranscriptionJobOutput.output_kind
-            == GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND,
+            TranscriptionJobOutput.output_kind.in_(TRANSCRIPT_OUTPUT_KINDS),
             TranscriptionJob.owner_user_id == owner_user_id,
             Project.owner_user_id == owner_user_id,
             TranscriptionJob.project_id == Source.project_id,
@@ -744,8 +744,7 @@ def load_provider_attempt_authorities(
             and_(
                 TranscriptionJobOutput.job_source_id
                 == TranscriptionJobSource.id,
-                TranscriptionJobOutput.output_kind
-                == GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND,
+                TranscriptionJobOutput.output_kind.in_(TRANSCRIPT_OUTPUT_KINDS),
             ),
         )
         .outerjoin(

@@ -56,6 +56,14 @@ def transcribe_processing_job_source(
     if job is None:
         raise JobElevenLabsTranscriptionError(JobElevenLabsTranscriptionReason.prerequisites_unavailable)
     provider = (job.provider or "elevenlabs").strip().lower()
+    if provider == "yandex":
+        from .job_cached_transcript import completed_yandex_result, restore_cached_yandex_transcript
+        if completed_yandex_result(db, job, job_source_id) is not None:
+            with restore_cached_yandex_transcript(db, job_id=job_id, job_source_id=job_source_id,
+                    lease_owner_id=lease_owner_id, lease_generation=lease_generation, settings=settings,
+                    now=clock()) as restored:
+                yield restored
+            return
     mode = (job.operating_mode or "standard").strip().lower()
     try:
         capability = resolve_capability(settings, provider, mode)

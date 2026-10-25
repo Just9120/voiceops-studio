@@ -35,8 +35,8 @@ def _tokens(row,settings):
     except Exception:raise YandexDiskError("reauthorization_required") from None
 
 
-def active_connection(db,*,owner_user_id: str):
-    row=db.get(YandexDiskConnection,owner_user_id)
+def active_connection(db,*,owner_user_id: str, lock=False):
+    row=db.get(YandexDiskConnection,owner_user_id,populate_existing=True,with_for_update=lock)
     if row is None or row.status!="active" or not row.token_ciphertext or not row.token_nonce:
         raise YandexDiskError("reauthorization_required")
     return row
@@ -72,8 +72,10 @@ def resource_fingerprint(resource: DiskResource) -> str:
     return hashlib.sha256(json.dumps(identity,ensure_ascii=False,separators=(",",":")).encode()).hexdigest()
 
 
-def register_resource(db,*,owner_user_id: str,resource: DiskResource):
-    connection=active_connection(db,owner_user_id=owner_user_id)
+def register_resource(db,*,owner_user_id: str,resource: DiskResource,expected_connection=None):
+    connection=active_connection(db,owner_user_id=owner_user_id,lock=True)
+    if expected_connection is not None and (connection.account_uid,connection.credential_revision)!=expected_connection:
+        raise YandexDiskError("connection_changed")
     version=resource_fingerprint(resource)
     identity=str(uuid.uuid5(uuid.NAMESPACE_URL,"studio:yandex-disk:"+owner_user_id+":"+connection.account_uid+":"+version))
     row=db.get(YandexDiskResource,identity)

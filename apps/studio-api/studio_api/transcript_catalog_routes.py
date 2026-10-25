@@ -25,7 +25,7 @@ from .models import (
     TranscriptionJobOutput,
     User,
 )
-from .transcript_catalog import GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND
+from .transcript_catalog import TRANSCRIPT_OUTPUT_KINDS
 from .transcript_maintenance_dry_run import (
     TranscriptMaintenanceSelectionMode,
 )
@@ -134,8 +134,7 @@ def clear_transcript_catalog(
         )
         .filter(
             TranscriptionJob.owner_user_id == user.id,
-            TranscriptionJobOutput.output_kind
-            == GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND,
+            TranscriptionJobOutput.output_kind.in_(TRANSCRIPT_OUTPUT_KINDS),
             TranscriptionJobOutput.persisted_at <= reset_at,
         )
         .count()

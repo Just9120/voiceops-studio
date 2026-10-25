@@ -46,6 +46,7 @@ class VerifiedOutputFolderSelection:
     name: str | None
     web_view_url: str | None
     verified_at: datetime
+    provider: str = "google_drive"
 
     def __repr__(self) -> str:
         return "VerifiedOutputFolderSelection(id=<redacted>, name={!r}, web_view_url={!r}, verified_at={!r})".format(self.name, self.web_view_url, self.verified_at)

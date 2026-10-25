@@ -64,3 +64,13 @@ def test_clip_match_and_recent_order_are_shared_by_listing_and_resolution(db):
     add_job(db,"other-clip",hours=3,start=2,end=5)
     assert [item["id"] for item in recent_attention_candidates(db,original)] == ["second","first"]
     assert confirmed_later_results_query(db,original).filter(TranscriptionJob.id=="second").first() is not None
+
+
+def test_confirmed_yandex_docx_is_a_result_for_attention_recovery(db):
+    original = add_job(db, "original", hours=0, status=JobStatus.failed, output=False)
+    later = add_job(db, "later", hours=1)
+    later.output_provider = "yandex_disk"
+    output = db.query(TranscriptionJobOutput).filter_by(job_id=later.id).one()
+    output.output_kind = "yandex_disk_docx_transcript"
+    db.flush()
+    assert [item["id"] for item in recent_attention_candidates(db, original)] == [later.id]

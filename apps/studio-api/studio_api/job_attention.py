@@ -3,7 +3,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .models import JobStatus, TranscriptionJob, TranscriptionJobOutput, TranscriptionJobSource
-from .transcript_catalog import GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND
+from .transcript_catalog import TRANSCRIPT_OUTPUT_KINDS
 
 
 def confirmed_later_results_query(db: Session, job: TranscriptionJob):
@@ -19,7 +19,7 @@ def confirmed_later_results_query(db: Session, job: TranscriptionJob):
         select(TranscriptionJobOutput.id)
         .where(
             TranscriptionJobOutput.job_id == TranscriptionJob.id,
-            TranscriptionJobOutput.output_kind == GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND,
+            TranscriptionJobOutput.output_kind.in_(TRANSCRIPT_OUTPUT_KINDS),
         )
         .correlate(TranscriptionJob)
         .exists()

@@ -398,10 +398,11 @@ def mark_one_fully_exported_source_for_cleanup(db: Session, *, now: datetime) ->
     Source row locking fences new job admission. Historical sources and audio
     preparation references are never enrolled implicitly.
     """
+    from .transcript_catalog import TRANSCRIPT_OUTPUT_KINDS
     document = exists(select(TranscriptionJobOutput.id).where(
         TranscriptionJobOutput.job_source_id == TranscriptionJobSource.id,
         TranscriptionJobOutput.job_id == TranscriptionJobSource.job_id,
-        TranscriptionJobOutput.output_kind == "google_docs_transcript",
+        TranscriptionJobOutput.output_kind.in_(TRANSCRIPT_OUTPUT_KINDS),
         TranscriptionJobOutput.document_character_count > 0,
         TranscriptionJobOutput.document_id != "",
     ))

@@ -8253,6 +8253,38 @@ def test_batch_jobs_key_scoped_by_project_and_integrity_replay_guards(monkeypatc
         db.rollback(); db.close()
 
 
+def test_batch_mixed_drive_destinations_are_provider_bound_and_idempotent(monkeypatch):
+    from studio_api.job_output_folder_selection import VerifiedOutputFolderSelection
+    import studio_api.yandex_disk_routes as disk_routes
+    calls = _install_batch_folder_mocks(monkeypatch)
+    c, csrf, user_id, pid, source_a, source_b, cred_id = _batch_setup("batch-disk@example.com")
+    disk_calls = []
+    handle = "6f5d76f9-1ced-44a4-abf5-9ff96092687e"
+    def verify(db, *, owner_user_id, folder_id, settings):
+        assert owner_user_id == user_id and folder_id == handle
+        disk_calls.append((owner_user_id, folder_id))
+        return VerifiedOutputFolderSelection(handle, "Папка Яндекс Диска",
+            "https://disk.yandex.ru/client/disk/Docs", utcnow(), provider="yandex_disk")
+    monkeypatch.setattr(disk_routes, "verify_yandex_output_folder", verify)
+    body = _batch_body(source_a, source_b, folder_a="google-folder", folder_b=handle, credential_id=cred_id)
+    body["items"][1]["output_provider"] = "yandex_disk"
+    preview = c.post(f"/api/projects/{pid}/jobs/batch/preflight", json=body, headers=_batch_headers(csrf))
+    assert preview.status_code == 200
+    assert preview.json()["items"][1]["output_destination"]["name"] == "Папка Яндекс Диска"
+    created = c.post(f"/api/projects/{pid}/jobs/batch", json=body, headers=_batch_headers(csrf))
+    assert created.status_code == 200
+    jobs = created.json()["jobs"]
+    assert [job["output_provider"] for job in jobs] == ["google_drive", "yandex_disk"]
+    assert jobs[1]["output_folder"]["web_view_url"].startswith("https://disk.yandex.ru/")
+    calls.clear(); disk_calls.clear()
+    replay = c.post(f"/api/projects/{pid}/jobs/batch", json=body, headers=_batch_headers(csrf))
+    assert replay.status_code == 200 and replay.json()["replayed"] is True
+    assert calls == disk_calls == []
+    changed = {**body, "items": [body["items"][0], {**body["items"][1], "output_provider": "google_drive"}]}
+    assert c.post(f"/api/projects/{pid}/jobs/batch", json=changed, headers=_batch_headers(csrf)).status_code == 409
+    assert calls == disk_calls == []
+
+
 
 def test_batch_jobs_integrity_error_replays_concurrent_winner(monkeypatch):
     calls = _install_batch_folder_mocks(monkeypatch)
