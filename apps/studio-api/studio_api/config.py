@@ -129,7 +129,8 @@ class Settings(BaseSettings):
     alert_provider_failure_threshold: int = Field(default=3, ge=2, le=20)
     alert_limit_remaining_percent: int = Field(default=15, ge=1, le=50)
     alert_storage_limit_bytes: int | None = Field(default=None, ge=1048576, le=109951162777600)
-    # Explicit recipient for missing-backup detection; no backup credentials enter runtime.
+    # Deprecated compatibility input. Cloudkeep owns regular backup freshness;
+    # Studio still records owner-scoped protected pre-migration backup outcomes.
     backup_monitor_owner_user_id: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
     alert_incident_cooldown_seconds: int = Field(default=1800, ge=300, le=86400)
     alert_delivery_retry_seconds: int = Field(default=300, ge=60, le=3600)

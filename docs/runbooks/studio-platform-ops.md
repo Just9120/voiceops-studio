@@ -475,7 +475,15 @@ Backup/restore rehearsal is manual and isolated:
 - destroy only the temporary target after verification;
 - never delete, overwrite, prune, or reset live production data from the rehearsal path.
 
-Personal backup schedule is defined by
+Regular personal database backups are owned by Cloudkeep from25Oct2026 by the
+owner's explicit decision. The Studio host timer was disabled/stopped; existing
+R2 snapshots, credentials and protected pre-migration backups remain intact.
+Cloudkeep's selected database job and its verified per-target executions are
+the source of regular backup/freshness evidence. Studio does not infer their
+success or failure from absence/age of a Studio snapshot. A reported failed
+Studio pre-migration backup still raises an owner-scoped incident.
+
+The historical Studio backup schedule is defined by
 [studio-postgres-backup.timer](../../deploy/studio/systemd/studio-postgres-backup.timer):
 every 10 hours after the previous activation. The
 [backup script](../../scripts/backup_studio_postgres_r2.sh) keeps scheduled
@@ -484,12 +492,16 @@ snapshots are kept within 90 days. These retention rules are not a fixed expiry
 for every snapshot. Repository configuration alone does not prove that the
 host timer is enabled or that a scheduled backup succeeded. Confirm those
 conditions and the latest snapshot age from host/backup records before recovery.
-The owner selected a 12-hour personal RPO (43200 seconds) and a 4-hour RTO
-(14400 seconds) on 2026-10-06. The existing R2 backup remains in use. The
-10-hour interval is not itself a verified RPO; actual snapshot age and recovery
-measurements must be checked against the selected targets.
+The former fixed12-hour personal RPO and10-hour Studio schedule were superseded
+by the owner25Oct2026 in favour of Cloudkeep scheduling. A replacement guaranteed
+RPO is UNSET; a schedule and SQL delivery records alone do not establish it.
+The4-hour RTO remains unchanged. Recovery measurements must identify the actual
+selected Cloudkeep version/target, available Studio decryption keys and complete
+application recovery. Existing R2 pre-migration snapshots remain in use.
 
-Host installation is an explicit operator step, not a consequence of component
+The following is the historical/reactivation procedure, not an instruction to
+enable the disabled timer during delivery. Reactivation needs an explicit owner
+decision. Host installation is an explicit operator step, not a consequence of component
 CD. From the verified current-main checkout at `/opt/elevenlabs-studio`, verify
 the two unit files with `systemd-analyze verify`, install them root-owned0644
 into `/etc/systemd/system`, run `systemctl daemon-reload` and
@@ -502,14 +514,13 @@ success. Preserve the existing repository, credentials, snapshots and retention.
 
 Configure `STUDIO_ALERT_OWNER_USER_ID` in root0600 host
 `/etc/elevenlabs-studio/backup.env` to the verified active personal administrator.
-The same non-secret UUID goes in runtime `.env` as
-`STUDIO_BACKUP_MONITOR_OWNER_USER_ID` for API and worker. Backup credentials
-remain host-only. Only this explicitly selected owner receives a missing-backup
-incident; an existing owner's backup audit stream also detects stale success
-or latest failure. A missing success or age of12h triggers the existing
-`backup_failure` incident without disclosing repository/credential data; a fresh
-successful backup clears the condition through the normal incident lifecycle.
-An empty recipient means unassigned, not proof that backups are healthy.
+`STUDIO_BACKUP_MONITOR_OWNER_USER_ID` remains a deprecated compatibility input;
+it no longer requires regular Studio snapshots. Backup credentials remain
+host-only. Studio retains reported success/failure audit events and alerts for
+an actual latest failed protected backup; a subsequent reported success clears
+that operation's failure. Neither a missing event nor an old success is treated
+as a Cloudkeep failure or proof of a healthy external backup. Regular Cloudkeep
+delivery/overdue/target failures are evaluated in its existing monitoring contour.
 
 The bounded automated rehearsal is
 [rehearse_studio_restore.py](../../scripts/rehearse_studio_restore.py), run from
@@ -850,6 +861,47 @@ unexpected provider/Google call. Do not restart services, requeue jobs, mutate
 audit history or delete storage as alert remediation.
 
 ## Personal access/security email
+
+Personal mail remains deferred by the owner25Oct2026. Task notifications use
+Telegram only. The inactive security-mail implementation below is retained for
+future separately selected activation, and is not needed for operator recovery.
+
+### Personal owner recovery without email
+
+Use a saved one-time recovery code when only the authenticator is lost. When
+the owner has lost the local password, an authorized operator uses the existing
+SSH/root boundary on Contabo167.86.68.98. Verify the current deployment, local
+active admin identity and absence of another recovery operation first. Determine
+the exact existing owner UUID through a private read-only account lookup; never
+create another bootstrap account or put a password into shell args/env/history.
+
+From an interactive authorized root console in `/opt/elevenlabs-studio`:
+
+```bash
+docker --host unix:///var/run/docker.sock compose \
+  --env-file deploy/studio/.env -f deploy/studio/compose.platform.yml \
+  exec studio-api python -m studio_api.container_entrypoint --drop-only \
+  python -m studio_api.cli recover-local-owner OWNER_UUID
+```
+
+The command requires a terminal, exact email confirmation and twice-entered
+hidden password. It changes only an existing active local admin, revokes all
+its sessions/trusted browsers and pending reset capabilities, and records an
+operator recovery event without impersonating a browser session. TOTP remains
+enabled by default. If both authenticator and saved codes are unavailable,
+select `--reset-totp` only after separately verifying the owner and explicitly
+typing the additional second-factor confirmation. This retires only that
+owner's factor/codes, records a distinct audit event and requires new TOTP
+enrollment after the owner logs in. No email or Telegram reset link is sent.
+
+After a successful command, the owner logs in with the new password and retained
+TOTP/recovery code (or enrolls a new factor after explicit factor retirement).
+Confirm old sessions/trust are rejected and the scoped audit event exists.
+Unknown outcome requires state inspection, not a blind repeat. This procedure
+must be tested with synthetic accounts; never reset the real owner's credentials
+as a delivery smoke check.
+
+### Deferred security-mail transport
 
 `STUDIO_SECURITY_EMAIL_ENABLED` is false by default. Enable it only after the
 owner selects the sender domain, SMTP service and From address. Set
