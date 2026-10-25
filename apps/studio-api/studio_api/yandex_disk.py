@@ -3,13 +3,14 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 import hashlib
 import json
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
 
 API_ORIGIN = "https://cloud-api.yandex.net/v1/disk"
 RESOURCE_FIELDS = "resource_id,name,path,type,mime_type,size,md5,sha256,created,modified"
 JSON_LIMIT = 1024 * 1024
+MAX_DOWNLOAD_REDIRECTS = 3
 
 
 class YandexDiskError(RuntimeError):
@@ -171,13 +172,30 @@ class YandexDiskClient:
         if link.get("method")!="GET":raise YandexDiskError("malformed_response")
         size=0;md5=hashlib.md5(usedforsecurity=False);sha=hashlib.sha256()
         try:
-            with self._http() as client, client.stream("GET",url,follow_redirects=False) as response:
-                _check_status(response.status_code)
-                for chunk in response.iter_bytes(1024*1024):
+            with self._http() as client:
+                visited = {url}
+                for hop in range(MAX_DOWNLOAD_REDIRECTS + 1):
                     check()
-                    size+=len(chunk)
-                    if size>maximum_bytes or size>resource.size_bytes:raise YandexDiskError("size_mismatch")
-                    target.write(chunk);md5.update(chunk);sha.update(chunk)
+                    # Disk's signed downloader redirects to its storage CDN.
+                    # Validate every hop; OAuth belongs only to the REST origin.
+                    with client.stream("GET",url,follow_redirects=False) as response:
+                        if response.status_code in {301,302,303,307,308}:
+                            location = response.headers.get("location")
+                            if hop == MAX_DOWNLOAD_REDIRECTS or not location:
+                                raise YandexDiskError("unsafe_redirect")
+                            next_url = signed_content_url(urljoin(url, location))
+                            if next_url in visited:
+                                raise YandexDiskError("unsafe_redirect")
+                            visited.add(next_url)
+                            url = next_url
+                            continue
+                        _check_status(response.status_code)
+                        for chunk in response.iter_bytes(1024*1024):
+                            check()
+                            size+=len(chunk)
+                            if size>maximum_bytes or size>resource.size_bytes:raise YandexDiskError("size_mismatch")
+                            target.write(chunk);md5.update(chunk);sha.update(chunk)
+                        break
         except httpx.TimeoutException:raise YandexDiskError("timeout") from None
         except httpx.HTTPError:raise YandexDiskError("unavailable") from None
         if size!=resource.size_bytes or (resource.md5 and md5.hexdigest()!=resource.md5) or (resource.sha256 and sha.hexdigest()!=resource.sha256):

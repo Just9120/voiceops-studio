@@ -82,6 +82,93 @@ def test_mismatching_download_is_not_accepted_as_source():
         client(handler).download_to(resource_from_payload(resource()),io.BytesIO(),maximum_bytes=4)
 
 
+def test_download_follows_validated_storage_redirect_without_credentials():
+    data=b"synthetic source";seen=[]
+    def handler(req):
+        seen.append(req.url.host)
+        if req.url.host=="cloud-api.yandex.net":
+            return httpx.Response(200,json={"href":"https://downloader.disk.yandex.ru/a?signature=opaque","method":"GET"})
+        assert req.method=="GET" and "authorization" not in req.headers
+        if req.url.host=="downloader.disk.yandex.ru":
+            return httpx.Response(302,headers={"Location":"https://mds.storage.yandex.net/source?signature=another"})
+        return httpx.Response(200,content=data)
+    target=io.BytesIO()
+    assert client(handler).download_to(resource_from_payload(resource(data=data)),target,maximum_bytes=100)==len(data)
+    assert target.getvalue()==data
+    assert seen==["cloud-api.yandex.net","downloader.disk.yandex.ru","mds.storage.yandex.net"]
+
+
+@pytest.mark.parametrize("status", [301,302,303,307,308])
+def test_download_accepts_three_validated_redirects_including_relative_locations(status):
+    seen=[]
+    def handler(req):
+        seen.append(str(req.url))
+        if req.url.host=="cloud-api.yandex.net":
+            return httpx.Response(200,json={"href":"https://downloader.disk.yandex.ru/start","method":"GET"})
+        assert "authorization" not in req.headers
+        if req.url.path!="/3":
+            return httpx.Response(status,headers={"Location":"/"+str(len(seen)-1)})
+        return httpx.Response(200,content=b"test")
+    target=io.BytesIO()
+    assert client(handler).download_to(resource_from_payload(resource()),target,maximum_bytes=4)==4
+    assert len(seen)==5 and target.getvalue()==b"test"
+
+
+@pytest.mark.parametrize("location", ["http://mds.storage.yandex.net/a","https://evil.test/a",
+    "https://127.0.0.1/a","https://mds.storage.yandex.net.evil.test/a",
+    "https://u:p@mds.storage.yandex.net/a","https://mds.storage.yandex.net:444/a",
+    "https://mds.storage.yandex.net/a#fragment"])
+def test_download_never_contacts_forbidden_redirect(location):
+    seen=[]
+    def handler(req):
+        seen.append(req.url.host)
+        if req.url.host=="cloud-api.yandex.net":
+            return httpx.Response(200,json={"href":"https://downloader.disk.yandex.ru/a","method":"GET"})
+        assert "authorization" not in req.headers
+        return httpx.Response(302,headers={"Location":location})
+    target=io.BytesIO()
+    with pytest.raises(YandexDiskError,match="unsafe_content_url"):
+        client(handler).download_to(resource_from_payload(resource()),target,maximum_bytes=4)
+    assert seen==["cloud-api.yandex.net","downloader.disk.yandex.ru"] and target.getvalue()==b""
+
+
+@pytest.mark.parametrize("mode", ["missing","loop","limit"])
+def test_download_redirect_chain_is_bounded(mode):
+    seen=[]
+    def handler(req):
+        seen.append(req.url.path)
+        if req.url.host=="cloud-api.yandex.net":
+            return httpx.Response(200,json={"href":"https://downloader.disk.yandex.ru/a","method":"GET"})
+        assert "authorization" not in req.headers
+        headers={} if mode=="missing" else {"Location":"/a" if mode=="loop" else "/hop"+str(len(seen))}
+        return httpx.Response(307,headers=headers)
+    with pytest.raises(YandexDiskError,match="unsafe_redirect"):
+        client(handler).download_to(resource_from_payload(resource()),io.BytesIO(),maximum_bytes=4)
+    assert len(seen)==(5 if mode=="limit" else 2)
+
+
+@pytest.mark.parametrize("failure", ["size","hash","cancel"])
+def test_redirected_download_preserves_integrity_and_cancellation_guards(failure):
+    seen=[]
+    def handler(req):
+        seen.append(req.url.host)
+        if req.url.host=="cloud-api.yandex.net":
+            return httpx.Response(200,json={"href":"https://downloader.disk.yandex.ru/a","method":"GET"})
+        assert "authorization" not in req.headers
+        if req.url.host=="downloader.disk.yandex.ru":
+            return httpx.Response(302,headers={"Location":"https://mds.storage.yandex.net/a"})
+        return httpx.Response(200,content=b"too long" if failure=="size" else b"FAIL")
+    def check():
+        if failure=="cancel" and len(seen)==2:raise RuntimeError("owner cancelled")
+    if failure=="cancel":
+        with pytest.raises(RuntimeError,match="owner cancelled"):
+            client(handler).download_to(resource_from_payload(resource()),io.BytesIO(),maximum_bytes=4,check=check)
+        assert seen==["cloud-api.yandex.net","downloader.disk.yandex.ru"]
+    else:
+        with pytest.raises(YandexDiskError,match="size_mismatch" if failure=="size" else "integrity_mismatch"):
+            client(handler).download_to(resource_from_payload(resource()),io.BytesIO(),maximum_bytes=4,check=check)
+
+
 def test_upload_is_create_only_and_readback_verifies_exact_content():
     calls=[];data=b"synthetic docx placeholder"
     def handler(req):
