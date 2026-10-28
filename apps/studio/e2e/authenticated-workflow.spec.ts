@@ -474,7 +474,7 @@ test('Audio workspace processes a device WAV in-browser without uploading source
   await expect(download).toHaveAttribute('href', /^blob:/);
   await expect(download).toHaveAttribute('download', 'Лекция 1. Предмет, задачи и методы социальной психологии.wav');
   await expect(localResults.getByRole('region', { name: 'Анализ звука и пауз' })).toBeVisible();
-  await expect(localResults.getByText(/^До:.*после сокращения:/)).toBeVisible();
+  await expect(localResults.getByText(/^Исходно:.*результат:/)).toBeVisible();
   expect(uploadMutations).toEqual([]);
 });
 

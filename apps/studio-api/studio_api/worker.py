@@ -114,7 +114,6 @@ def run_worker_loop(
     owner_id = owner_id_factory()
     work_index = 0
     from .worker_background import WorkerBackground
-    from .provider_file_cleanup import process_one_provider_file_cleanup
     background = WorkerBackground(
         settings=settings, session_factory=session_factory, stop_event=stop_event,
         logger=logger, owner_id=owner_id, source_cleanup_runner=source_cleanup_runner,
@@ -222,6 +221,7 @@ def main() -> int:
     )
     runtime_heartbeat.start()
     from .worker_background import WorkerBackground
+    from .provider_file_cleanup import process_one_provider_file_cleanup
     background = WorkerBackground(
         settings=settings, session_factory=SessionLocal, stop_event=stop_event,
         logger=LOGGER, owner_id=runtime_instance_id,

@@ -103,6 +103,37 @@ def test_main_configuration_failure_is_normalized_before_db(monkeypatch, caplog)
     assert "999SECRET" not in caplog.text and "ValidationError" not in caplog.text
 
 
+def test_main_wires_provider_cleanup_before_start_and_stops_backgrounds(monkeypatch):
+    from types import SimpleNamespace
+    from studio_api import worker, runtime_observability, worker_background
+    from studio_api.provider_file_cleanup import process_one_provider_file_cleanup
+    events = []
+    configured = SimpleNamespace(**vars(FakeSettings()), runtime_worker_heartbeat_interval_seconds=5)
+    monkeypatch.setattr("studio_api.config.Settings", lambda: configured)
+    monkeypatch.setattr(worker, "install_signal_handlers", lambda stop: None)
+    monkeypatch.setattr(runtime_observability, "settings_runtime_identity", lambda *args, **kwargs: object())
+    monkeypatch.setattr(runtime_observability, "current_worker_runtime_instance_id", lambda: "synthetic-instance")
+
+    class Heartbeat:
+        def __init__(self, **kwargs): pass
+        def start(self): events.append("heartbeat_started")
+        def stop_and_join(self): events.append("heartbeat_stopped")
+    class Background:
+        def __init__(self, **kwargs):
+            assert kwargs["provider_file_cleanup_runner"] is process_one_provider_file_cleanup
+        def start(self): events.append("background_started")
+        def stop_and_join(self): events.append("background_stopped")
+    def run(**kwargs):
+        assert kwargs["independent_background"] is True
+        events.append("loop")
+        return 0
+    monkeypatch.setattr(runtime_observability, "WorkerRuntimeHeartbeat", Heartbeat)
+    monkeypatch.setattr(worker_background, "WorkerBackground", Background)
+    monkeypatch.setattr(worker, "run_worker_loop", run)
+    assert worker.main() == 0
+    assert events == ["heartbeat_started", "background_started", "loop", "background_stopped", "heartbeat_stopped"]
+
+
 def test_owner_id_safe_stable_and_unique():
     from studio_api.worker import build_worker_owner_id
     a=build_worker_owner_id(hostname="raw-host-SECRET")

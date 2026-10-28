@@ -85,6 +85,7 @@ export const AUDIT_EVENT_LABELS: Record<string, string> = {
     "audio_preparation.export_requested": "Запрошено сохранение аудио в Google Drive",
     "audio_preparation.output_recovered": "Готовое аудио восстановлено",
     "audio_preparation.started": "Обработка аудио запущена",
+    "audio_preparation.trim_updated": "Границы обрезки аудио сохранены",
     "auth.totp_break_glass_disabled": "Двухфакторная защита отключена аварийным восстановлением",
     "auth.totp_recovery_consumed": "Использован резервный код входа",
     "job.dismissed": "Задача убрана в историю",
