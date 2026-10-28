@@ -51,6 +51,7 @@ def test_progress_survives_reload_and_is_not_advanced_by_identical_heartbeats(st
     assert last["completed"] is None and last["total"] is None
     assert last["sequence"] == 2 and last["generation"] == 3
     assert last["started_at"].endswith("+00:00")
+    assert progress_payload(job.work_progress_json, generation=4) is None
     with measured_work(db, job=job, owner="worker", generation=3, clock=lambda: NOW):
         report_work("document_output")
     db.refresh(job)

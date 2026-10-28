@@ -443,6 +443,49 @@ def test_diarized_transport_rejects_success_without_speaker_labels():
         )
 
 
+@pytest.mark.parametrize("provider,module,transport_name,model", [
+    ("mistral", "mistral_transcription", "MistralTranscriptionTransport", "voxtral-small-transcribe-3"),
+    ("tbank", "tbank_transcription", "TbankTranscriptionTransport", "default"),
+    ("gemini", "gemini_transcription", "GeminiTranscriptionTransport", "gemini-3.5-transcribe"),
+])
+def test_new_provider_dispatch_preserves_identity_and_does_not_use_elevenlabs(db, models, monkeypatch, provider, module, transport_name, model):
+    import importlib
+    from studio_api import provider_media
+    from studio_api.config import Settings as AppSettings
+    from studio_api.job_stt_transcription import transcribe_processing_job_source
+    _user, _project, _credential, _version, _source, job, rel, now = make_job(db, models,
+        provider=provider, language="ru", options_json=json.dumps({"_stt_model": model}))
+    settings = SimpleNamespace(**AppSettings(database_url="sqlite:///:memory:", credential_key_id="credential-key-v1").model_dump())
+    settings.master_key_b64 = Settings().master_key_b64
+    transport = CaptureTransport()
+    monkeypatch.setattr(importlib.import_module("studio_api." + module), transport_name, lambda **kw: transport)
+    monkeypatch.setattr(provider_media, "whole_file_preparer", lambda selected, **kw: fake_media_preparer)
+    with transcribe_processing_job_source(db, job_id=job.id, job_source_id=rel.id, lease_owner_id="worker", lease_generation=7,
+        settings=settings, now=now, clock=lambda: now, prerequisites_opener=fake_prereq, source_materializer=fake_source, models=models) as result:
+        assert result.text == "hello"
+    assert len(transport.calls) == 1
+    assert transport.calls[0]["model_id"] == model
+    assert transport.calls[0]["language_code"] == "ru"
+    assert db.get(models.TranscriptionJob, job.id).provider == provider
+    checkpoint = db.query(models.TranscriptionProviderPartCheckpoint).one()
+    assert checkpoint.provider == provider and checkpoint.model == model
+    assert checkpoint.ciphertext and b"hello" not in checkpoint.ciphertext
+    if provider != "gemini":
+        setattr(settings, f"{provider}_byok_enabled", False)
+        source = db.get(models.Source, rel.source_id)
+        source.expires_at = now - timedelta(seconds=1)
+        db.get(models.ProviderCredentialVersion, _version.id).ciphertext = None
+        job.attempt_count = 2
+        db.add(models.TranscriptionJobSourceAttempt(owner_user_id=job.owner_user_id, project_id=job.project_id,
+            job_id=job.id, job_source_id=rel.id, attempt_number=2, stage=models.SourceAttemptStage.prepared,
+            retry_disposition=models.SourceAttemptRetryDisposition.undetermined, created_at=now, updated_at=now))
+        db.commit()
+        with transcribe_processing_job_source(db, job_id=job.id, job_source_id=rel.id, lease_owner_id="worker", lease_generation=7,
+                settings=settings, clock=lambda: now) as cached:
+            assert cached.text == "hello"
+        assert len(transport.calls) == 1
+
+
 def test_successful_single_source_flow_lifetime_and_one_call(db, models):
     *_, job, rel, now = make_job(db, models)
     transport = CaptureTransport()

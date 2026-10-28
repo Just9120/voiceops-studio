@@ -91,6 +91,42 @@ async function fixtures(page: Page) {
   });
 }
 
+for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:1280,height:720}]) {
+  test(`original audio trim survives reload without page overflow ${viewport.width}`, async ({page}) => {
+    await page.setViewportSize(viewport);
+    await fixtures(page);
+    const audio = {id:'synthetic-trim', project_id:project.id, title:'Synthetic interval', status:'preview_ready',
+      progress:{stage:'preview_ready',percent:100}, source_ids:[], input_count:1, inputs:[],
+      options:{output_format:'wav',trim_start_seconds:0,trim_end_seconds:null},
+      preview:{input_duration_seconds:7200,estimated_output_duration_seconds:7200,copy_compatible:true,
+        visual:{removed_seconds:0,sources:[{position:0,duration_seconds:7200,peaks:[0.1,0.8,0.5,0.2],silences:[],silence_count:0,intervals_truncated:false,
+          speech_status:'available',speech_intervals:[{start:100,end:200}],speech_truncated:false}]}},output:null};
+    await page.route('**/api/projects/*/audio-preparations',route=>route.fulfill({json:{jobs:[audio]}}));
+    const requests: unknown[] = [];
+    await page.route('**/api/audio-preparations/synthetic-trim/trim',async route=>{
+      const value=route.request().postDataJSON(); requests.push(value);
+      audio.options={output_format:value.output_format,trim_start_seconds:value.start_seconds,trim_end_seconds:value.end_seconds};
+      await route.fulfill({json:audio});
+    });
+    await page.goto('/audio');
+    const editor=page.getByRole('group',{name:'Обрезка аудио'});
+    await expect(editor).toBeVisible();
+    await editor.getByLabel('Начало, секунд',{exact:true}).fill('600');
+    await editor.getByLabel('Конец, секунд',{exact:true}).fill('5400');
+    await editor.getByLabel('Масштаб шкалы').selectOption('4');
+    await editor.getByRole('slider',{name:'Конец выделения',exact:true}).focus();
+    await page.keyboard.press('ArrowLeft');
+    await expect(editor.getByLabel('Конец, секунд',{exact:true})).toHaveValue('5399.99');
+    await noHorizontalOverflow(page);
+    await editor.getByRole('button',{name:'Применить границы',exact:true}).click();
+    expect(requests).toEqual([{start_seconds:600,end_seconds:5399.99,output_format:'wav'}]);
+    await page.reload();
+    await expect(editor.getByLabel('Начало, секунд',{exact:true})).toHaveValue('600');
+    await expect(editor.getByLabel('Конец, секунд',{exact:true})).toHaveValue('5399.99');
+    await noHorizontalOverflow(page);
+  });
+}
+
 async function noHorizontalOverflow(page: Page) {
   const overflow = await page.evaluate(() => ({
     viewport: window.innerWidth,

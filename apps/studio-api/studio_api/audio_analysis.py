@@ -28,7 +28,7 @@ class AudioVisualAnalysis:
     speech_truncated: bool = False
 
 
-def analyze_audio_visual(path, *, duration, options, channels=1, sample_rate=48000, points=MAX_WAVEFORM_POINTS, runner=None, check=lambda: None, progress=lambda seconds: None, speech_progress=lambda seconds: None):
+def analyze_audio_visual(path, *, duration, options, channels=1, sample_rate=48000, points=MAX_WAVEFORM_POINTS, runner=None, check=lambda: None, progress=lambda seconds: None, speech_progress=lambda seconds: None, selected_range=None):
     if not math.isfinite(duration) or duration <= 0 or not isinstance(sample_rate, int) or sample_rate <= 0:
         raise AudioPreparationError(AudioPreparationReason.invalid_input)
     points = max(1, min(MAX_WAVEFORM_POINTS, points))
@@ -67,7 +67,9 @@ def analyze_audio_visual(path, *, duration, options, channels=1, sample_rate=480
         if end <= start:
             return
         result.silence_count += 1
-        result.removed_seconds += max(0.0, end - start - options.silence_keep_duration_seconds)
+        overlap = end - start if selected_range is None else max(0.0, min(end, selected_range[1]) - max(start, selected_range[0]))
+        if overlap >= options.silence_min_duration_seconds:
+            result.removed_seconds += max(0.0, overlap - options.silence_keep_duration_seconds)
         if len(result.intervals) < MAX_VISUAL_INTERVALS:
             result.intervals.append((round(start, 3), round(end, 3)))
         else:
@@ -115,7 +117,7 @@ def analyze_audio_visual(path, *, duration, options, channels=1, sample_rate=480
         check()
         progress(duration)
         from .audio_speech_analysis import analyze_speech
-        speech = analyze_speech(path, duration=duration, check=check, progress=speech_progress)
+        speech = analyze_speech(path, duration=duration, check=check, progress=speech_progress, channel=options.mono_mode.value)
         result.speech_status, result.speech_intervals, result.speech_truncated = speech.status, speech.intervals, speech.truncated
         return result
     except FileNotFoundError as exc:

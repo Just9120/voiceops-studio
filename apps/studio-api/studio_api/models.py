@@ -794,6 +794,9 @@ class SttDictionaryEntry(Base):
 
 
 class SttProviderOperation(Base):
+    external_file_id: Mapped[str|None]=mapped_column(String(256))
+    external_file_credential_version_id: Mapped[str|None]=mapped_column(ForeignKey("provider_credential_versions.id", name="fk_stt_provider_file_version"))
+    external_file_deleted_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
     __tablename__="stt_provider_operations"
     id: Mapped[str]=mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     owner_user_id: Mapped[str]=mapped_column(ForeignKey("users.id"), nullable=False)
@@ -819,12 +822,13 @@ class SttProviderOperation(Base):
         UniqueConstraint("job_source_id","attempt_number",name="uq_stt_provider_operations_source_attempt"),
         UniqueConstraint("provider","operation_id",name="uq_stt_provider_operations_provider_operation"),
         CheckConstraint("attempt_number >= 1", name="ck_stt_provider_operations_attempt_positive"),
-        CheckConstraint("provider IN ('yandex')", name="ck_stt_provider_operations_provider"),
+        CheckConstraint("provider IN ('yandex','gemini')", name="ck_stt_provider_operations_provider"),
         CheckConstraint("operating_mode IN ('economic','standard','premium')", name="ck_stt_provider_operations_mode"),
         CheckConstraint("status IN ('pending','completed','failed')", name="ck_stt_provider_operations_status"),
         CheckConstraint("((result_ciphertext IS NULL AND result_nonce IS NULL AND result_key_id IS NULL AND result_hmac IS NULL) OR (result_ciphertext IS NOT NULL AND result_nonce IS NOT NULL AND result_key_id IS NOT NULL AND length(result_hmac) = 64))", name="ck_stt_provider_operations_result_shape"),
         Index("ix_stt_provider_operations_job_source","job_source_id","attempt_number"),
         Index("ix_stt_provider_operations_pending","status","last_polled_at","created_at"),
+        Index("ix_stt_provider_operations_file_cleanup", "external_file_deleted_at", "updated_at"),
     )
 
 

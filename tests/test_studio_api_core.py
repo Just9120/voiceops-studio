@@ -1431,6 +1431,42 @@ def test_credential_lifecycle_no_raw_secret_echo_and_audit_safe():
         db.close()
 
 
+@pytest.mark.parametrize("provider", ["tbank", "mistral", "gemini"])
+def test_new_provider_keys_are_encrypted_scoped_and_never_echoed(provider):
+    pw = admin()
+    raw = (json.dumps({"api_key": "synthetic-voicekit-public", "secret_key": base64.b64encode(b"x" * 32).decode()})
+        if provider == "tbank" else "synthetic-independent-provider-secret")
+    with TestClient(app) as client:
+        csrf = login(client, pw)
+        response = client.post("/api/credentials", json={"provider": provider, "label": "Synthetic", "raw_value": raw},
+            headers={"origin": "https://studio.test", "x-csrf-token": csrf})
+        assert response.status_code == 200
+        assert response.json()["provider"] == provider
+        assert raw not in response.text
+        collection = client.get("/api/credentials")
+        assert collection.status_code == 200 and raw not in collection.text
+        assert client.get("/api/stt/providers").status_code == 200
+    with SessionLocal() as db:
+        credential = db.get(ProviderCredential, response.json()["id"])
+        version = db.get(ProviderCredentialVersion, credential.active_version_id)
+        assert version.ciphertext and raw.encode() not in version.ciphertext
+        assert raw not in "\n".join(a.metadata_json for a in db.query(AuditEvent).all())
+
+
+def test_invalid_provider_pair_validation_never_echoes_submitted_secret():
+    pw = admin()
+    raw = json.dumps({"api_key": "synthetic-sensitive-id", "secret_key": "synthetic-invalid-sensitive-secret"})
+    with TestClient(app) as client:
+        csrf = login(client, pw)
+        response = client.post("/api/credentials", json={"provider": "tbank", "label": "Synthetic", "raw_value": raw},
+            headers={"origin": "https://studio.test", "x-csrf-token": csrf})
+        assert response.status_code == 422
+        assert "synthetic-sensitive" not in response.text
+        assert "synthetic-invalid" not in response.text
+        assert "input" not in response.json()["detail"][0]
+        assert response.headers["cache-control"] == "no-store"
+
+
 def test_stt_catalog_yandex_byok_and_owner_dictionary_crud_are_safe_and_scoped():
     owner_password = admin(email="stt-owner@example.com")
     other_password = admin(email="stt-other@example.com")
@@ -1445,7 +1481,7 @@ def test_stt_catalog_yandex_byok_and_owner_dictionary_crud_are_safe_and_scoped()
         providers = {
             item["provider"]: item for item in catalog.json()["providers"]
         }
-        assert set(providers) == {"elevenlabs", "yandex"}
+        assert set(providers) == {"elevenlabs", "yandex", "tbank", "mistral", "gemini"}
         assert providers["yandex"]["byok_enabled"] is False
         yandex_modes = {mode["mode"]: mode for mode in providers["yandex"]["modes"]}
         assert yandex_modes["realtime"]["diarization"] is False
@@ -2260,6 +2296,7 @@ def test_transcription_workspace_reuses_active_and_never_unarchives_legacy_data(
 
 
 def test_audio_preparation_api_create_list_detail_and_owner_boundary():
+    from studio_api.models import AudioPreparationJob, AudioPreparationStatus
     email = "audio-preparation-owner@example.com"
     password = admin(email)
     client = TestClient(app)
@@ -2318,6 +2355,27 @@ def test_audio_preparation_api_create_list_detail_and_owner_boundary():
     other_client = TestClient(app)
     login(other_client, other_password, other_email)
     assert other_client.get(f"/api/audio-preparations/{payload['id']}").status_code == 404
+    trim_path = f"/api/audio-preparations/{payload['id']}/trim"
+    trim = {"start_seconds": 10.25, "end_seconds": 40.5, "output_format": "flac"}
+    assert client.patch(trim_path, json=trim, headers={"origin": "https://studio.test"}).status_code == 403
+    with SessionLocal() as state:
+        job = state.get(AudioPreparationJob, payload["id"])
+        job.status = AudioPreparationStatus.preview_ready
+        job.current_stage = "preview_ready"
+        job.total_input_duration_ms = 60_000
+        job.estimated_output_duration_ms = 60_000
+        job.copy_compatible = True
+        state.commit()
+    assert client.patch(trim_path, json={**trim, "end_seconds": 70}, headers=headers).status_code == 422
+    assert client.patch(trim_path, json={**trim, "start_seconds": True}, headers=headers).status_code == 422
+    response = client.patch(trim_path, json=trim, headers=headers)
+    assert response.status_code == 200
+    restored = client.get(f"/api/audio-preparations/{payload['id']}").json()
+    assert restored["options"]["trim_start_seconds"] == 10.25
+    assert restored["options"]["trim_end_seconds"] == 40.5
+    assert restored["preview"]["estimated_output_duration_seconds"] == 30.25
+    other_csrf = other_client.get("/api/auth/csrf").json()["csrf_token"]
+    assert other_client.patch(trim_path, json=trim, headers={"origin": "https://studio.test", "x-csrf-token": other_csrf}).status_code == 404
     db = SessionLocal()
     try:
         assert db.get(User, owner_id) is not None
@@ -8983,7 +9041,7 @@ def test_job_destination_migration_0008_0009_upgrade_downgrade_backfill(tmp_path
         with temp_engine.begin() as conn:
             assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0009_job_output_destinations"
         cfg = Config(str(ALEMBIC))
-        assert ScriptDirectory.from_config(cfg).get_current_head() == "0043_yandex_disk"
+        assert ScriptDirectory.from_config(cfg).get_current_head() == "0044_quality_progress"
     finally:
         temp_engine.dispose()
         cleanup_engine = create_engine(admin_url, isolation_level="AUTOCOMMIT")

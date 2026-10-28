@@ -221,7 +221,7 @@ def format_transcript_doc(*, title: str, transcript_text: str, job_language: str
     body = build_transcript_document_text(
         title=safe_title,
         metadata_lines=(
-            f"Provider: {dict(elevenlabs='ElevenLabs', yandex='Yandex SpeechKit').get(provider, 'unknown')}",
+            f"Provider: {dict(elevenlabs='ElevenLabs', yandex='Yandex SpeechKit', mistral='Mistral Voxtral', gemini='Google Gemini Transcribe', tbank='T-Bank VoiceKit').get(provider, 'unknown')}",
             f"Model: {model}",
             f"Language: {lang}",
         ) + ((f"Created at: {_utc_iso(created_at)}",) if created_at is not None and not title_has_recording_date(safe_title) else ()) + compact_provenance_lines(provenance_lines),

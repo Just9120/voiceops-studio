@@ -50,7 +50,7 @@ class SpeechCollector:
         return SpeechAnalysis("available", tuple(self.intervals), self.truncated)
 
 
-def analyze_speech(path, *, duration, check=lambda: None, progress=lambda seconds: None):
+def analyze_speech(path, *, duration, check=lambda: None, progress=lambda seconds: None, channel="preserve"):
     try:
         import webrtcvad
     except ImportError:
@@ -60,7 +60,10 @@ def analyze_speech(path, *, duration, check=lambda: None, progress=lambda second
     stop = threading.Event()
     failed = []
     command = ["ffmpeg", "-nostdin", "-threads", "2", "-filter_threads", "2", "-v", "error", "-xerror",
-        "-i", str(path), "-map", "0:a:0", "-ac", "1", "-ar", str(RATE), "-f", "s16le", "pipe:1"]
+        "-i", str(path), "-map", "0:a:0"]
+    if channel in {"left", "right"}:
+        command += ["-af", "pan=mono|c0=" + ("c1" if channel == "right" else "c0")]
+    command += ["-ac", "1", "-ar", str(RATE), "-f", "s16le", "pipe:1"]
     check()
     child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     def put(value):

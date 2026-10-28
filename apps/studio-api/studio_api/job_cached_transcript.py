@@ -15,9 +15,9 @@ from .elevenlabs_transcription import merge_elevenlabs_transcript_results
 
 
 def fully_cached_relation(db, job, relation_id, now):
-    if job.provider == "yandex":
+    if job.provider in {"yandex", "gemini"}:
         return completed_yandex_result(db, job, relation_id) is not None
-    if job.provider != "elevenlabs":
+    if job.provider not in {"elevenlabs", "mistral", "tbank"}:
         return False
     attempt = complete_provider_attempt(db, job_id=job.id, job_source_id=relation_id)
     return attempt is not None and checkpoint_resume_count(
@@ -31,7 +31,7 @@ def completed_yandex_result(db, job, relation_id):
     row = db.scalar(select(SttProviderOperation).where(
         SttProviderOperation.job_id == job.id, SttProviderOperation.job_source_id == relation_id,
         SttProviderOperation.owner_user_id == job.owner_user_id,
-        SttProviderOperation.project_id == job.project_id, SttProviderOperation.provider == "yandex",
+        SttProviderOperation.project_id == job.project_id, SttProviderOperation.provider == job.provider,
     ).order_by(SttProviderOperation.attempt_number.desc()).limit(1))
     if (row is None or row.status != "completed" or row.attempt_number > int(job.attempt_count or 0)
             or row.operating_mode != job.operating_mode
@@ -75,10 +75,10 @@ def retire_cached_yandex_result(db, *, job_id, job_source_id=None):
 @contextmanager
 def restore_cached_yandex_transcript(db, *, job_id, job_source_id, lease_owner_id, lease_generation, settings, now):
     from .job_retry_recovery import mark_attempt_provider_started, mark_attempt_provider_returned
-    from .yandex_transcription import YandexTranscriptionTransport
+    from .provider_result_cache import load_operation_result
     job = db.get(TranscriptionJob, job_id)
     project = db.get(Project, job.project_id) if job else None
-    if (job is None or job.provider != "yandex" or job.status != JobStatus.processing
+    if (job is None or job.provider not in {"yandex", "gemini"} or job.status != JobStatus.processing
             or job.cancel_requested_at is not None or job.lease_owner_id != lease_owner_id
             or job.lease_generation != lease_generation or not is_lease_active(job, now)
             or project is None or project.owner_user_id != job.owner_user_id or project.archived_at is not None):
@@ -86,9 +86,7 @@ def restore_cached_yandex_transcript(db, *, job_id, job_source_id, lease_owner_i
     operation = completed_yandex_result(db, job, job_source_id)
     if operation is None:
         raise ProviderPartCheckpointError(ProviderPartCheckpointReason.complete_set_unavailable)
-    transport = YandexTranscriptionTransport(db=db, job_id=job_id, job_source_id=job_source_id,
-        settings=settings, folder_id="", clock=lambda: now)
-    result = transport._load_result(operation)  # Local authenticated decryption; no provider request/key.
+    result = load_operation_result(operation, settings=settings)  # No provider request/key.
     try:
         if not result.text.strip():
             raise ProviderPartCheckpointError(ProviderPartCheckpointReason.payload_invalid)

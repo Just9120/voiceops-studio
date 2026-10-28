@@ -184,6 +184,66 @@ Health evidence should include only safe status booleans/markers, component name
 
 ## Backup and migration order
 
+### Audio quality, progress and provider rollout — 0044
+
+`0044_quality_progress` is the direct additive successor of `0043_yandex_disk`.
+It adds nullable measured-progress snapshots, new encrypted credential provider
+enum labels, and receipted Gemini temporary-file identities tied to the exact
+credential version. Existing jobs, sources, tokens and audio recipes remain
+readable. Deploy through the signed protected migration lane below with the
+worker drained; then verify the API schema and start the compatible worker.
+New-provider records make schema downgrade unsafe: use forward recovery rather
+than deleting credentials or provider history to force a downgrade. PostgreSQL
+enum labels intentionally remain if an empty schema is rolled back.
+
+The new owner-only connection forms accept Mistral/Gemini API keys and a
+VoiceKit API_KEY + SECRET_KEY pair. They use existing recent-auth, CSRF,
+encrypted-version, revocation and owner-isolation boundaries. A Gemini STT key
+is separate from the browser Google Picker key and OAuth clients. No keys are
+provided by this release; saving a key selects a profile and does not prove
+provider authentication or make an implicit billable probe. Existing ElevenLabs
+and Yandex settings remain in place. The operator may disable new batch profiles
+with `STUDIO_MISTRAL_BYOK_ENABLED`, `STUDIO_GEMINI_BYOK_ENABLED` and
+`STUDIO_TBANK_BYOK_ENABLED`; API and worker must use the same configuration.
+
+Current models are explicit `voxtral-small-transcribe-3`,
+`gemini-3.5-transcribe`, and VoiceKit `default`. New adapters use standard batch
+only, with no silent provider fallback or paid automatic retry. Mistral uses
+whole-file FLAC and segment-level diarization. Gemini uses verbatim transcription
+without interaction storage, up to 1h or 30min with diarization; vocabulary and
+diarization cannot be combined, and 3+ speakers are experimental. Studio bounds
+prepared Mistral/Gemini files to 256MiB. VoiceKit accepts Russian, no speaker
+diarization, and uses mono16kHz64kbit/s MP3 with a Studio inline bound of 24MiB.
+These byte limits protect this worker and are not claimed as provider maxima.
+Exceeding a limit fails before STT; FFmpeg size truncation is rejected. New
+Live/deferred modes are not exposed. Unknown tariffs remain unavailable, not free.
+
+Gemini Files uploads have an exact durable receipt and credential-version binding.
+The worker deletes that exact file after success, failure or cancellation. A
+failed delete preserves the encrypted transcript and pending receipt; bounded
+idle maintenance retries only DELETE for that receipt once the job lease is
+inactive. A revoked local key may clean its own receipted file while its encrypted
+version exists; an erased or foreign key cannot be used. Missing credentials or
+provider refusal leave cleanup unconfirmed; provider expiry is a fallback, never
+evidence of deletion. No filename search or bulk provider-file cleanup occurs.
+Export-only recovery uses persisted results without another STT request.
+
+Audio trim is one original ordered interval applied before silence/channel
+processing. Changed bounds require WAV/FLAC explicitly. The recipe persists for
+regeneration from retained originals; final audio is not permanently copied into
+S3. Speech activity is local WebRTC VAD, separate from the amplitude envelope;
+missing VAD is shown as unavailable. Bounded visual snapshots retain512 points
+and512 intervals; changing a trim against truncated silence data requeues actual
+analysis instead of guessing. Zoom does not invent higher-resolution samples.
+Local WAV processing retains original File references in the current tab only;
+after reload, reselect files or use the persisted server path.
+
+Progress snapshots are measurements, independent of heartbeat/leases. The API
+returns only the current lease generation, and conditional writes prevent a
+stale/cancelled worker from reporting. Bytes/media-time/counters may have a
+known denominator; provider waiting has none. Never infer success from an
+animated meter, elapsed time, key presence, or a completed HTTP submission.
+
 Migration rollout order is strict:
 
 1. Verify PostgreSQL and Redis health/stateful-service identity.

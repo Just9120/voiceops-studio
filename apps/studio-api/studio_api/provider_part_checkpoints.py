@@ -22,7 +22,7 @@ from .models import (
     JobStatus,
 )
 from .security import decrypt, encrypt, master_key_from_b64
-from .transcript_catalog import CURRENT_TRANSCRIPTION_MODEL
+from .transcription_metadata import selected_model
 
 
 class ProviderPartCheckpointReason(str, Enum):
@@ -109,8 +109,8 @@ def save_provider_part_checkpoint(
         total_parts=total_parts,
         timeline_offset_seconds=timeline_offset_seconds,
         duration_seconds=duration_seconds,
-        provider="elevenlabs",
-        model=CURRENT_TRANSCRIPTION_MODEL,
+        provider=job.provider or "elevenlabs",
+        model=selected_model(job.provider or "elevenlabs", job.options_json, job.operating_mode),
         ciphertext=ciphertext,
         nonce=nonce,
         key_id=settings.credential_key_id,
@@ -329,8 +329,8 @@ def _row_shape_matches(row, job, total_parts, offset, duration) -> bool:
         and row.project_id == job.project_id
         and row.job_id == job.id
         and row.total_parts == total_parts
-        and row.provider == "elevenlabs"
-        and row.model == CURRENT_TRANSCRIPTION_MODEL
+        and row.provider == (job.provider or "elevenlabs")
+        and row.model == selected_model(job.provider or "elevenlabs", job.options_json, job.operating_mode)
         and math.isclose(float(row.timeline_offset_seconds), float(offset), abs_tol=0.001)
         and math.isclose(float(row.duration_seconds), float(duration), abs_tol=0.001)
     )

@@ -17,14 +17,16 @@ describe("audio trim boundaries", () => {
     expect(dirty).toHaveBeenLastCalledWith(false);
   });
   it("keeps invalid intermediate edits without allowing a render", async () => {
-    const save = vi.fn();
-    render(<AudioTrimEditor duration={100} visual={null} options={{ output_format: "wav" }} disabled={false} onSave={save} onDirtyChange={vi.fn()} />);
+    const save = vi.fn(), dirty = vi.fn();
+    render(<AudioTrimEditor duration={100} visual={null} options={{ output_format: "wav" }} disabled={false} onSave={save} onDirtyChange={dirty} />);
     await userEvent.clear(screen.getByLabelText("Конец, секунд"));
     expect(screen.getByRole("button", { name: "Применить границы" })).toBeDisabled();
     await userEvent.type(screen.getByLabelText("Конец, секунд"), "101");
     expect(screen.getByRole("button", { name: "Применить границы" })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "Выделить всю запись" }));
     expect(screen.getByLabelText("Конец, секунд")).toHaveValue("100");
+    expect(dirty).toHaveBeenLastCalledWith(false);
+    expect(screen.getByRole("button", { name: "Применить границы" })).toBeDisabled();
     expect(save).not.toHaveBeenCalled();
   });
   it("keeps pending/failure edits and offers retry without false success", async () => {

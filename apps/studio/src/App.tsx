@@ -271,6 +271,7 @@ function isExpectedCredentialCreateResponse(
     response.id.length > 0 &&
     (response.provider === "elevenlabs" ||
       response.provider === "yandex" ||
+      response.provider === "tbank" || response.provider === "mistral" || response.provider === "gemini" ||
       response.provider === "openai") &&
     typeof response.label === "string" &&
     response.label.trim().length > 0 &&
@@ -1867,7 +1868,7 @@ function PreparationPanel({
     const restored = composerDraftRows(draft.rows);
     if (!restored) return;
     setRows(restored);
-    if (draft.selectedProvider === "elevenlabs" || draft.selectedProvider === "yandex") setSelectedProvider(draft.selectedProvider);
+    if (["elevenlabs", "yandex", "tbank", "mistral", "gemini"].includes(String(draft.selectedProvider))) setSelectedProvider(draft.selectedProvider as SttProvider);
     if (["economic", "standard", "premium"].includes(String(draft.operatingMode))) setOperatingMode(draft.operatingMode as SttOperatingMode);
     if (["ru", "en", "detect"].includes(String(draft.languageMode))) setLanguageMode(draft.languageMode as TranscriptionLanguageMode);
     if (typeof draft.diarizationEnabled === "boolean") setDiarizationEnabled(draft.diarizationEnabled);
@@ -2219,11 +2220,15 @@ function PreparationPanel({
     ? providerCatalogError
     : selectedProviderCapability && !selectedProviderCapability.byok_enabled
       ? `${selectedProviderCapability.display_name} пока не включён оператором Studio`
+      : selectedModeCapability && !selectedModeCapability.languages.includes(languageMode)
+        ? "Выбранный провайдер не поддерживает этот язык в текущем режиме. Выберите доступный язык."
       : selectedModeCapability && !selectedModeCapability.health.available
         ? `${selectedProviderCapability?.display_name ?? selectedProvider} временно недоступен в выбранном режиме`
         : "";
   const dictionaryBlocker = dictionariesError && selectedDictionaryIds.length
     ? dictionariesError
+    : selectedProvider === "gemini" && diarizationEnabled && selectedDictionaryIds.length > 0
+      ? "Gemini: словарь нельзя сочетать с разделением спикеров. Отключите одну из опций или выберите другого провайдера."
     : selectedDictionaryIds.length && selectedModeCapability?.dictionaries === false
       ? "Выбранный режим не поддерживает словари"
       : "";
@@ -5420,6 +5425,7 @@ function PreparationPanel({
                     ? " — не включён"
                     : ""}
                 </option>
+                {([['tbank', 'Т-Банк VoiceKit'], ['mistral', 'Mistral Voxtral'], ['gemini', 'Google Gemini Transcribe']] as const).map(([id, name]) => <option key={id} value={id} disabled={providerCatalog.find((entry) => entry.provider === id)?.byok_enabled !== true}>{name}</option>)}
               </select>
             </label>
             {visibleBatchModes.length > 1 ? (
@@ -5469,8 +5475,9 @@ function PreparationPanel({
                 сравнивается: провайдер не передал подтверждённые тарифы по режимам.
               </p></details>
             )}
+            {selectedModeCapability?.notes?.map((note) => <p className="muted" key={note}>{note}</p>)}
             {selectedCredentialId && !credentialsError && !providerBlocker && (
-              <span className="provider-ready">Подключён и готов</span>
+              <span className="provider-ready">Профиль подключения выбран</span>
             )}
             <p className="muted">
               Ключи создаются и изменяются только в настройках.
@@ -5704,9 +5711,7 @@ function PreparationPanel({
                     : preflightDurationPending ? "План требует проверки длительности" : "План готов к подтверждению"}
                 </h3>
                 <p className="muted batch-preflight-provider">
-                  {activePreflight.provider === "yandex"
-                    ? "Yandex SpeechKit"
-                    : "ElevenLabs"}{" "}
+                  {providerCatalog.find((entry) => entry.provider === activePreflight.provider)?.display_name ?? activePreflight.provider}{" "}
                   {activePreflight.model} ·{" "}
                   {sttModeLabel(activePreflight.operating_mode)} ·{" "}
                   {transcriptionLanguageModeLabel(
@@ -8051,7 +8056,11 @@ function SettingsPage({
     const fd = new FormData(form);
     const provider = String(fd.get("provider") ?? "") as Credential["provider"];
     const label = String(fd.get("credential_label") ?? "").trim();
-    const rawValue = String(fd.get("credential_raw_value") ?? "");
+    const secretValue = String(fd.get("credential_raw_value") ?? "");
+    const apiKeyValue = String(fd.get("tbank_api_key") ?? "");
+    const rawValue = provider === "tbank" ? JSON.stringify({ api_key: apiKeyValue.trim(), secret_key: secretValue.trim() }) : secretValue;
+    const publicInput = form.elements.namedItem("tbank_api_key") as HTMLInputElement | null;
+    if (publicInput) publicInput.value = "";
     const folderId = String(fd.get("yandex_folder_id") ?? "").trim();
     const rawInput = form.elements.namedItem(
       "credential_raw_value",
@@ -8139,7 +8148,11 @@ function SettingsPage({
     let notice: CredentialMutationNotice | undefined;
     const form = e.currentTarget;
     const fd = new FormData(form);
-    const rawValue = String(fd.get("replacement_credential_raw_value") ?? "");
+    const secretValue = String(fd.get("replacement_credential_raw_value") ?? "");
+    const apiKeyValue = String(fd.get("replacement_tbank_api_key") ?? "");
+    const rawValue = selected.provider === "tbank" ? JSON.stringify({ api_key: apiKeyValue.trim(), secret_key: secretValue.trim() }) : secretValue;
+    const publicInput = form.elements.namedItem("replacement_tbank_api_key") as HTMLInputElement | null;
+    if (publicInput) publicInput.value = "";
     const rawInput = form.elements.namedItem(
       "replacement_credential_raw_value",
     ) as HTMLInputElement | null;
@@ -8912,10 +8925,15 @@ function SettingsPage({
               >
                 <option value="elevenlabs">ElevenLabs</option>
                 <option value="yandex">Yandex SpeechKit</option>
+                <option value="tbank">Т-Банк VoiceKit</option>
+                <option value="mistral">Mistral Voxtral</option>
+                <option value="gemini">Google Gemini Transcribe</option>
                 <option value="openai">
                   OpenAI — только хранение, не для текущей транскрибации
                 </option>
               </select>
+              {createCredentialProvider === "tbank" && <><p className="muted">Укажите пару API_KEY и SECRET_KEY из кабинета VoiceKit. Оба значения будут зашифрованы вместе.</p><label>API_KEY VoiceKit<input name="tbank_api_key" type="password" autoComplete="new-password" spellCheck={false} disabled={createCredentialPending} required /></label></>}
+              {createCredentialProvider === "gemini" && <p className="muted">Нужен отдельный Gemini API key. Ключ Google Picker или подключение Drive не подходят. Подписка на Gemini сама по себе не подтверждает доступ к платному API.</p>}
               {createCredentialProvider === "yandex" && (
                 <input
                   name="yandex_folder_id"
@@ -8932,7 +8950,7 @@ function SettingsPage({
                 disabled={createCredentialPending}
                 required
               /></label>
-              <label>Новый ключ<input
+              <label>{createCredentialProvider === "tbank" ? "SECRET_KEY VoiceKit" : "Новый ключ"}<input
                 name="credential_raw_value"
                 type="password"
                 autoComplete="new-password"
@@ -9015,6 +9033,7 @@ function SettingsPage({
                       aria-busy={activeMutation?.kind === "replace" || undefined}
                       autoComplete="off"
                     >
+                      {credential.provider === "tbank" && <label>Новый API_KEY VoiceKit<input name="replacement_tbank_api_key" type="password" autoComplete="new-password" spellCheck={false} disabled={mutationPending} required /></label>}
                       <input
                         name="replacement_credential_raw_value"
                         type="password"

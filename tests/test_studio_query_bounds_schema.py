@@ -65,7 +65,7 @@ def test_query_bounds_migration_is_single_additive_successor():
     script = ScriptDirectory.from_config(
         Config(str(ROOT / "apps/studio-api/alembic.ini"))
     )
-    assert script.get_heads() == ["0043_yandex_disk"]
+    assert script.get_heads() == ["0044_quality_progress"]
     revision = script.get_revision("0027_query_bounds")
     assert revision.down_revision == "0026_runtime_component_status"
     source = (

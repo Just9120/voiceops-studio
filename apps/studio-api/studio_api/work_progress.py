@@ -22,12 +22,14 @@ def report_work(stage, completed=None, total=None, unit=None):
         reporter(stage, completed, total, unit)
 
 
-def progress_payload(raw):
+def progress_payload(raw, *, generation=None):
     try:
         value = json.loads(raw or "null")
     except (TypeError, ValueError):
         return None
     if not isinstance(value, dict) or value.get("stage") not in STAGES:
+        return None
+    if generation is not None and value.get("generation") != generation:
         return None
     if value.get("unit") not in UNITS | {None}:
         return None

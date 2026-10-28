@@ -174,6 +174,15 @@ def update_audio_trim(db: Session, *, owner_user_id: str, job_id: str,
     visual = json.loads(job.visual_analysis_json or "{}")
     job.options_json = serialize_options(options)
     job.estimated_output_duration_ms = round(estimate_trimmed_duration(options, duration, visual) * 1000)
+    if options.silence_enabled and any(source.get("intervals_truncated") for source in visual.get("sources", [])):
+        # The bounded interval snapshot cannot estimate an arbitrary new trim.
+        # Re-analyze rather than treating omitted pauses as absent.
+        job.status = AudioPreparationStatus.preview_queued
+        job.current_stage = "preview_queued"
+        job.progress_percent = 0
+        job.lease_owner_id = None
+        job.lease_expires_at = None
+        job.estimated_output_duration_ms = None
     db.flush()
     return job
 
@@ -540,7 +549,7 @@ def audio_preparation_payload(job: AudioPreparationJob, *, now: datetime | None 
         "progress": {
             "percent": job.progress_percent,
             "stage": job.current_stage,
-            "work": progress_payload(job.work_progress_json) if status in {"analyzing", "processing"} or job.current_stage in AUDIO_DOWNLOAD_WORK_STAGES else None,
+            "work": progress_payload(job.work_progress_json, generation=job.lease_generation) if status in {"analyzing", "processing"} or job.current_stage in AUDIO_DOWNLOAD_WORK_STAGES else None,
         },
         "output": (
             {

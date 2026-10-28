@@ -20,10 +20,16 @@ export function AudioTrimEditor({ duration, visual, options, disabled, onSave, o
   const a = Number(start.replace(",", ".")), b = Number(end.replace(",", "."));
   const valid = start.trim() !== "" && end.trim() !== "" && Number.isFinite(a) && Number.isFinite(b) && a >= 0 && b <= duration && b > a;
   const trimmed = a !== 0 || b !== duration;
-  const dirty = a !== initialStart || b !== initialEnd || format !== options.output_format || !valid;
+  const isDirty = (left: string, right: string, nextFormat: string) => {
+    const first = Number(left.replace(",", ".")), last = Number(right.replace(",", "."));
+    return !left.trim() || !right.trim() || !Number.isFinite(first) || !Number.isFinite(last)
+      || first < 0 || last > duration || last <= first || first !== initialStart || last !== initialEnd
+      || nextFormat !== (options.output_format ?? "wav");
+  };
+  const dirty = !!isDirty(start, end, format);
   const change = (boundary: "start" | "end", value: string) => {
     (boundary === "start" ? setStart : setEnd)(value);
-    onDirtyChange(true); setError("");
+    onDirtyChange(!!isDirty(boundary === "start" ? value : start, boundary === "end" ? value : end, format)); setError("");
   };
   async function save() {
     if (!valid || (trimmed && format === "copy")) return;
@@ -39,15 +45,16 @@ export function AudioTrimEditor({ duration, visual, options, disabled, onSave, o
     </select></label>
     <div className="audio-trim-scroll" tabIndex={0} role="region" aria-label="Шкала обрезки, прокрутка по времени">
       <div style={{ width: `${zoom * 100}%` }}>
-        <AudioWaveform visual={visual} before={duration} after={valid ? b - a : duration} selection={valid ? [a, b] : undefined} />
-        <label>Начало выделения<input type="range" min="0" max={duration} step="0.01" value={Number.isFinite(a) ? a : 0} aria-valuetext={formatAudioDuration(a)} onChange={(e) => change("start", e.target.value)} /></label>
-        <label>Конец выделения<input type="range" min="0" max={duration} step="0.01" value={Number.isFinite(b) ? b : duration} aria-valuetext={formatAudioDuration(b)} onChange={(e) => change("end", e.target.value)} /></label>
+        <AudioWaveform visual={visual} before={duration} after={valid ? b - a : duration} selection={valid ? [a, b] : undefined} controls={<div className="audio-trim-handles">
+          <input aria-label="Начало выделения" title="Перетащите начало выделения" type="range" min="0" max={duration} step="0.01" value={Number.isFinite(a) ? a : 0} aria-valuetext={formatAudioDuration(a)} onChange={(e) => change("start", e.target.value)} />
+          <input aria-label="Конец выделения" title="Перетащите конец выделения" type="range" min="0" max={duration} step="0.01" value={Number.isFinite(b) ? b : duration} aria-valuetext={formatAudioDuration(b)} onChange={(e) => change("end", e.target.value)} />
+        </div>} />
       </div>
     </div>
     <div className="audio-settings-grid">
       <label>Начало, секунд<input inputMode="decimal" value={start} onChange={(e) => change("start", e.target.value)} aria-invalid={!valid} /></label>
       <label>Конец, секунд<input inputMode="decimal" value={end} onChange={(e) => change("end", e.target.value)} aria-invalid={!valid} /></label>
-      <label>Формат результата<select value={format} onChange={(e) => { setFormat(e.target.value); onDirtyChange(true); }}>
+      <label>Формат результата<select value={format} onChange={(e) => { setFormat(e.target.value); onDirtyChange(!!isDirty(start, end, e.target.value)); }}>
         <option value="wav">WAV</option>{!local && <option value="flac">FLAC</option>}
         {!local && options.output_format === "copy" && <option value="copy">Исходный формат, без обрезки</option>}
       </select></label>
@@ -56,7 +63,7 @@ export function AudioTrimEditor({ duration, visual, options, disabled, onSave, o
     {trimmed && format === "copy" && <p role="alert">Для точных границ выберите WAV или FLAC. Формат не изменится автоматически.</p>}
     {error && <p role="alert">{error}</p>}
     <div className="actions"><button type="button" disabled={!dirty || !valid || (trimmed && format === "copy")} onClick={() => void save()}>Применить границы</button>
-      <button type="button" onClick={() => { setStart("0"); setEnd(String(duration)); onDirtyChange(true); }}>Выделить всю запись</button></div>
+      <button type="button" onClick={() => { setStart("0"); setEnd(String(duration)); setError(""); onDirtyChange(!!isDirty("0", String(duration), format)); }}>Выделить всю запись</button></div>
     {dirty && <p className="muted">Изменения ещё не применены. Запуск обработки станет доступен после сохранения границ.</p>}
   </fieldset>;
 }

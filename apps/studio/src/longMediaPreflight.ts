@@ -2,7 +2,7 @@ export type LongMediaPreflight = {
   source_duration_seconds: number; selected_duration_seconds: number;
   nominal_cost: string | null; currency: "USD" | null; rate_per_hour: string | null;
   effective_date: string | null; source: "elevenlabs_public_api_pricing" | "yandex_public_api_pricing" | null;
-  provider: "elevenlabs" | "yandex"; additional_source_count: number; maximum_seconds_per_source: number;
+  provider: "elevenlabs" | "yandex" | "tbank" | "mistral" | "gemini"; additional_source_count: number; maximum_seconds_per_source: number;
   basis: "measured_duration_x_immutable_public_tariff"; invoice_debit: false; confirmation_token: string;
 };
 
@@ -13,7 +13,7 @@ export function parseLongMediaPreflight(value: unknown): LongMediaPreflight | nu
     || !Number.isFinite(p.selected_duration_seconds) || p.selected_duration_seconds < 0 || p.selected_duration_seconds > p.source_duration_seconds
     || !Number.isFinite(p.maximum_seconds_per_source) || p.maximum_seconds_per_source <= 0
     || !Number.isInteger(p.additional_source_count) || p.additional_source_count < 0 || p.additional_source_count > 50
-    || !["elevenlabs", "yandex"].includes(p.provider) || p.basis !== "measured_duration_x_immutable_public_tariff"
+    || !["elevenlabs", "yandex", "tbank", "mistral", "gemini"].includes(p.provider) || p.basis !== "measured_duration_x_immutable_public_tariff"
     || p.invoice_debit !== false || typeof p.confirmation_token !== "string" || !/^[a-f0-9]{64}$/.test(p.confirmation_token)) return null;
   const priced = p.nominal_cost !== null;
   const decimal = (value: unknown) => typeof value === "string" && /^\d{1,9}(?:\.\d{1,8})?$/.test(value);

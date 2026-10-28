@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_transcript_maintenance_runs_is_additive_repository_head():
     config = Config(str(ROOT / "apps/studio-api/alembic.ini"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["0043_yandex_disk"]
+    assert scripts.get_heads() == ["0044_quality_progress"]
     revision = scripts.get_revision("0028_transcript_maintenance_runs")
     assert revision.down_revision == "0027_query_bounds"
     source = (

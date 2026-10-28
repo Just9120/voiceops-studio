@@ -221,7 +221,8 @@ def _is_realtime_draft_route(path: str) -> bool:
 
 @app.exception_handler(RequestValidationError)
 async def request_validation_error_handler(request: Request, exc: RequestValidationError):
-    if not _is_realtime_draft_route(request.url.path):
+    sensitive = request.url.path == "/api/credentials" or request.url.path.startswith("/api/credentials/")
+    if not _is_realtime_draft_route(request.url.path) and not sensitive:
         return await request_validation_exception_handler(request, exc)
     response = JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -320,6 +321,9 @@ class CredentialIn(BaseModel):
 
     @model_validator(mode="after")
     def validate_provider_config(self):
+        if self.provider == CredentialProvider.tbank:
+            from .tbank_transcription import credential_pair
+            credential_pair(self.raw_value)
         folder_id = self.folder_id.strip() if isinstance(self.folder_id, str) else None
         if self.provider == CredentialProvider.yandex and not folder_id:
             raise ValueError("Для Yandex укажите ID каталога")
@@ -482,7 +486,7 @@ class AudioPreparationCreateIn(BaseModel):
         return self
 
 class AudioTrimIn(BaseModel):
-    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False, strict=True)
     start_seconds: float = Field(default=0, ge=0, le=604800)
     end_seconds: float | None = Field(default=None, gt=0, le=604800)
     output_format: str = Field(pattern=r"^(wav|flac|copy)$")
@@ -2136,7 +2140,7 @@ def _batch_hash(project_id, provider_credential_id, language, options_json, item
 
 def _provider_label(provider: str | SttProvider | CredentialProvider) -> str:
     value=getattr(provider,"value",provider)
-    return "Yandex SpeechKit" if value == "yandex" else "ElevenLabs"
+    return {"elevenlabs": "ElevenLabs", "yandex": "Yandex SpeechKit", "mistral": "Mistral Voxtral", "gemini": "Google Gemini Transcribe", "tbank": "Т-Банк VoiceKit"}.get(value, "STT")
 
 
 def _resolve_active_stt_credential_id(

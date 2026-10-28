@@ -130,7 +130,7 @@ def job_fixture(db, *, status=m.JobStatus.failed, attempt_count=1):
 def test_job_notification_migration_is_additive_single_head():
     script = ScriptDirectory.from_config(Config(str(ROOT / "apps/studio-api/alembic.ini")))
     revision = script.get_revision("0035_job_notifications")
-    assert script.get_heads() == ["0043_yandex_disk"]
+    assert script.get_heads() == ["0044_quality_progress"]
     assert revision.down_revision == "0034_personal_security"
     assert revision.module.release_safety == "additive"
     assert {"retry_not_before_at", "automatic_retry_reason"} <= set(

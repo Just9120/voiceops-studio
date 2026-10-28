@@ -143,7 +143,7 @@ def test_reference_class_migration_is_additive_repository_head():
     scripts = ScriptDirectory.from_config(
         Config(str(ROOT / "apps/studio-api/alembic.ini"))
     )
-    assert scripts.get_heads() == ["0043_yandex_disk"]
+    assert scripts.get_heads() == ["0044_quality_progress"]
     revision = scripts.get_revision("0029_source_reference_class")
     assert revision.down_revision == "0028_transcript_maintenance_runs"
     assert revision.module.release_safety == "additive"

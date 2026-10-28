@@ -165,7 +165,7 @@ def build_browser_job_progress_payload(
     )
     return {
         "job_id": job.id,
-        "work": progress_payload(getattr(job, "work_progress_json", None)) if job_status == "processing" else None,
+        "work": progress_payload(getattr(job, "work_progress_json", None), generation=getattr(job, "lease_generation", None)) if job_status == "processing" else None,
         "job_status": job_status,
         "tracking_precision": "checkpoint",
         "completed_source_count": completed_count,

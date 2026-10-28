@@ -30,7 +30,7 @@ def test_job_model_exposes_bounded_optional_clip_range(monkeypatch):
 def test_job_media_clip_migration_is_additive_single_head():
     script = ScriptDirectory.from_config(Config(str(ALEMBIC)))
 
-    assert script.get_heads() == ["0043_yandex_disk"]
+    assert script.get_heads() == ["0044_quality_progress"]
     revision = script.get_revision("0019_job_media_clip")
     assert revision is not None
     assert revision.down_revision == "0018_job_part_progress"

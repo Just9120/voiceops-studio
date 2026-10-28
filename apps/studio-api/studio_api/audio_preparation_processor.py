@@ -14,7 +14,7 @@ from .audio_preparation import (
     AudioPreparationReason,
     AudioProbe,
     build_preview,
-    estimate_trimmed_duration,
+    trim_range,
     probe_media,
 )
 from .audio_preparation_service import (
@@ -134,6 +134,7 @@ def process_claimed_audio_preparation_job(
                 probes.append(probe_media(path, runner=runner) if runner else probe_media(path))
             preview = build_preview(probes, (), options)
             remaining_points, remaining_duration = MAX_WAVEFORM_POINTS, preview.input_duration_seconds
+            trim_start, trim_end = trim_range(options, preview.input_duration_seconds)
             for index, path in enumerate(paths):
                 if is_preview:
                     points = max(1, min(remaining_points - (len(paths) - index - 1),
@@ -142,6 +143,7 @@ def process_claimed_audio_preparation_job(
                         points=points,
                         progress=lambda seconds: report_work("media_analysis", sum(p.duration_seconds for p in probes[:index]) + seconds, preview.input_duration_seconds, "seconds"),
                         speech_progress=lambda seconds: report_work("speech_analysis", sum(p.duration_seconds for p in probes[:index]) + seconds, preview.input_duration_seconds, "seconds"),
+                        selected_range=(max(0.0, trim_start - sum(p.duration_seconds for p in probes[:index])), min(probes[index].duration_seconds, trim_end - sum(p.duration_seconds for p in probes[:index]))),
                         runner=runner, check=lambda: _require_not_cancelled(db, job))
                     analyses.append(analysis)
                     remaining_points -= points
@@ -150,9 +152,7 @@ def process_claimed_audio_preparation_job(
                     _checkpoint(db, job, "analyzing", 10 + round(((index + 1) / len(paths)) * 80))
             if is_preview:
                 visual = visual_payload(analyses, [probe.duration_seconds for probe in probes], options.silence_keep_duration_seconds)
-                estimate = (estimate_trimmed_duration(options, preview.input_duration_seconds, visual)
-                    if options.trim_start_seconds or options.trim_end_seconds is not None
-                    else max(0.0, preview.input_duration_seconds - sum(item.removed_seconds for item in analyses)))
+                estimate = max(0.0, trim_end - trim_start - sum(item.removed_seconds for item in analyses))
                 preview = replace(preview, estimated_output_duration_seconds=estimate)
             if job.status is AudioPreparationStatus.analyzing:
                 complete_audio_preview(
@@ -163,7 +163,7 @@ def process_claimed_audio_preparation_job(
                     total_input_duration_ms=round(preview.input_duration_seconds * 1000),
                     estimated_output_duration_ms=round(preview.estimated_output_duration_seconds * 1000),
                     copy_compatible=preview.copy_compatible,
-                    visual_analysis=visual_payload(analyses, [probe.duration_seconds for probe in probes], options.silence_keep_duration_seconds),
+                    visual_analysis=visual,
                 )
                 db.commit()
                 return AudioProcessingResult(job.id, "preview_ready", "preview_ready", False)
