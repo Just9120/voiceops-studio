@@ -12,6 +12,8 @@ Scope/DoD: AQP-01..14 в [расширениях](spec/extensions.md#эпик-au
 
 Non-goals: коммерция, automatic voice identity, F62/редакторская очистка лекций, изменение старых транскриптов, новый backup scope, платные STT/Live/повторы, многодорожечный монтаж и удаление нескольких внутренних участков. Benchmark методика не даёт разрешения расходовать средства; существующие Google/ElevenLabs credentials не переиспользуются для новых сервисов.
 
+Progress checkpoint28Oct: additive migration0044 добавляет nullable bounded work snapshot; JSON содержит только stage/counters/unit/timestamps/lease generation/sequence. Main-thread writer с точными owner/lease/status/cancel guards, throttling; byte materialization, FFmpeg media time, audio analysis и provider/output phases подключены. Старый checkpoint contract сохранён, новый optional work поддерживает старый ответ API; UI не создаёт второй общий meter и не считает heartbeat продвижением. Root focused progress/media62 PASS; audio processor/download37 PASS; final guard/progress12 PASS, UI32 PASS, TypeScript/lint PASS. Это локальная candidate, не runtime Evidence. Migration/PG rehearsal, новые providers, VAD/local trim и current CI/CD ещё PENDING.
+
 | Validation Plan / риск | Проверка, cwd и environment | Этап |
 |---|---|---|
 | Новые провайдеры и credential boundaries | Root focused synthetic transport/capability/owner/credential/worker/output tests: ограничения, несовместимости, invalid/partial response, cancellation, safe retry и отсутствие неявного fallback | REQUIRED local + Linux CI |

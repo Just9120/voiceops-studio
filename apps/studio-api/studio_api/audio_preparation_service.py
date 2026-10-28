@@ -21,6 +21,7 @@ from .models import (
 )
 from .source_policy import is_source_expired, is_supported_source_mime_type
 from .source_storage import AUDIO_PROCESSING_REFERENCE_CLASS, normalize_source_display_filename, safe_filename, source_reference_class
+from .work_progress import progress_payload
 
 
 AUDIO_DRIVE_EXPORT_STAGES = ("google_drive_export_queued", "google_drive_upload")
@@ -539,6 +540,7 @@ def audio_preparation_payload(job: AudioPreparationJob, *, now: datetime | None 
         "progress": {
             "percent": job.progress_percent,
             "stage": job.current_stage,
+            "work": progress_payload(job.work_progress_json) if status in {"analyzing", "processing"} or job.current_stage in AUDIO_DOWNLOAD_WORK_STAGES else None,
         },
         "output": (
             {

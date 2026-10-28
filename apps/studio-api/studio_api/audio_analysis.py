@@ -25,7 +25,7 @@ class AudioVisualAnalysis:
     bin_duration_seconds: float = 0.0
 
 
-def analyze_audio_visual(path, *, duration, options, channels=1, sample_rate=48000, points=MAX_WAVEFORM_POINTS, runner=None, check=lambda: None):
+def analyze_audio_visual(path, *, duration, options, channels=1, sample_rate=48000, points=MAX_WAVEFORM_POINTS, runner=None, check=lambda: None, progress=lambda seconds: None):
     if not math.isfinite(duration) or duration <= 0 or not isinstance(sample_rate, int) or sample_rate <= 0:
         raise AudioPreparationError(AudioPreparationReason.invalid_input)
     points = max(1, min(MAX_WAVEFORM_POINTS, points))
@@ -78,6 +78,7 @@ def analyze_audio_visual(path, *, duration, options, channels=1, sample_rate=480
         for line in (output.stdout or "").splitlines(): stdout(line)
         for line in (output.stderr or "").splitlines(): stderr(line)
         check()
+        progress(duration)
         return result
     process = None
     readers = []
@@ -102,12 +103,14 @@ def analyze_audio_visual(path, *, duration, options, channels=1, sample_rate=480
                 raise AudioPreparationError(AudioPreparationReason.processing_timeout)
             if time.monotonic() >= next_check:
                 check()
+                progress(min(duration, len(result.peaks) * frames / sample_rate))
                 next_check = time.monotonic() + 5
             time.sleep(0.2)
         for thread in readers: thread.join(timeout=2)
         if process.returncode != 0 or failures or any(thread.is_alive() for thread in readers):
             raise AudioPreparationError(AudioPreparationReason.media_integrity_failed)
         check()
+        progress(duration)
         return result
     except FileNotFoundError as exc:
         raise AudioPreparationError(AudioPreparationReason.probe_unavailable) from exc

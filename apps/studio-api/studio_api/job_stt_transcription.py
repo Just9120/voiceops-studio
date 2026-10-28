@@ -18,6 +18,7 @@ from .stt_provider_health import provider_health, record_provider_failure, recor
 from .yandex_transcription import YandexTranscriptionTransport
 from .transcription_metadata import stored_model
 from .provider_usage_accounting import ProviderUsageAccountingError, resolve_pricing_snapshot
+from .work_progress import measured_work
 
 
 def _credential_config(credential: ProviderCredential | None) -> dict:
@@ -113,7 +114,7 @@ def transcribe_processing_job_source(
         raise JobElevenLabsTranscriptionError(JobElevenLabsTranscriptionReason.provider_mismatch)
 
     try:
-        with transcribe_processing_job_source_with_elevenlabs(**opener_kwargs) as result:
+        with measured_work(db, job=job, owner=lease_owner_id, generation=lease_generation, clock=clock), transcribe_processing_job_source_with_elevenlabs(**opener_kwargs) as result:
             try:
                 record_provider_success(db, provider=provider, operating_mode=mode, now=clock())
                 db.commit()

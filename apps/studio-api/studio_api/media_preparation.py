@@ -15,6 +15,7 @@ from typing import BinaryIO, Callable, Iterator
 from .source_creation import parse_authoritative_source_created_at
 from .preparation_control import PreparationInterrupted, check_preparation_control, controlled_runner
 from .audio_preparation import AudioPreparationError, AudioPreparationReason, probe_media, verify_media_integrity
+from .work_progress import report_work
 
 
 FFMPEG_VIDEO_EXTRACTION_TIMEOUT_SECONDS = 1800
@@ -406,6 +407,8 @@ def prepare_yandex_media_file(
 def _copy_input(stream: BinaryIO, destination: Path) -> None:
     try:
         stream.seek(0)
+        copied = 0
+        report_work("source_copy", 0, None, "bytes")
         with destination.open("wb") as target:
             while True:
                 check_preparation_control()
@@ -413,6 +416,8 @@ def _copy_input(stream: BinaryIO, destination: Path) -> None:
                 if not chunk:
                     break
                 target.write(chunk)
+                copied += len(chunk)
+                report_work("source_copy", copied, None, "bytes")
     except PreparationInterrupted:
         raise
     except Exception as exc:
@@ -574,6 +579,7 @@ def _probe_duration_seconds(
     runner: Callable[..., object],
     prepared_path: Path,
 ) -> float:
+    report_work("media_probe")
     command = [
         "ffprobe",
         "-v",

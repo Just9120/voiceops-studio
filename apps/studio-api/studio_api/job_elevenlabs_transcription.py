@@ -586,6 +586,8 @@ def _source_kwargs(kwargs):
 
 
 def _call_transport(transport, **kwargs):
+    from .work_progress import report_work
+    report_work("provider_wait")
     from .worker_progress import worker_phase
     timeout = getattr(transport, "timeout", None)
     if timeout is None:

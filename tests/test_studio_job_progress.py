@@ -110,6 +110,7 @@ def test_progress_projects_checkpoint_authority_without_private_execution_fields
 
     assert set(payload) == {
         "job_id",
+        "work",
         "job_status",
         "tracking_precision",
         "completed_source_count",

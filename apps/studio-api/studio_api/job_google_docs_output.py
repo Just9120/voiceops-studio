@@ -150,6 +150,8 @@ def create_processing_job_google_doc_from_transcript(
     if snap.output_provider != "google_drive":
         raise JobGoogleDocsOutputError(JobGoogleDocsOutputReason.output_folder_unavailable)
     source_snap = _load_source_snapshot(db, job_id, job_source_id, lease_owner_id, lease_generation, check_now, settings)
+    from .work_progress import report_work
+    report_work("document_output")
     try:
         try:
             token = token_resolver(db, user_id=snap.owner_user_id, settings=settings)

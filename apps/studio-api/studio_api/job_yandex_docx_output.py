@@ -41,6 +41,8 @@ def create_processing_job_yandex_docx(db, *, job_id, job_source_id, lease_owner_
         raise JobGoogleDocsOutputError(JobGoogleDocsOutputReason.output_folder_unavailable)
     source = _load_source_snapshot(db, job_id, job_source_id, lease_owner_id, lease_generation, now, settings)
     _require_no_persisted_output(db, job_source_id)
+    from .work_progress import report_work
+    report_work("document_output")
     try:
         folder = resource_verifier(db, owner_user_id=snap.owner_user_id,
             resource_id=snap.output_drive_folder_id, settings=settings, is_folder=True)
