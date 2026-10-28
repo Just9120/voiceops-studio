@@ -299,7 +299,7 @@ def test_routes_keep_csrf_and_hide_tokens_with_empty_folder_selection(db, config
 
 def test_migration_is_single_additive_successor_and_refuses_data_loss(db):
     script = ScriptDirectory.from_config(Config(str(ROOT / "apps/studio-api/alembic.ini")))
-    assert script.get_heads() == ["0043_yandex_disk"]
+    assert script.get_heads() == ["0044_quality_progress"]
     revision = script.get_revision("0043_yandex_disk")
     assert revision.down_revision == "0042_totp_replay"
     assert revision.module.release_safety == "additive"

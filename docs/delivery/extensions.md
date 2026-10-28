@@ -1,5 +1,27 @@
 # Реестр AC: Studio: расширение согласованных сценариев
 
+### `AUDIO-QUALITY-PROGRESS-TRIM-01`
+
+Baseline28Oct2026 main4fb10e2: новые критерии0/14; unmerged candidate14/14 CODE READY по реализации и применимым локальным tests, обязательные CI/CD PENDING; существующие waveform/fragments/worker transport переиспользуются, но не доказывают новые условия.
+
+| AC | Состояние | CODE | TEST | CI | Остаток / Evidence |
+|---|---|---|---|---|---|
+| `AQP-01` | READY | PASS | PASS / ограничения справа | PENDING | Пять batch profiles; dispatch/transport/capability tests, существующие ElevenLabs/Yandex regressions PASS. Evidence:28Oct2026, current Goal branch/worktree; protected delivery PENDING. |
+| `AQP-02` | READY | PASS | PASS / ограничения справа | PENDING | Encrypted owner-scoped credentials; три формы, отдельная VoiceKit pair; component/transport PASS, PostgreSQL HTTP negative tests REQUIRED CI. Evidence:28Oct2026, current Goal branch/worktree; protected delivery PENDING. |
+| `AQP-03` | READY | PASS | PASS / ограничения справа | PENDING | Backend/frontend matrix, Russian-only VoiceKit, Gemini несовместимости, bounds до вызова; focused tests PASS. Evidence:28Oct2026, current Goal branch/worktree; protected delivery PENDING. |
+| `AQP-04` | READY | PASS | PASS / ограничения справа | PENDING | Строгие normalizers, полное encrypted cache/export-only recovery, Gemini cleanup receipt; synthetic success/failure/recovery PASS, без live API. Evidence:28Oct2026, current Goal branch/worktree; protected delivery PENDING. |
+| `AQP-05` | READY | PASS | PASS / ограничения справа | PENDING | Stored provider/model, catalog/analytics buckets и unavailable tariff; metadata/catalog tests PASS. Evidence:28Oct2026, current Goal branch/worktree; protected delivery PENDING. |
+| `AQP-06` | READY | PASS | PASS / ограничения справа | PENDING | Durable work_progress_json, реальные bytes/media-time/counters; worker/FFmpeg/progress tests PASS. Evidence:28Oct2026, current Goal branch/worktree; protected delivery PENDING. |
+| `AQP-07` | READY | PASS | PASS / ограничения справа | PENDING | Generation/lease/cancel guards, serial polling, неизвестный provider percent и elapsed-only timer; backend/component PASS. Evidence:28Oct2026, current Goal branch/worktree; protected delivery PENDING. |
+| `AQP-08` | READY | PASS | PASS / ограничения справа | PENDING | Waveform handles, native keyboard/touch ranges, exact fields/zoom/playback/apply; Vitest/build PASS; three-viewport browser regressions REQUIRED CI. Evidence:28Oct2026, current Goal branch/worktree; protected delivery PENDING. |
+| `AQP-09` | READY | PASS | PASS / ограничения справа | PENDING | Strict finite bounds, explicit WAV/FLAC, owner/source immutability; service/FFmpeg/component PASS; API negative cases REQUIRED CI. Evidence:28Oct2026, current Goal branch/worktree; protected delivery PENDING. |
+| `AQP-10` | READY | PASS | PASS / ограничения справа | PENDING | Original global concat interval before silence/channel conversion; real synthetic decoder and local-processing tests PASS. Evidence:28Oct2026, current Goal branch/worktree; protected delivery PENDING. |
+| `AQP-11` | READY | PASS | PASS / ограничения справа | PENDING | Local WebRTC VAD, bounded intervals/voice legend/unavailable states; native silence/cancel + collector/UI tests PASS; no STT. Evidence:28Oct2026, current Goal branch/worktree; protected delivery PENDING. |
+| `AQP-12` | READY | PASS | PASS / ограничения справа | PENDING | 512 points/intervals, bounded VAD stream, internal zoom/pan, local limits; unit/CSS review PASS; responsive browser gate REQUIRED CI. Evidence:28Oct2026, current Goal branch/worktree; protected delivery PENDING. |
+| `AQP-13` | READY | PASS | PASS / ограничения справа | PENDING | Persisted backward-compatible options and original-source regeneration; download/service/processor/local regression tests PASS. Evidence:28Oct2026, current Goal branch/worktree; protected delivery PENDING. |
+| `AQP-14` | READY | PASS | PASS / ограничения справа | PENDING | Согласованная методика в spec; no paid runs, no model-quality claims. Documentation/self-review PASS. Evidence:28Oct2026, current Goal branch/worktree; protected delivery PENDING. |
+
+
 Часть [delivery dashboard](../delivery-plan.md). Полный аудит 2026-10-10 на проверенном `origin/main` `bc5150eb189b44867101ca45b9da201921a99227`; формулировки — [spec](../spec/extensions.md), источник — [trace](../spec/source-trace.md). Все действующие ID повторно оценены по реализации и подходящим проверкам A20261010-CODE/CI; runtime scope/ограничения — A20261010-RUNTIME в плане. CODE/TEST/CI — типы Evidence, а не три процента; ◐ ограничивает проверенные условия. ALIAS/SUPERSEDED исключены. READY не требует ручной приёмки и не доказывает commercial rollout.
 
 ### `BRAND-VOICEOPS-01`

@@ -7,7 +7,7 @@ import {
 export const DEFAULT_TRANSCRIPTION_LANGUAGE_MODE: TranscriptionLanguageMode =
   "ru";
 export const MAX_BATCH_ITEMS = 50;
-export type SttProvider = "elevenlabs" | "yandex";
+export type SttProvider = "elevenlabs" | "yandex" | "tbank" | "mistral" | "gemini";
 export type SttOperatingMode = "economic" | "standard" | "premium";
 
 export type VerifiedOutputFolder = {
@@ -399,7 +399,7 @@ export function parseBatchPreflightResponse(
       "summary",
       "confirmation_required",
     ]) ||
-    !["elevenlabs", "yandex"].includes(String(value.provider)) ||
+    !["elevenlabs", "yandex", "tbank", "mistral", "gemini"].includes(String(value.provider)) ||
     typeof value.model !== "string" ||
     value.model.length === 0 ||
     value.model.length > 120 ||

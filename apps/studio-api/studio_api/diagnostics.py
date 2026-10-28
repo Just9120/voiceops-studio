@@ -117,6 +117,7 @@ def R(kind: str, *, min: int | None = None, max: int | None = None, choices: fro
     return MetaRule(kind, min, max, choices, required)
 
 REGISTRY: dict[str, EventDef] = {
+    "PROVIDER_TEMPORARY_FILE_CLEANUP_PENDING": EventDef(frozenset({"worker"}), "WARNING", {"provider": R("enum", choices=frozenset({"gemini"}), required=True)}),
     "SOURCE_DELETION_REQUESTED": EventDef(frozenset({"api"}), "INFO", {"source_type": R("enum", choices=SOURCE_TYPES, required=True), "deletion_reason": R("enum", choices=SOURCE_DELETION_REASONS, required=True), "boundary": R("enum", choices=BOUNDARIES, required=True)}),
     "SOURCE_DELETION_BLOCKED": EventDef(frozenset({"api"}), "WARNING", {"source_type": R("enum", choices=SOURCE_TYPES, required=True), "blocker": R("enum", choices=SOURCE_DELETION_BLOCKERS, required=True), "boundary": R("enum", choices=BOUNDARIES, required=True)}),
     "SOURCE_DELETION_COMPLETED": EventDef(frozenset({"api"}), "INFO", {"source_type": R("enum", choices=SOURCE_TYPES, required=True), "deletion_reason": R("enum", choices=SOURCE_DELETION_REASONS, required=True), "cleanup_outcome": R("enum", choices=SOURCE_CLEANUP_OUTCOMES, required=True), "boundary": R("enum", choices=BOUNDARIES, required=True)}),

@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     provider_part_checkpoint_ttl_seconds: int = Field(default=86400, ge=3600, le=86400)
     elevenlabs_byok_enabled: bool = True
     yandex_byok_enabled: bool = False
+    tbank_byok_enabled: bool = True
+    mistral_byok_enabled: bool = True
+    gemini_byok_enabled: bool = True
+    mistral_standard_model: str = Field(default="voxtral-small-transcribe-3", min_length=1, max_length=80)
+    gemini_standard_model: str = Field(default="gemini-3.5-transcribe", min_length=1, max_length=80)
     elevenlabs_economic_model: str = Field(default="scribe_v2", min_length=1, max_length=80)
     elevenlabs_standard_model: str = Field(default="scribe_v2", min_length=1, max_length=80)
     elevenlabs_premium_model: str = Field(default="scribe_v2", min_length=1, max_length=80)

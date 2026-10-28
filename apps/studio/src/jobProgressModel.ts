@@ -1,4 +1,5 @@
 import type { JobСтатус } from "./jobModel";
+import { parseWorkProgress, type WorkProgress } from "./WorkProgress";
 
 export const JOB_PROGRESS_STAGE_KEYS = [
   "preparation",
@@ -39,6 +40,7 @@ export type JobSourceProgress = {
   stages: JobProgressStage[];
 };
 export type JobProgress = {
+  work?: WorkProgress | null;
   job_id: string;
   job_status: JobСтатус;
   tracking_precision: "checkpoint";
@@ -220,6 +222,7 @@ function parseJobProgress(value: unknown): JobProgress | null {
       "active_source_position",
       "current_stage",
       "sources",
+      ...(Object.hasOwn(value, "work") ? ["work"] : []),
     ]) ||
     typeof value.job_id !== "string" ||
     value.job_id.length === 0 ||
@@ -263,6 +266,7 @@ function parseJobProgress(value: unknown): JobProgress | null {
       (activeStages.length !== 1 || activeStages[0].key !== value.current_stage))
   )
     return null;
+  if (value.work !== undefined && value.work !== null && !parseWorkProgress(value.work)) return null;
   return value as JobProgress;
 }
 

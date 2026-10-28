@@ -198,6 +198,53 @@ def test_claim_preview_complete_start_and_processing_claim_are_durable(db):
     assert processing.lease_generation == generation + 1
 
 
+def test_trim_edit_is_owner_scoped_preview_only_and_preserves_source(db):
+    from studio_api.audio_preparation_service import update_audio_trim, deserialize_options
+    seed(db)
+    job = create(db, source_ids=["early"])
+    db.commit()
+    with pytest.raises(AudioPreparationServiceError):
+        update_audio_trim(db, owner_user_id="owner", job_id=job.id, start_seconds=1, end_seconds=20, output_format="wav")
+    job.status = AudioPreparationStatus.preview_ready
+    job.total_input_duration_ms = 60_000
+    job.estimated_output_duration_ms = 60_000
+    job.copy_compatible = True
+    db.commit()
+    with pytest.raises(AudioPreparationServiceError) as caught:
+        update_audio_trim(db, owner_user_id="stranger", job_id=job.id, start_seconds=1, end_seconds=20, output_format="wav")
+    assert caught.value.reason is AudioPreparationServiceReason.not_found
+    updated = update_audio_trim(db, owner_user_id="owner", job_id=job.id, start_seconds=10.25, end_seconds=40.5, output_format="flac")
+    db.commit()
+    db.expire_all()
+    assert deserialize_options(updated).trim_start_seconds == 10.25
+    assert updated.estimated_output_duration_ms == 30_250
+    assert db.get(Source, "early").original_filename == "early.wav"
+    updated.download_slot = 1
+    db.commit()
+    with pytest.raises(AudioPreparationServiceError):
+        update_audio_trim(db, owner_user_id="owner", job_id=job.id, start_seconds=0, end_seconds=None, output_format="wav")
+
+
+def test_trim_reanalyzes_truncated_silence_snapshot_instead_of_guessing(db):
+    import json
+    from studio_api.audio_preparation_service import update_audio_trim
+    seed(db)
+    job = create(db, source_ids=["early"])
+    job.status = AudioPreparationStatus.preview_ready
+    job.total_input_duration_ms = 60_000
+    job.estimated_output_duration_ms = 55_000
+    job.copy_compatible = True
+    payload = json.loads(job.options_json)
+    payload["silence_enabled"] = True
+    job.options_json = json.dumps(payload)
+    job.visual_analysis_json = json.dumps({"sources": [{"duration_seconds": 60, "intervals_truncated": True, "silences": []}]})
+    db.commit()
+    updated = update_audio_trim(db, owner_user_id="owner", job_id=job.id, start_seconds=10, end_seconds=40, output_format="wav")
+    assert updated.status is AudioPreparationStatus.preview_queued
+    assert updated.estimated_output_duration_ms is None
+    assert updated.current_stage == "preview_queued" and updated.progress_percent == 0
+
+
 def test_start_requires_preview_ready_and_cancel_is_idempotent(db):
     seed(db)
     job = create(db, source_ids=["early"])

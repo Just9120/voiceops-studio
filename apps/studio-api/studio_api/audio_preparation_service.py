@@ -9,7 +9,7 @@ from enum import Enum
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, object_session, selectinload
 
-from .audio_preparation import MAX_AUDIO_INPUTS, AudioPreparationOptions, normalize_options
+from .audio_preparation import MAX_AUDIO_INPUTS, AudioPreparationOptions, normalize_options, estimate_trimmed_duration
 from .models import (
     AudioPreparationJob,
     AudioPreparationJobInput,
@@ -21,6 +21,7 @@ from .models import (
 )
 from .source_policy import is_source_expired, is_supported_source_mime_type
 from .source_storage import AUDIO_PROCESSING_REFERENCE_CLASS, normalize_source_display_filename, safe_filename, source_reference_class
+from .work_progress import progress_payload
 
 
 AUDIO_DRIVE_EXPORT_STAGES = ("google_drive_export_queued", "google_drive_upload")
@@ -159,6 +160,31 @@ def list_owned_audio_preparation_jobs(
             .limit(max(1, min(limit, 100)))
         ).scalars().all()
     )
+
+
+def update_audio_trim(db: Session, *, owner_user_id: str, job_id: str,
+                      start_seconds: float, end_seconds: float | None, output_format: str) -> AudioPreparationJob:
+    job = _locked_owned_job(db, owner_user_id, job_id)
+    if job.status is not AudioPreparationStatus.preview_ready or job.download_slot == 1:
+        raise AudioPreparationServiceError(AudioPreparationServiceReason.invalid_state)
+    payload = json.loads(job.options_json)
+    payload.update(trim_start_seconds=start_seconds, trim_end_seconds=end_seconds, output_format=output_format)
+    options = normalize_options(payload)
+    duration = (job.total_input_duration_ms or 0) / 1000
+    visual = json.loads(job.visual_analysis_json or "{}")
+    job.options_json = serialize_options(options)
+    job.estimated_output_duration_ms = round(estimate_trimmed_duration(options, duration, visual) * 1000)
+    if options.silence_enabled and any(source.get("intervals_truncated") for source in visual.get("sources", [])):
+        # The bounded interval snapshot cannot estimate an arbitrary new trim.
+        # Re-analyze rather than treating omitted pauses as absent.
+        job.status = AudioPreparationStatus.preview_queued
+        job.current_stage = "preview_queued"
+        job.progress_percent = 0
+        job.lease_owner_id = None
+        job.lease_expires_at = None
+        job.estimated_output_duration_ms = None
+    db.flush()
+    return job
 
 
 def start_audio_preparation_job(
@@ -523,6 +549,7 @@ def audio_preparation_payload(job: AudioPreparationJob, *, now: datetime | None 
         "progress": {
             "percent": job.progress_percent,
             "stage": job.current_stage,
+            "work": progress_payload(job.work_progress_json, generation=job.lease_generation) if status in {"analyzing", "processing"} or job.current_stage in AUDIO_DOWNLOAD_WORK_STAGES else None,
         },
         "output": (
             {

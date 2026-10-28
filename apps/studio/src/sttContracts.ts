@@ -2,6 +2,7 @@ import { api } from "./apiClient";
 import type { SttOperatingMode, SttProvider } from "./batchComposerModel";
 
 export type SttModeCapability = {
+  notes?: string[];
   mode: SttOperatingMode | "realtime";
   model: string;
   transport: "batch" | "deferred" | "websocket" | "grpc_relay";
@@ -56,7 +57,7 @@ export function parseSttProviderCatalog(value: unknown): SttProviderCapability[]
     if (!isRecord(rawProvider)) return null;
     const provider = rawProvider.provider;
     if (
-      (provider !== "elevenlabs" && provider !== "yandex") ||
+      (provider !== "elevenlabs" && provider !== "yandex" && provider !== "tbank" && provider !== "mistral" && provider !== "gemini") ||
       typeof rawProvider.display_name !== "string" ||
       !rawProvider.display_name.trim() ||
       typeof rawProvider.byok_enabled !== "boolean" ||
@@ -82,6 +83,7 @@ export function parseSttProviderCatalog(value: unknown): SttProviderCapability[]
         rawMode.languages.some((language) => !["ru", "en", "detect"].includes(String(language))) ||
         typeof rawMode.diarization !== "boolean" ||
         typeof rawMode.dictionaries !== "boolean" ||
+        (rawMode.notes !== undefined && (!Array.isArray(rawMode.notes) || rawMode.notes.length > 10 || rawMode.notes.some((note) => typeof note !== "string" || note.length > 2000))) ||
         (maxBytes !== null && !finiteNonNegative(maxBytes)) ||
         !finiteNonNegative(rawMode.file_constraints.max_duration_seconds) ||
         !Array.isArray(rawMode.file_constraints.audio_channels) ||
@@ -100,6 +102,7 @@ export function parseSttProviderCatalog(value: unknown): SttProviderCapability[]
         languages: rawMode.languages as SttModeCapability["languages"],
         diarization: rawMode.diarization,
         dictionaries: rawMode.dictionaries,
+        ...(rawMode.notes !== undefined ? { notes: rawMode.notes as string[] } : {}),
         file_constraints: {
           max_bytes: maxBytes as number | null,
           max_duration_seconds: rawMode.file_constraints.max_duration_seconds as number,

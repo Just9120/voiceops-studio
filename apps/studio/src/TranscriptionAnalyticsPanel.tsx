@@ -50,8 +50,8 @@ const DURATION_LABELS: Array<
 > = [
   ["queue", "Ожидание в очереди"],
   ["processing", "Обработка задачи"],
-  ["provider_processing", "ElevenLabs"],
-  ["post_provider_output", "После ElevenLabs до результата"],
+  ["provider_processing", "Распознавание речи"],
+  ["post_provider_output", "После распознавания до результата"],
 ];
 
 function formatDuration(value: number | null) {
@@ -297,6 +297,7 @@ export function TranscriptionAnalyticsPanel({
                   </span>
                   {(analytics.configuration.provider_model.yandex_general ?? 0) > 0 && <span>Yandex SpeechKit · general {analytics.configuration.provider_model.yandex_general}</span>}
                   {(analytics.configuration.provider_model.yandex_deferred_general ?? 0) > 0 && <span>Yandex SpeechKit · deferred-general {analytics.configuration.provider_model.yandex_deferred_general}</span>}
+                  {([['mistral_voxtral_small_transcribe_3', 'Mistral · Voxtral Small Transcribe 3'], ['gemini_35_transcribe', 'Google · Gemini 3.5 Transcribe'], ['tbank_default', 'Т-Банк · VoiceKit']] as const).map(([key, label]) => (analytics.configuration.provider_model[key] ?? 0) > 0 && <span key={key}>{label} {analytics.configuration.provider_model[key]}</span>)}
                   {analytics.configuration.provider_model.unknown > 0 && (
                     <small>
                       Не определено:{" "}

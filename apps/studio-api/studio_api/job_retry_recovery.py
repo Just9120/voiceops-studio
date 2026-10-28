@@ -305,7 +305,7 @@ def _evaluate(db, job, *, mode: Literal["explicit", "recovery"], now: datetime|N
         if _has_output(db, rel.id): continue
         missing.append(rel)
         if _has_unresolved_reconciliation(db, rel.id): reason=RetryReason.output_reconciliation_required; continue
-        if job.provider == "yandex":
+        if job.provider in {"yandex", "gemini"}:
             from .job_cached_transcript import completed_yandex_result
             if completed_yandex_result(db, job, rel.id) is not None:
                 safe += 1; fully_cached_sources += 1; resumable_parts += 1; provider_total_parts += 1

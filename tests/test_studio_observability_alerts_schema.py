@@ -16,7 +16,7 @@ def test_observability_alert_migration_is_additive_direct_successor():
     scripts = ScriptDirectory.from_config(
         Config(str(ROOT / "apps/studio-api/alembic.ini"))
     )
-    assert scripts.get_heads() == ["0043_yandex_disk"]
+    assert scripts.get_heads() == ["0044_quality_progress"]
     revision = scripts.get_revision("0033_observability_alerts_audit")
     assert revision is not None
     assert revision.down_revision == "0032_source_multipart_authority"

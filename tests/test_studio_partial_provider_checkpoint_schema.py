@@ -54,7 +54,7 @@ def test_partial_provider_checkpoint_migration_has_one_direct_additive_successor
     successor = script.get_revision("0021_source_creation_favorites")
     assert revision.down_revision == "0019_job_media_clip"
     assert successor.down_revision == "0020_provider_part_checkpoints"
-    assert script.get_current_head() == "0043_yandex_disk"
+    assert script.get_current_head() == "0044_quality_progress"
 
     migration = (
         ROOT

@@ -71,9 +71,9 @@ describe("JobProgressPipeline", () => {
     expect(steps[0]).toHaveTextContent("Подготовка источника");
     expect(steps[2]).toHaveTextContent("Разбиение на части (при необходимости)");
     expect(steps[2]).toHaveTextContent("Проверено");
-    expect(steps[3]).toHaveTextContent("Транскрибация ElevenLabs");
+    expect(steps[3]).toHaveTextContent("Распознавание речи");
     expect(steps[3]).toHaveTextContent("Выполняется");
-    expect(steps[5]).toHaveTextContent("Создание Google Docs");
+    expect(steps[5]).toHaveTextContent("Сохранение документа");
     expect(pipeline).toHaveTextContent("Части ElevenLabs: 1 из 4");
   });
 

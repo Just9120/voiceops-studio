@@ -125,7 +125,7 @@ def test_transcript_catalog_migration_remains_in_the_single_head_chain():
     config = Config(str(ROOT / "apps/studio-api/alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["0043_yandex_disk"]
-    assert script.get_current_head() == "0043_yandex_disk"
+    assert script.get_heads() == ["0044_quality_progress"]
+    assert script.get_current_head() == "0044_quality_progress"
     revision = script.get_revision("0016_transcript_catalog_entries")
     assert revision.down_revision == "0015_user_source_retention"

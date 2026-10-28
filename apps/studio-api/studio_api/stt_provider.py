@@ -8,6 +8,9 @@ from typing import Any, Mapping
 class SttProvider(str, Enum):
     elevenlabs = "elevenlabs"
     yandex = "yandex"
+    tbank = "tbank"
+    mistral = "mistral"
+    gemini = "gemini"
 
 
 class SttOperatingMode(str, Enum):
@@ -25,6 +28,7 @@ class SttCapabilityReason(str, Enum):
     dictionaries_unsupported = "dictionaries_unsupported"
     file_too_large = "file_too_large"
     duration_too_long = "duration_too_long"
+    options_incompatible = "options_incompatible"
 
 
 class SttCapabilityError(ValueError):
@@ -49,6 +53,7 @@ class SttModeCapability:
     diarization: bool
     dictionaries: bool
     file_constraints: SttFileConstraints
+    notes: tuple[str, ...] = ()
 
     def browser_payload(self) -> dict[str, Any]:
         return {
@@ -58,6 +63,7 @@ class SttModeCapability:
             "languages": list(self.languages),
             "diarization": self.diarization,
             "dictionaries": self.dictionaries,
+            "notes": list(self.notes),
             "file_constraints": {
                 "max_bytes": self.file_constraints.max_bytes,
                 "max_duration_seconds": self.file_constraints.max_duration_seconds,
@@ -129,6 +135,26 @@ def provider_catalog(settings) -> dict[SttProvider, SttProviderCapability]:
                 SttOperatingMode.realtime: SttModeCapability(SttOperatingMode.realtime, settings.yandex_realtime_model, "grpc_relay", _LANGUAGES, False, False, yandex_realtime),
             },
         ),
+        SttProvider.mistral: SttProviderCapability(
+            SttProvider.mistral, "Mistral Voxtral", bool(getattr(settings, "mistral_byok_enabled", True)), {
+                SttOperatingMode.standard: SttModeCapability(SttOperatingMode.standard,
+                    getattr(settings, "mistral_standard_model", "voxtral-small-transcribe-3"), "batch", _LANGUAGES, True, True,
+                    SttFileConstraints(256 * 1024 * 1024, int(settings.media_max_duration_seconds), (1, 2)),
+                    ("Small Transcribe 3. Таймкоды по сегментам; словарь и разделение спикеров поддерживаются. Контекст аудио и словаря ограничен моделью; превышение отклоняется сервисом, без скрытого усечения.",)),
+            }),
+        SttProvider.gemini: SttProviderCapability(
+            SttProvider.gemini, "Google Gemini Transcribe", bool(getattr(settings, "gemini_byok_enabled", True)), {
+                SttOperatingMode.standard: SttModeCapability(SttOperatingMode.standard,
+                    getattr(settings, "gemini_standard_model", "gemini-3.5-transcribe"), "batch", _LANGUAGES, True, True,
+                    SttFileConstraints(256 * 1024 * 1024, 3600, (1, 2)),
+                    ("До 60 минут без диаризации, до 30 минут с ней. Словарь несовместим с диаризацией. До 8 спикеров; разделение 3 и более — экспериментальное. Автоматическая очистка текста выключена.",)),
+            }),
+        SttProvider.tbank: SttProviderCapability(
+            SttProvider.tbank, "Т-Банк VoiceKit", bool(getattr(settings, "tbank_byok_enabled", True)), {
+                SttOperatingMode.standard: SttModeCapability(SttOperatingMode.standard, "default", "batch", ("ru",), False, True,
+                    SttFileConstraints(24 * 1024 * 1024, int(settings.media_max_duration_seconds), (1,)),
+                    ("Распознавание русской речи целым файлом. В этой интеграции нет разделения спикеров. До 24 МБ подготовленного MP3, моно 16 кГц, 64 кбит/с — лимит встроенной передачи Studio. Отложенный и Live API здесь не подключаются.",)),
+            }),
     }
 
 
@@ -165,6 +191,11 @@ def validate_selection(
         raise SttCapabilityError(SttCapabilityReason.diarization_unsupported)
     if dictionary_count and not capability.dictionaries:
         raise SttCapabilityError(SttCapabilityReason.dictionaries_unsupported)
+    if str(getattr(provider, "value", provider)) == "gemini":
+        if diarization and dictionary_count:
+            raise SttCapabilityError(SttCapabilityReason.options_incompatible)
+        if diarization and duration_seconds is not None and duration_seconds > 1800:
+            raise SttCapabilityError(SttCapabilityReason.duration_too_long)
     limit = capability.file_constraints
     if size_bytes is not None and limit.max_bytes is not None and size_bytes > limit.max_bytes:
         raise SttCapabilityError(SttCapabilityReason.file_too_large)

@@ -221,9 +221,11 @@ def main() -> int:
     )
     runtime_heartbeat.start()
     from .worker_background import WorkerBackground
+    from .provider_file_cleanup import process_one_provider_file_cleanup
     background = WorkerBackground(
         settings=settings, session_factory=SessionLocal, stop_event=stop_event,
         logger=LOGGER, owner_id=runtime_instance_id,
+        provider_file_cleanup_runner=process_one_provider_file_cleanup,
     )
     background.start()
     try:

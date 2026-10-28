@@ -20,6 +20,18 @@ function pcm(values: number[][], sampleRate = 10): PcmAudio {
 describe("browser-local audio processing", () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it("trims the original concat timeline without mutating decoded sources", () => {
+    const first = pcm([[0, 0.1, 0.2, 0.3]], 2), second = pcm([[0.4, 0.5, 0.6, 0.7]], 2);
+    const [result] = processDecodedPcm([first, second], options({ trimStartSeconds: 1.5, trimEndSeconds: 3 }));
+    expect(Array.from(result.channels[0])).toEqual(Array.from(Float32Array.from([0.3, 0.4, 0.5])));
+    expect(first.channels[0]).toHaveLength(4);
+    expect(second.channels[0]).toHaveLength(4);
+  });
+
+  it.each([[1, 1], [2, 1], [-1, 1], [0, 10], [NaN, 1]])("rejects invalid local trim %s..%s", (trimStartSeconds, trimEndSeconds) => {
+    expect(() => processDecodedPcm([pcm([[0, 0.1, 0.2, 0.3]], 2)], options({ trimStartSeconds, trimEndSeconds }))).toThrow("local_audio_invalid_trim");
+  });
+
   it("concatenates files in explicit order and preserves stereo", () => {
     const [result] = processDecodedPcm(
       [pcm([[0.1, 0.2], [0.3, 0.4]]), pcm([[0.5], [0.6]])],

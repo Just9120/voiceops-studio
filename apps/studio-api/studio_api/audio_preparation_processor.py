@@ -14,6 +14,7 @@ from .audio_preparation import (
     AudioPreparationReason,
     AudioProbe,
     build_preview,
+    trim_range,
     probe_media,
 )
 from .audio_preparation_service import (
@@ -27,6 +28,7 @@ from .audio_preparation_service import (
 )
 from .audio_result_rendering import materialize_audio_inputs as _materialize_inputs, render_audio_result
 from .audio_analysis import analyze_audio_visual, visual_payload, MAX_WAVEFORM_POINTS
+from .work_progress import measured_work, report_work
 from .google_connection_access import refresh_user_google_drive_access_token
 from .google_drive import fetch_drive_file_content
 from .google_drive_upload import upload_file_resumable
@@ -80,7 +82,7 @@ def process_claimed_audio_preparation_job(
     job = _load_claimed_job(db, job_id, lease_owner_id, lease_generation)
     download_request_id = job.download_request_id if job.current_stage == "audio_download_rendering" else None
     try:
-        with temp_directory_factory(prefix="studio-audio-preparation-") as temp_dir:
+        with measured_work(db, job=job, owner=lease_owner_id, generation=lease_generation, clock=utcnow), temp_directory_factory(prefix="studio-audio-preparation-") as temp_dir:
             root = Path(temp_dir)
             if job.status in {AudioPreparationStatus.completed, AudioPreparationStatus.preview_ready}:
                 if job.current_stage == "audio_download_rendering":
@@ -128,15 +130,20 @@ def process_claimed_audio_preparation_job(
                 _checkpoint(db, job, "materializing", 10)
             for path in paths:
                 _require_not_cancelled(db, job)
+                report_work("media_probe", len(probes), len(paths), "files")
                 probes.append(probe_media(path, runner=runner) if runner else probe_media(path))
             preview = build_preview(probes, (), options)
             remaining_points, remaining_duration = MAX_WAVEFORM_POINTS, preview.input_duration_seconds
+            trim_start, trim_end = trim_range(options, preview.input_duration_seconds)
             for index, path in enumerate(paths):
                 if is_preview:
                     points = max(1, min(remaining_points - (len(paths) - index - 1),
                         math.floor(remaining_points * probes[index].duration_seconds / remaining_duration)))
                     analysis = analyze_audio_visual(path, duration=probes[index].duration_seconds, channels=probes[index].channels, sample_rate=probes[index].sample_rate, options=options,
                         points=points,
+                        progress=lambda seconds: report_work("media_analysis", sum(p.duration_seconds for p in probes[:index]) + seconds, preview.input_duration_seconds, "seconds"),
+                        speech_progress=lambda seconds: report_work("speech_analysis", sum(p.duration_seconds for p in probes[:index]) + seconds, preview.input_duration_seconds, "seconds"),
+                        selected_range=(max(0.0, trim_start - sum(p.duration_seconds for p in probes[:index])), min(probes[index].duration_seconds, trim_end - sum(p.duration_seconds for p in probes[:index]))),
                         runner=runner, check=lambda: _require_not_cancelled(db, job))
                     analyses.append(analysis)
                     remaining_points -= points
@@ -144,8 +151,9 @@ def process_claimed_audio_preparation_job(
                 if is_preview:
                     _checkpoint(db, job, "analyzing", 10 + round(((index + 1) / len(paths)) * 80))
             if is_preview:
-                preview = replace(preview, estimated_output_duration_seconds=max(0.0,
-                    preview.input_duration_seconds - sum(item.removed_seconds for item in analyses)))
+                visual = visual_payload(analyses, [probe.duration_seconds for probe in probes], options.silence_keep_duration_seconds)
+                estimate = max(0.0, trim_end - trim_start - sum(item.removed_seconds for item in analyses))
+                preview = replace(preview, estimated_output_duration_seconds=estimate)
             if job.status is AudioPreparationStatus.analyzing:
                 complete_audio_preview(
                     db,
@@ -155,7 +163,7 @@ def process_claimed_audio_preparation_job(
                     total_input_duration_ms=round(preview.input_duration_seconds * 1000),
                     estimated_output_duration_ms=round(preview.estimated_output_duration_seconds * 1000),
                     copy_compatible=preview.copy_compatible,
-                    visual_analysis=visual_payload(analyses, [probe.duration_seconds for probe in probes], options.silence_keep_duration_seconds),
+                    visual_analysis=visual,
                 )
                 db.commit()
                 return AudioProcessingResult(job.id, "preview_ready", "preview_ready", False)
@@ -164,6 +172,7 @@ def process_claimed_audio_preparation_job(
             _require_not_cancelled(db, job)
             _checkpoint(db, job, "processing", 20)
             def report_processing_progress(ratio: float) -> None:
+                report_work("audio_processing", max(0.0, min(1.0, ratio)) * preview.estimated_output_duration_seconds, preview.estimated_output_duration_seconds, "seconds")
                 percent = min(80, 20 + round(max(0.0, min(1.0, ratio)) * 60))
                 if percent > job.progress_percent:
                     _checkpoint(db, job, "processing", percent)

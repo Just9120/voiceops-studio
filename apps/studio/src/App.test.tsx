@@ -4769,6 +4769,39 @@ describe("Studio PWA", () => {
     );
   });
 
+  it.each(["tbank", "mistral", "gemini"])("prepares a separate %s key without retaining secret inputs", async (provider) => {
+    const baseFetch = fetch as unknown as ReturnType<typeof vi.fn>;
+    const defaultFetch = baseFetch.getMockImplementation();
+    const stored: Record<string, unknown>[] = [];
+    baseFetch.mockImplementation((url: string, init?: RequestInit) => {
+      if (url === "/api/credentials" && !init?.method) return json({ credentials: stored });
+      if (url === "/api/credentials" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        const row = { id: "synthetic-new", provider: body.provider, label: body.label, status: "active", masked_value: "••••synthetic", active_version: 1, folder_id: null };
+        stored.push(row);
+        return json(row);
+      }
+      return defaultFetch?.(url, init) ?? json({ ok: true });
+    });
+    renderApp();
+    await openSettingsSection("Подключения");
+    await userEvent.click(await screen.findByRole("button", { name: "Добавить ключ" }));
+    await userEvent.selectOptions(screen.getByLabelText("Провайдер"), provider);
+    await userEvent.type(screen.getByPlaceholderText("Метка"), "Synthetic new provider");
+    const secret = "synthetic-sensitive-value";
+    if (provider === "tbank") await userEvent.type(screen.getByLabelText("API_KEY VoiceKit"), "synthetic-public-id");
+    await userEvent.type(screen.getByPlaceholderText("Новый ключ"), secret);
+    await userEvent.click(screen.getByRole("button", { name: "Создать" }));
+    await waitFor(() => expect(stored).toHaveLength(1));
+    const call = baseFetch.mock.calls.find(([url, init]) => url === "/api/credentials" && init?.method === "POST");
+    const body = JSON.parse(String(call?.[1]?.body));
+    expect(body.provider).toBe(provider);
+    if (provider === "tbank") expect(JSON.parse(body.raw_value)).toEqual({ api_key: "synthetic-public-id", secret_key: secret });
+    else expect(body.raw_value).toBe(secret);
+    expect(screen.queryByDisplayValue(secret)).not.toBeInTheDocument();
+    expect(JSON.stringify({ ...sessionStorage, ...localStorage })).not.toContain(secret);
+  });
+
   it("creates credentials with raw_value while using credential-specific field names", async () => {
     renderApp();
     await openSettingsSection("Подключения");
@@ -6685,13 +6718,13 @@ describe("Studio PWA", () => {
     expect(processingProgress).toHaveTextContent(
       "Разбиение на части (при необходимости)",
     );
-    expect(processingProgress).toHaveTextContent("Транскрибация ElevenLabs");
+    expect(processingProgress).toHaveTextContent("Распознавание речи");
     expect(processingProgress).toHaveTextContent(
       "Слияние частей (при необходимости)",
     );
-    expect(processingProgress).toHaveTextContent("Создание Google Docs");
+    expect(processingProgress).toHaveTextContent("Сохранение документа");
     expect(
-      within(processingProgress).getByText("Транскрибация ElevenLabs")
+      within(processingProgress).getByText("Распознавание речи")
         .parentElement,
     ).toHaveTextContent("Выполняется");
     expect(
@@ -13331,7 +13364,7 @@ describe("Studio PWA", () => {
         screen.getByRole("button", { name: "Проверить ещё раз" }),
       );
 
-      expect(await screen.findByText("Подключён и готов")).toBeInTheDocument();
+      expect(await screen.findByText("Профиль подключения выбран")).toBeInTheDocument();
       const row = await screen.findByLabelText("Источник задачи 1");
       await waitFor(() =>
         expect(
@@ -13478,12 +13511,12 @@ describe("Studio PWA", () => {
     );
     expect(olderCredentialSignal?.aborted).toBe(true);
     expect(olderPolicySignal?.aborted).toBe(true);
-    expect(await screen.findByText("Подключён и готов")).toBeInTheDocument();
+    expect(await screen.findByText("Профиль подключения выбран")).toBeInTheDocument();
 
     await userEvent.click(
       screen.getByRole("button", { name: /Research calls .*01\.07\.2026/ }),
     );
-    expect(await screen.findByText("Подключён и готов")).toBeInTheDocument();
+    expect(await screen.findByText("Профиль подключения выбран")).toBeInTheDocument();
     const row = await screen.findByLabelText("Источник задачи 1");
     await waitFor(() =>
       expect(

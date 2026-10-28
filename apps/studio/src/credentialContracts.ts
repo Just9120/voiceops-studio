@@ -3,7 +3,7 @@ import { LATEST_REQUEST_CANCEL_REASON } from "./latestRequest";
 
 export type Credential = {
   id: string;
-  provider: "elevenlabs" | "yandex" | "openai";
+  provider: "elevenlabs" | "yandex" | "openai" | "tbank" | "mistral" | "gemini";
   label: string;
   status: "active" | "revoked";
   masked_value: string | null;
@@ -25,7 +25,7 @@ export function parseCredentialCollection(candidate: unknown): Credential[] | nu
       credential.id.length > 36 ||
       (credential.provider !== "elevenlabs" &&
         credential.provider !== "yandex" &&
-        credential.provider !== "openai") ||
+        credential.provider !== "openai" && credential.provider !== "tbank" && credential.provider !== "mistral" && credential.provider !== "gemini") ||
       typeof credential.label !== "string" ||
       credential.label.trim().length === 0 ||
       credential.label.length > 120 ||

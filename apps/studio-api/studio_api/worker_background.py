@@ -10,7 +10,7 @@ class WorkerBackground:
     def __init__(self, *, settings, session_factory, stop_event, logger, owner_id,
                  source_cleanup_runner=None, provider_checkpoint_cleanup_runner=None,
                  realtime_draft_cleanup_runner=None, alert_evaluator=None,
-                 alert_delivery_runner=None, job_notification_runner=None):
+                 alert_delivery_runner=None, job_notification_runner=None, provider_file_cleanup_runner=None):
         self.settings = settings
         self.session_factory = session_factory
         self.stop_event = stop_event
@@ -22,6 +22,7 @@ class WorkerBackground:
         self.alert_evaluator = alert_evaluator
         self.alert_delivery_runner = alert_delivery_runner
         self.job_notification_runner = job_notification_runner
+        self.provider_file_cleanup_runner = provider_file_cleanup_runner
         self.last_alert_evaluation_at = None
         self.thread = None
 
@@ -116,6 +117,13 @@ class WorkerBackground:
             if stop_event.is_set():
                 return
             alert_now = datetime.now(timezone.utc)
+            if self.provider_file_cleanup_runner is not None:
+                try:
+                    self.provider_file_cleanup_runner(session_factory=session_factory, settings=settings, now=alert_now)
+                except Exception:
+                    logger.warning("studio_worker_provider_file_cleanup_failed")
+            if stop_event.is_set():
+                return
             try:
                 from .security_email import process_one_security_email
                 process_one_security_email(session_factory=session_factory, settings=settings, now=alert_now)

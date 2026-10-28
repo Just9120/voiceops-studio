@@ -87,6 +87,8 @@ class AudioPreparationOptions:
     silence_keep_duration_seconds: float
     output_name_template: str
     preset: AudioPreset
+    trim_start_seconds: float = 0.0
+    trim_end_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -180,6 +182,7 @@ def normalize_options(payload: dict[str, object]) -> AudioPreparationOptions:
         raise AudioPreparationError(AudioPreparationReason.invalid_options)
     if output_format is AudioOutputFormat.copy and (
         mono_mode is not AudioMonoMode.preserve or effective["silence_enabled"]
+        or payload.get("trim_start_seconds", 0) != 0 or payload.get("trim_end_seconds") is not None
     ):
         raise AudioPreparationError(AudioPreparationReason.invalid_options)
     return AudioPreparationOptions(
@@ -191,7 +194,31 @@ def normalize_options(payload: dict[str, object]) -> AudioPreparationOptions:
         silence_keep_duration_seconds=keep,
         output_name_template=template,
         preset=preset,
+        trim_start_seconds=_bounded_number(payload.get("trim_start_seconds", 0), (0, MAX_AUDIO_DURATION_SECONDS)),
+        trim_end_seconds=None if payload.get("trim_end_seconds") is None else _bounded_number(payload["trim_end_seconds"], (0, MAX_AUDIO_DURATION_SECONDS)),
     )
+
+
+def trim_range(options: AudioPreparationOptions, duration: float) -> tuple[float, float]:
+    start = options.trim_start_seconds
+    end = duration if options.trim_end_seconds is None else options.trim_end_seconds
+    if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end > duration + 0.001 or end <= start or start >= duration:
+        raise AudioPreparationError(AudioPreparationReason.invalid_options)
+    return start, min(end, duration)
+
+
+def estimate_trimmed_duration(options: AudioPreparationOptions, duration: float, visual: dict) -> float:
+    """Estimate on the original timeline; clipping precedes pause reduction."""
+    start, end = trim_range(options, duration)
+    removed, offset = 0.0, 0.0
+    if options.silence_enabled:
+        for source in visual.get("sources", []):
+            for part in source.get("silences", []):
+                overlap = max(0.0, min(end, offset + part["end"]) - max(start, offset + part["start"]))
+                if overlap >= options.silence_min_duration_seconds:
+                    removed += max(0.0, overlap - options.silence_keep_duration_seconds)
+            offset += source["duration_seconds"]
+    return max(0.0, end - start - removed)
 
 
 @worker_operation("media_probe", FFPROBE_TIMEOUT_SECONDS + 30)
@@ -341,7 +368,8 @@ def build_preview(
     removed = 0.0
     if options.silence_enabled:
         removed = sum(max(0.0, float(duration) - options.silence_keep_duration_seconds) for duration in silence_durations)
-    estimated = max(0.0, total - removed)
+    start, end = trim_range(options, total)
+    estimated = max(0.0, end - start - removed)
     return AudioPreview(len(probes), total, estimated, copy_compatible, tuple(probes))
 
 
@@ -385,8 +413,17 @@ def build_ffmpeg_command(
         command.extend(["-i", str(path)])
     filters = []
     labels = []
+    start, end = trim_range(options, preview.input_duration_seconds)
+    offset = 0.0
     for index in range(len(input_paths)):
+        local_start = max(0.0, start - offset)
+        local_end = min(probes[index].duration_seconds, end - offset)
+        offset += probes[index].duration_seconds
+        if local_end <= local_start:
+            continue
         chain = []
+        if local_start > 0 or local_end < probes[index].duration_seconds:
+            chain.append(f"atrim=start={_number(local_start)}:end={_number(local_end)}")
         if options.mono_mode is AudioMonoMode.mixdown:
             chain.append("aformat=channel_layouts=mono")
         elif options.mono_mode is AudioMonoMode.left:

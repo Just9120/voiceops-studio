@@ -17,3 +17,4 @@ grpcio==1.83.1
 protobuf==7.36.0
 
 httpx==0.28.1
+webrtcvad-wheels==2.0.14.post1

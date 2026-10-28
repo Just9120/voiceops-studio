@@ -150,6 +150,8 @@ def create_processing_job_google_doc_from_transcript(
     if snap.output_provider != "google_drive":
         raise JobGoogleDocsOutputError(JobGoogleDocsOutputReason.output_folder_unavailable)
     source_snap = _load_source_snapshot(db, job_id, job_source_id, lease_owner_id, lease_generation, check_now, settings)
+    from .work_progress import report_work
+    report_work("document_output")
     try:
         try:
             token = token_resolver(db, user_id=snap.owner_user_id, settings=settings)
@@ -219,7 +221,7 @@ def format_transcript_doc(*, title: str, transcript_text: str, job_language: str
     body = build_transcript_document_text(
         title=safe_title,
         metadata_lines=(
-            f"Provider: {dict(elevenlabs='ElevenLabs', yandex='Yandex SpeechKit').get(provider, 'unknown')}",
+            f"Provider: {dict(elevenlabs='ElevenLabs', yandex='Yandex SpeechKit', mistral='Mistral Voxtral', gemini='Google Gemini Transcribe', tbank='T-Bank VoiceKit').get(provider, 'unknown')}",
             f"Model: {model}",
             f"Language: {lang}",
         ) + ((f"Created at: {_utc_iso(created_at)}",) if created_at is not None and not title_has_recording_date(safe_title) else ()) + compact_provenance_lines(provenance_lines),

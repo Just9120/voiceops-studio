@@ -16,6 +16,7 @@ from .job_claim_lease import is_lease_active
 from .job_source_availability import verify_processing_job_sources
 from .models import JobSourceStatus, JobStatus, Project, SourceType, SourceUploadStatus, TranscriptionJob, TranscriptionJobSource
 from .security import utcnow
+from .work_progress import report_work
 from .yandex_disk import YandexDiskClient, YandexDiskError
 from .yandex_disk_access import access_token as disk_access_token, verify_selected_resource
 from .source_policy import is_source_expired, is_supported_source_mime_type, normalize_source_mime_type, validate_source_size
@@ -308,6 +309,7 @@ def _copy_source_bytes(snap, temp, settings, storage_factory, drive_token_resolv
             raise SourceMaterializationError(SourceMaterializationReason.source_object_missing if exc.reason == GoogleDriveContentReason.not_found else SourceMaterializationReason.external_source_unavailable) from exc
     try:
         count = 0
+        report_work("source_download", 0, snap.size_bytes, "bytes")
         for chunk in stream.iter_chunks(_CHUNK_SIZE):
             check()
             if not chunk:
@@ -316,6 +318,7 @@ def _copy_source_bytes(snap, temp, settings, storage_factory, drive_token_resolv
             if count > settings.source_max_upload_bytes:
                 raise SourceMaterializationError(SourceMaterializationReason.source_too_large)
             temp.write(chunk)
+            report_work("source_download", count, snap.size_bytes, "bytes")
         return count, stream.content_type, stream.content_length
     except SourceMaterializationError:
         raise

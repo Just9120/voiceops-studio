@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
-import hmac
 import json
 import math
 import re
@@ -22,7 +20,6 @@ from .elevenlabs_transcription import (
     normalize_elevenlabs_transcript_response,
 )
 from .models import SttProviderOperation, TranscriptionJob
-from .security import aad, decrypt, encrypt, master_key_from_b64
 
 
 SAFE_YANDEX_ERROR_CODES = frozenset({
@@ -235,37 +232,12 @@ class YandexTranscriptionTransport:
         return _decode_streaming_json(response)
 
     def _persist_result(self, operation: SttProviderOperation, result: ElevenLabsTranscriptResult) -> None:
-        payload = json.dumps(_result_payload(result), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        key = master_key_from_b64(self.settings.master_key_b64())
-        associated = aad(operation.owner_user_id, operation.id, operation.operation_id, "yandex-stt-result")
-        ciphertext, nonce = encrypt(payload, key, associated)
-        operation.result_ciphertext = ciphertext
-        operation.result_nonce = nonce
-        operation.result_key_id = self.settings.credential_key_id
-        operation.result_hmac = hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
-        operation.status = "completed"
-        operation.completed_at = self.clock()
-        operation.updated_at = self.clock()
-        self.db.commit()
+        from .provider_result_cache import persist_operation_result
+        persist_operation_result(self.db, operation, result, settings=self.settings, now=self.clock())
 
     def _load_result(self, operation: SttProviderOperation) -> ElevenLabsTranscriptResult:
-        if not all((operation.result_ciphertext, operation.result_nonce, operation.result_key_id, operation.result_hmac)):
-            raise ElevenLabsTranscriptionError(ElevenLabsTranscriptionReason.malformed_provider_response)
-        if operation.result_key_id != self.settings.credential_key_id:
-            raise ElevenLabsTranscriptionError(ElevenLabsTranscriptionReason.malformed_provider_response)
-        key = master_key_from_b64(self.settings.master_key_b64())
-        associated = aad(operation.owner_user_id, operation.id, operation.operation_id, "yandex-stt-result")
-        try:
-            payload = decrypt(operation.result_ciphertext, operation.result_nonce, key, associated)
-        except Exception as exc:
-            raise ElevenLabsTranscriptionError(ElevenLabsTranscriptionReason.malformed_provider_response) from exc
-        expected = hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected, operation.result_hmac):
-            raise ElevenLabsTranscriptionError(ElevenLabsTranscriptionReason.malformed_provider_response)
-        try:
-            return normalize_elevenlabs_transcript_response(json.loads(payload))
-        except Exception as exc:
-            raise ElevenLabsTranscriptionError(ElevenLabsTranscriptionReason.malformed_provider_response) from exc
+        from .provider_result_cache import load_operation_result
+        return load_operation_result(operation, settings=self.settings)
 
 
 def _decode_streaming_json(response: httpx.Response) -> list[Mapping[str, Any]]:
@@ -412,12 +384,3 @@ def normalize_yandex_transcript_response(payload: Any) -> ElevenLabsTranscriptRe
         "language_code": detected_language,
         "language_probability": probability,
     })
-
-
-def _result_payload(result: ElevenLabsTranscriptResult) -> dict[str, Any]:
-    return {
-        "text": result.text,
-        "words": [{"text": word.text, "start": word.start, "end": word.end, "type": word.type, "speaker_id": word.speaker_id} for word in result.words],
-        "language_code": result.detected_language_code,
-        "language_probability": result.language_probability,
-    }

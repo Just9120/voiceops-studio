@@ -14,6 +14,7 @@ from .google_connection_access import refresh_user_google_drive_access_token
 from .google_drive import fetch_drive_file_content
 from .models import Project, SourceType, SourceUploadStatus
 from .security import utcnow
+from .work_progress import report_work
 from .source_policy import is_source_expired, is_supported_source_mime_type
 from .source_storage import SourceObjectReadError, get_source_storage, reference_storage_bucket, reference_storage_isolation_configured, reference_storage_settings, safe_filename, source_reference_class
 
@@ -38,6 +39,8 @@ def materialize_audio_inputs(
     token_cache: dict[str, str] = {}
     paths = []
     total_copied = 0
+    total_bytes = sum(max(0, item.source.size_bytes or 0) for item in job.inputs if item.source)
+    report_work("source_download", 0, total_bytes or None, "bytes")
     budget = min(
         getattr(settings, "audio_preparation_max_input_bytes", 1024**3),
         getattr(settings, "audio_preparation_max_scratch_bytes", 3 * 1024**3) - _SCRATCH_RESERVE_BYTES,
@@ -123,6 +126,7 @@ def materialize_audio_inputs(
                     if copied > settings.source_max_upload_bytes:
                         raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
                     target.write(chunk)
+                    report_work("source_download", total_copied, total_bytes or None, "bytes")
         finally:
             stream.close()
         if copied <= 0 or (source.size_bytes is not None and copied != source.size_bytes):
@@ -163,6 +167,7 @@ def render_audio_result(db, *, job, root, settings, output_root=None, paths=None
     preview_start = 0.0
     if preview:
         options = replace(options, output_format=AudioOutputFormat.wav)
+    if preview and options.trim_start_seconds == 0 and options.trim_end_seconds is None:
         position = 0
         if job.visual_analysis_json:
             for source in json.loads(job.visual_analysis_json).get("sources", []):
@@ -204,8 +209,9 @@ def render_audio_result(db, *, job, root, settings, output_root=None, paths=None
     # FFmpeg limits the file while writing, rather than after exhausting tmpfs.
     command[1:1] = ["-filter_threads", "2", "-filter_complex_threads", "2"]
     command[-1:-1] = ["-threads", "2", "-fs", str(output_budget)]
-    if preview:
+    if preview and options.trim_start_seconds == 0 and options.trim_end_seconds is None:
         command[command.index("-i"):command.index("-i")] = ["-ss", str(preview_start), "-t", "60"]
+    if preview:
         command[-1:-1] = ["-t", "30"]
     expected_duration_seconds = max(
         1.0,

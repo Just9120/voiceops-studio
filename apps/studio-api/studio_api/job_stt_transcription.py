@@ -18,6 +18,7 @@ from .stt_provider_health import provider_health, record_provider_failure, recor
 from .yandex_transcription import YandexTranscriptionTransport
 from .transcription_metadata import stored_model
 from .provider_usage_accounting import ProviderUsageAccountingError, resolve_pricing_snapshot
+from .work_progress import measured_work
 
 
 def _credential_config(credential: ProviderCredential | None) -> dict:
@@ -56,12 +57,19 @@ def transcribe_processing_job_source(
     if job is None:
         raise JobElevenLabsTranscriptionError(JobElevenLabsTranscriptionReason.prerequisites_unavailable)
     provider = (job.provider or "elevenlabs").strip().lower()
-    if provider == "yandex":
+    if provider in {"yandex", "gemini"}:
         from .job_cached_transcript import completed_yandex_result, restore_cached_yandex_transcript
         if completed_yandex_result(db, job, job_source_id) is not None:
             with restore_cached_yandex_transcript(db, job_id=job_id, job_source_id=job_source_id,
                     lease_owner_id=lease_owner_id, lease_generation=lease_generation, settings=settings,
                     now=clock()) as restored:
+                yield restored
+            return
+    if provider in {"elevenlabs", "mistral", "tbank"}:
+        from .job_cached_transcript import fully_cached_relation, restore_cached_transcript
+        if fully_cached_relation(db, job, job_source_id, clock()):
+            with restore_cached_transcript(db, job_id=job_id, job_source_id=job_source_id,
+                    lease_owner_id=lease_owner_id, lease_generation=lease_generation, settings=settings, now=clock()) as restored:
                 yield restored
             return
     mode = (job.operating_mode or "standard").strip().lower()
@@ -109,11 +117,30 @@ def transcribe_processing_job_source(
             usage_accounting_enabled=_yandex_usage_available(job, settings),
             part_checkpoints_enabled=False,
         )
+    elif provider in {"mistral", "gemini", "tbank"}:
+        from .provider_media import whole_file_preparer
+        from .transcription_options import job_diarization_enabled
+        from .job_source_materialization import processing_source_control
+        diarize = job_diarization_enabled(job.options_json)
+        check = processing_source_control(db, job_id=job_id, job_source_id=job_source_id,
+            lease_owner_id=lease_owner_id, lease_generation=lease_generation, clock=clock, settings=settings)
+        if provider == "mistral":
+            from .mistral_transcription import MistralTranscriptionTransport
+            transport = MistralTranscriptionTransport(check=check)
+        elif provider == "tbank":
+            from .tbank_transcription import TbankTranscriptionTransport
+            transport = TbankTranscriptionTransport(check=check)
+        else:
+            from .gemini_transcription import GeminiTranscriptionTransport
+            transport = GeminiTranscriptionTransport(db=db, job_id=job_id, job_source_id=job_source_id,
+                settings=settings, clock=clock, check=check)
+        opener_kwargs.update(media_preparer=whole_file_preparer(provider, diarize=diarize),
+            elevenlabs_transport=transport, usage_accounting_enabled=False, part_checkpoints_enabled=True)
     else:
         raise JobElevenLabsTranscriptionError(JobElevenLabsTranscriptionReason.provider_mismatch)
 
     try:
-        with transcribe_processing_job_source_with_elevenlabs(**opener_kwargs) as result:
+        with measured_work(db, job=job, owner=lease_owner_id, generation=lease_generation, clock=clock), transcribe_processing_job_source_with_elevenlabs(**opener_kwargs) as result:
             try:
                 record_provider_success(db, provider=provider, operating_mode=mode, now=clock())
                 db.commit()

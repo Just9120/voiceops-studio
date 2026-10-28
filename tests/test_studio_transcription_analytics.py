@@ -22,7 +22,7 @@ def test_provider_identity_survives_credential_rotation_and_future_models():
     payload = build_transcription_analytics_payload(jobs=rows, source_count=4, output_count=0,
         attempts=[], provider_by_credential_id={"rotated": "elevenlabs"})
     assert payload["configuration"]["provider_model"] == {
-        "elevenlabs_scribe_v2": 1, "yandex_general": 1, "yandex_deferred_general": 1, "unknown": 1}
+        "elevenlabs_scribe_v2": 1, "yandex_general": 1, "yandex_deferred_general": 1, "mistral_voxtral_small_transcribe_3": 0, "gemini_35_transcribe": 0, "tbank_default": 0, "unknown": 1}
 
 
 def enum(value: str):
@@ -166,7 +166,7 @@ def test_analytics_aggregates_only_safe_durable_counts_and_intervals():
             "provider_model": {
                 "elevenlabs_scribe_v2": 2,
                 "yandex_general": 0,
-                "yandex_deferred_general": 0,
+                "yandex_deferred_general": 0, "mistral_voxtral_small_transcribe_3": 0, "gemini_35_transcribe": 0, "tbank_default": 0,
                 "unknown": 1,
             },
             "language_mode": {"ru": 1, "en": 1, "detect": 1, "other": 0},
@@ -365,7 +365,7 @@ def test_database_analytics_is_exact_and_uses_constant_query_count(monkeypatch):
     assert payload["configuration"]["provider_model"] == {
         "elevenlabs_scribe_v2": 25,
         "yandex_general": 0,
-        "yandex_deferred_general": 0,
+        "yandex_deferred_general": 0, "mistral_voxtral_small_transcribe_3": 0, "gemini_35_transcribe": 0, "tbank_default": 0,
         "unknown": 0,
     }
     assert payload["usage_cost"] == {

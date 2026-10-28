@@ -5,6 +5,9 @@ import json
 
 MODEL_OPTION = "_stt_model"
 SUPPORTED_MODELS = {
+    ("mistral", "voxtral-small-transcribe-3"): "mistral_voxtral_small_transcribe_3",
+    ("gemini", "gemini-3.5-transcribe"): "gemini_35_transcribe",
+    ("tbank", "default"): "tbank_default",
     ("elevenlabs", "scribe_v2"): "elevenlabs_scribe_v2",
     ("yandex", "general"): "yandex_general",
     ("yandex", "deferred-general"): "yandex_deferred_general",
@@ -15,7 +18,7 @@ def selected_provider(explicit, credential=None) -> str:
     # The job is the durable selection; mutable/deleted credentials are fallback
     # only for legacy jobs that predate explicit provider selection.
     value = str(explicit or credential or "").strip().lower()
-    return value if value in {"elevenlabs", "yandex"} else "unknown"
+    return value if value in {"elevenlabs", "yandex", "mistral", "gemini", "tbank"} else "unknown"
 
 
 def stored_model(options_json: str | None) -> str | None:

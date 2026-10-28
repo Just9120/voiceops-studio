@@ -51,7 +51,7 @@ def test_catalog_exposes_provider_neutral_modes_and_limits():
     payload = catalog_payload(settings())
     providers = {entry["provider"]: entry for entry in payload["providers"]}
 
-    assert set(providers) == {"elevenlabs", "yandex"}
+    assert set(providers) == {"elevenlabs", "yandex", "tbank", "mistral", "gemini"}
     assert [mode["mode"] for mode in providers["elevenlabs"]["modes"]] == [
         "economic",
         "standard",
@@ -70,6 +70,28 @@ def test_catalog_exposes_provider_neutral_modes_and_limits():
     assert yandex_modes["realtime"]["diarization"] is False
     assert yandex_modes["standard"]["diarization"] is True
     assert yandex_modes["premium"]["diarization"] is True
+
+
+@pytest.mark.parametrize("provider", ["tbank", "mistral", "gemini"])
+def test_new_provider_configuration_is_explicit_and_does_not_claim_live(provider):
+    config = settings(**{f"{provider}_byok_enabled": False})
+    with pytest.raises(SttCapabilityError) as failure:
+        resolve_capability(config, provider, "standard")
+    assert failure.value.reason is SttCapabilityReason.provider_disabled
+    with pytest.raises(SttCapabilityError): resolve_capability(settings(), provider, "realtime")
+
+
+def test_gemini_checks_combination_and_selected_duration_before_dispatch():
+    with pytest.raises(SttCapabilityError) as failure:
+        validate_selection(settings(), provider="gemini", mode="standard", language="ru", diarization=True, dictionary_count=1)
+    assert failure.value.reason is SttCapabilityReason.options_incompatible
+    with pytest.raises(SttCapabilityError) as failure:
+        validate_selection(settings(), provider="gemini", mode="standard", language="ru", diarization=True, duration_seconds=1800.01)
+    assert failure.value.reason is SttCapabilityReason.duration_too_long
+    validate_selection(settings(), provider="gemini", mode="standard", language="ru", diarization=True, duration_seconds=1800)
+    validate_selection(settings(), provider="gemini", mode="standard", language="detect", diarization=False, dictionary_count=1, duration_seconds=3600)
+    with pytest.raises(SttCapabilityError):
+        validate_selection(settings(), provider="tbank", mode="standard", language="en", diarization=False)
 
 
 def test_yandex_interactive_live_rejects_diarization_but_preserves_live_and_batch():

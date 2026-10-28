@@ -4,14 +4,15 @@ import type {
   JobProgressState,
 } from "./jobProgressModel";
 import { confirmedProgressPercent } from "./jobProgressModel";
+import { WorkProgressDetail } from "./WorkProgress";
 
 const STAGE_LABELS: Record<JobProgressStageKey, string> = {
   preparation: "Подготовка источника",
   audio_extraction: "Извлечение аудио",
   splitting: "Разбиение на части (при необходимости)",
-  provider_processing: "Транскрибация ElevenLabs",
+  provider_processing: "Распознавание речи",
   part_merge: "Слияние частей (при необходимости)",
-  google_docs_output: "Создание Google Docs",
+  google_docs_output: "Сохранение документа",
 };
 
 const ACTIVE_STAGE_LABELS: Record<JobProgressStageKey, string> = {
@@ -20,7 +21,7 @@ const ACTIVE_STAGE_LABELS: Record<JobProgressStageKey, string> = {
   splitting: "Проверяем размер и делим длинную запись",
   provider_processing: "Транскрибируем запись",
   part_merge: "Объединяем части транскрипта",
-  google_docs_output: "Создаём документ в Google Docs",
+  google_docs_output: "Сохраняем документ",
 };
 
 function statusLabel(stage: JobProgressStage) {
@@ -91,6 +92,7 @@ export function JobProgressPipeline({
         <strong>{currentAction}</strong>
         <strong>Подтверждено {percent}%</strong>
       </div>
+      {isActive && <WorkProgressDetail value={progress.work} />}
       <div
         className={`job-progress-meter${isActive ? " is-active" : ""}`}
         role="progressbar"

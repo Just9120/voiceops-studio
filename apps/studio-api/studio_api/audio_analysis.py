@@ -23,9 +23,12 @@ class AudioVisualAnalysis:
     silence_count: int = 0
     intervals_truncated: bool = False
     bin_duration_seconds: float = 0.0
+    speech_status: str = "unavailable"
+    speech_intervals: tuple[tuple[float, float], ...] = ()
+    speech_truncated: bool = False
 
 
-def analyze_audio_visual(path, *, duration, options, channels=1, sample_rate=48000, points=MAX_WAVEFORM_POINTS, runner=None, check=lambda: None):
+def analyze_audio_visual(path, *, duration, options, channels=1, sample_rate=48000, points=MAX_WAVEFORM_POINTS, runner=None, check=lambda: None, progress=lambda seconds: None, speech_progress=lambda seconds: None, selected_range=None):
     if not math.isfinite(duration) or duration <= 0 or not isinstance(sample_rate, int) or sample_rate <= 0:
         raise AudioPreparationError(AudioPreparationReason.invalid_input)
     points = max(1, min(MAX_WAVEFORM_POINTS, points))
@@ -64,7 +67,9 @@ def analyze_audio_visual(path, *, duration, options, channels=1, sample_rate=480
         if end <= start:
             return
         result.silence_count += 1
-        result.removed_seconds += max(0.0, end - start - options.silence_keep_duration_seconds)
+        overlap = end - start if selected_range is None else max(0.0, min(end, selected_range[1]) - max(start, selected_range[0]))
+        if overlap >= options.silence_min_duration_seconds:
+            result.removed_seconds += max(0.0, overlap - options.silence_keep_duration_seconds)
         if len(result.intervals) < MAX_VISUAL_INTERVALS:
             result.intervals.append((round(start, 3), round(end, 3)))
         else:
@@ -78,6 +83,7 @@ def analyze_audio_visual(path, *, duration, options, channels=1, sample_rate=480
         for line in (output.stdout or "").splitlines(): stdout(line)
         for line in (output.stderr or "").splitlines(): stderr(line)
         check()
+        progress(duration)
         return result
     process = None
     readers = []
@@ -102,12 +108,17 @@ def analyze_audio_visual(path, *, duration, options, channels=1, sample_rate=480
                 raise AudioPreparationError(AudioPreparationReason.processing_timeout)
             if time.monotonic() >= next_check:
                 check()
+                progress(min(duration, len(result.peaks) * frames / sample_rate))
                 next_check = time.monotonic() + 5
             time.sleep(0.2)
         for thread in readers: thread.join(timeout=2)
         if process.returncode != 0 or failures or any(thread.is_alive() for thread in readers):
             raise AudioPreparationError(AudioPreparationReason.media_integrity_failed)
         check()
+        progress(duration)
+        from .audio_speech_analysis import analyze_speech
+        speech = analyze_speech(path, duration=duration, check=check, progress=speech_progress, channel=options.mono_mode.value)
+        result.speech_status, result.speech_intervals, result.speech_truncated = speech.status, speech.intervals, speech.truncated
         return result
     except FileNotFoundError as exc:
         raise AudioPreparationError(AudioPreparationReason.probe_unavailable) from exc
@@ -125,11 +136,17 @@ def visual_payload(analyses, durations, keep_seconds):
     """Keep per-source timelines to avoid distorting unequal concat durations."""
     sources = []
     remaining = MAX_VISUAL_INTERVALS
+    remaining_speech = MAX_VISUAL_INTERVALS
     for position, (analysis, duration) in enumerate(zip(analyses, durations, strict=True)):
         intervals = analysis.intervals[:remaining]
         remaining -= len(intervals)
+        speech = analysis.speech_intervals[:remaining_speech]
+        remaining_speech -= len(speech)
         sources.append({"position": position, "duration_seconds": duration, "peaks": analysis.peaks,
             "bin_duration_seconds": analysis.bin_duration_seconds,
+            "speech_status": analysis.speech_status,
+            "speech_intervals": [{"start": start, "end": end} for start, end in speech],
+            "speech_truncated": analysis.speech_truncated or len(speech) < len(analysis.speech_intervals),
             "silences": [{"start": start, "end": end, "removed_seconds": round(max(0.0, end - start - keep_seconds), 3)} for start, end in intervals],
             "silence_count": analysis.silence_count,
             "intervals_truncated": analysis.intervals_truncated or len(intervals) < len(analysis.intervals)})

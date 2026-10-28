@@ -16,6 +16,9 @@ SUPPORTED_PROVIDERS = {
     CredentialProvider.elevenlabs.value,
     CredentialProvider.yandex.value,
     CredentialProvider.openai.value,
+    CredentialProvider.tbank.value,
+    CredentialProvider.mistral.value,
+    CredentialProvider.gemini.value,
 }
 
 

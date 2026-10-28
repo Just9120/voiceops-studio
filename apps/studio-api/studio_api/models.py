@@ -9,7 +9,7 @@ from .source_policy import DEFAULT_SOURCE_RETENTION_TTL_SECONDS
 def now(): return datetime.now(timezone.utc)
 class UserRole(str, enum.Enum): admin="admin"; user="user"
 class UserStatus(str, enum.Enum): active="active"; disabled="disabled"; deleted="deleted"
-class CredentialProvider(str, enum.Enum): elevenlabs="elevenlabs"; yandex="yandex"; openai="openai"
+class CredentialProvider(str, enum.Enum): elevenlabs="elevenlabs"; yandex="yandex"; openai="openai"; tbank="tbank"; mistral="mistral"; gemini="gemini"
 class CredentialStatus(str, enum.Enum): active="active"; revoked="revoked"; deleted="deleted"
 class GoogleConnectionStatus(str, enum.Enum): active="active"; revoked="revoked"; error="error"
 class GoogleProvider(str, enum.Enum): google="google"
@@ -387,6 +387,7 @@ class Source(Base):
     __table_args__=(CheckConstraint("audio_retention_days IS NULL OR audio_retention_days IN (3,7,30)", name="ck_sources_audio_retention_days"), Index("ix_sources_storage_identity", "reference_class", "s3_bucket", "s3_object_key"), Index("ix_sources_project_status", "project_id", "upload_status", "created_at"), Index("ix_sources_project_deleted_created_id", "project_id", "deleted_at", "created_at", "id"), Index("ix_sources_storage_cleanup_selection", "storage_cleanup_status", "storage_cleanup_not_before_at", "storage_cleanup_lease_expires_at"), CheckConstraint("storage_cleanup_attempt_count >= 0", name="ck_sources_storage_cleanup_attempt_count_nonnegative"), CheckConstraint("storage_cleanup_generation >= 0", name="ck_sources_storage_cleanup_generation_nonnegative"), CheckConstraint("reference_class IN ('transcription','audio_processing')", name="ck_sources_reference_class"), CheckConstraint("upload_protocol IN ('single_put','multipart')", name="ck_sources_upload_protocol"), CheckConstraint("((upload_protocol = 'single_put' AND multipart_upload_id IS NULL AND multipart_part_size_bytes IS NULL AND multipart_part_count IS NULL AND multipart_completed_at IS NULL) OR (upload_protocol = 'multipart' AND multipart_upload_id IS NOT NULL AND multipart_part_size_bytes >= 5242880 AND multipart_part_count >= 1))", name="ck_sources_multipart_authority"), CheckConstraint("((source_created_at IS NULL AND source_created_at_provenance IS NULL) OR (source_created_at IS NOT NULL AND source_created_at_provenance IN ('google_drive_created_time', 'yandex_disk_created_time', 'embedded_media_metadata')))", name="ck_sources_creation_authority"),)
 
 class TranscriptionJob(Base):
+    work_progress_json: Mapped[str|None]=mapped_column(Text)
     __tablename__="transcription_jobs"
     id: Mapped[str]=mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id: Mapped[str]=mapped_column(ForeignKey("projects.id"), index=True)
@@ -572,6 +573,7 @@ class TranscriptionJobSource(Base):
 
 
 class AudioPreparationJob(Base):
+    work_progress_json: Mapped[str|None]=mapped_column(Text)
     __tablename__="audio_preparation_jobs"
     id: Mapped[str]=mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id: Mapped[str]=mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
@@ -792,6 +794,9 @@ class SttDictionaryEntry(Base):
 
 
 class SttProviderOperation(Base):
+    external_file_id: Mapped[str|None]=mapped_column(String(256))
+    external_file_credential_version_id: Mapped[str|None]=mapped_column(ForeignKey("provider_credential_versions.id", name="fk_stt_provider_file_version"))
+    external_file_deleted_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
     __tablename__="stt_provider_operations"
     id: Mapped[str]=mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     owner_user_id: Mapped[str]=mapped_column(ForeignKey("users.id"), nullable=False)
@@ -817,12 +822,13 @@ class SttProviderOperation(Base):
         UniqueConstraint("job_source_id","attempt_number",name="uq_stt_provider_operations_source_attempt"),
         UniqueConstraint("provider","operation_id",name="uq_stt_provider_operations_provider_operation"),
         CheckConstraint("attempt_number >= 1", name="ck_stt_provider_operations_attempt_positive"),
-        CheckConstraint("provider IN ('yandex')", name="ck_stt_provider_operations_provider"),
+        CheckConstraint("provider IN ('yandex','gemini')", name="ck_stt_provider_operations_provider"),
         CheckConstraint("operating_mode IN ('economic','standard','premium')", name="ck_stt_provider_operations_mode"),
         CheckConstraint("status IN ('pending','completed','failed')", name="ck_stt_provider_operations_status"),
         CheckConstraint("((result_ciphertext IS NULL AND result_nonce IS NULL AND result_key_id IS NULL AND result_hmac IS NULL) OR (result_ciphertext IS NOT NULL AND result_nonce IS NOT NULL AND result_key_id IS NOT NULL AND length(result_hmac) = 64))", name="ck_stt_provider_operations_result_shape"),
         Index("ix_stt_provider_operations_job_source","job_source_id","attempt_number"),
         Index("ix_stt_provider_operations_pending","status","last_polled_at","created_at"),
+        Index("ix_stt_provider_operations_file_cleanup", "external_file_deleted_at", "updated_at"),
     )
 
 
@@ -835,7 +841,7 @@ class SttProviderHealth(Base):
     last_failure_code: Mapped[str|None]=mapped_column(String(80))
     updated_at: Mapped[datetime]=mapped_column(DateTime(timezone=True), nullable=False, default=now, onupdate=now)
     __table_args__=(
-        CheckConstraint("provider IN ('elevenlabs','yandex')", name="ck_stt_provider_health_provider"),
+        CheckConstraint("provider IN ('elevenlabs','yandex','mistral','gemini','tbank')", name="ck_stt_provider_health_provider"),
         CheckConstraint("operating_mode IN ('economic','standard','premium','realtime')", name="ck_stt_provider_health_mode"),
         CheckConstraint("consecutive_failures >= 0", name="ck_stt_provider_health_failures_nonnegative"),
     )

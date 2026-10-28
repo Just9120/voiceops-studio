@@ -189,7 +189,7 @@ def effective_settings_from_persisted_job(
     explicit_provider = _enum_value(job_provider).strip().lower()
     selected_provider = explicit_provider or _enum_value(credential_provider).strip().lower()
     language_mode = _catalog_language_mode(browser_language_mode(language))
-    if selected_provider not in {"elevenlabs", "yandex"} or language_mode is None:
+    if selected_provider not in {"elevenlabs", "yandex", "mistral", "gemini", "tbank"} or language_mode is None:
         return None
     from .transcription_metadata import stored_model
     model = stored_model(options_json)
@@ -203,8 +203,10 @@ def effective_settings_from_persisted_job(
             return None
     elif selected_provider == "yandex":
         model = "deferred-general" if operating_mode == "economic" else "general"
-    else:
+    elif selected_provider == "elevenlabs":
         model = CURRENT_TRANSCRIPTION_MODEL
+    else:
+        return None  # Never label a new provider with the historical Scribe default.
     return provider_effective_settings(
         provider=selected_provider,
         model=model,
