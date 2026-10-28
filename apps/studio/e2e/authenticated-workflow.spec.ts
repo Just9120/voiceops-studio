@@ -1100,10 +1100,10 @@ test('progress refresh keeps the last confirmed checkpoint after a temporary fai
     name: `Прогресс задачи ${processingProgress.job_id}`,
   });
   await expect(
-    progress.getByText('Транскрибация ElevenLabs').locator('..'),
+    progress.getByText('Распознавание речи').locator('..'),
   ).toContainText('Выполняется');
   await expect(
-    progress.getByText('Создание Google Docs').locator('..'),
+    progress.getByText('Сохранение документа').locator('..'),
   ).toContainText('Ожидает');
 
   let failedRefreshes = 0;
@@ -1138,10 +1138,10 @@ test('progress refresh keeps the last confirmed checkpoint after a temporary fai
     progress.getByText('Подготовка источника').locator('..'),
   ).toContainText('Готово');
   await expect(
-    progress.getByText('Транскрибация ElevenLabs').locator('..'),
+    progress.getByText('Распознавание речи').locator('..'),
   ).toContainText('Выполняется');
   await expect(
-    progress.getByText('Создание Google Docs').locator('..'),
+    progress.getByText('Сохранение документа').locator('..'),
   ).toContainText('Ожидает');
   await expect(progress.getByText('Готово файлов: 0 из 1')).toBeVisible();
   expect(integrationRequests).toEqual([]);
@@ -1234,10 +1234,10 @@ test('processing cancellation records a request without claiming completion', as
       .locator('..'),
   ).toContainText('Проверено');
   await expect(
-    progress.getByText('Транскрибация ElevenLabs').locator('..'),
+    progress.getByText('Распознавание речи').locator('..'),
   ).toContainText('Выполняется');
   await expect(
-    progress.getByText('Создание Google Docs').locator('..'),
+    progress.getByText('Сохранение документа').locator('..'),
   ).toContainText('Ожидает');
 
   const currentJobs = page.getByRole('region', { name: 'Текущие транскрибации' });
@@ -1367,10 +1367,10 @@ test('queued cancellation performs one bounded API mutation', async ({
     progress.getByText('Извлечение аудио').locator('..'),
   ).toContainText('Не требуется');
   await expect(
-    progress.getByText('Транскрибация ElevenLabs').locator('..'),
+    progress.getByText('Распознавание речи').locator('..'),
   ).toContainText('Ожидает');
   await expect(
-    progress.getByText('Создание Google Docs').locator('..'),
+    progress.getByText('Сохранение документа').locator('..'),
   ).toContainText('Ожидает');
   await expect(progress.getByText('Выполняется', { exact: true })).toHaveCount(
     0,
