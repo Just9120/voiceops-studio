@@ -1,5 +1,27 @@
 # AC: Studio: расширение согласованных сценариев
 
+### Эпик `AUDIO-QUALITY-PROGRESS-TRIM-01` — провайдеры, прогресс и обрезка
+
+Основание: решение владельца28Oct2026 и scoped update исходного Google Doc (провайдеры, подготовка файлов, очередь/прогресс). Существующие AP/PS/PUX criteria сохраняют ID; следующие AC покрывают новые условия. Один interval обрезки подготовки не заменяет несколько transcription fragments. Код/TEST/CI состояния находятся в [реестре](../delivery/extensions.md). Commercial, F62, старые документы, live новых providers и платные эксперименты вне этой Goal.
+
+| AC | Проверяемое требование |
+|---|---|
+| `AQP-01` | Пять providers: ElevenLabs Scribe v2, Yandex SpeechKit, T-Банк VoiceKit, Mistral Voxtral Small Transcribe и Google Gemini Transcribe доступны через единый personal batch flow; существующие defaults/результаты совместимы. Проверка: catalog, contracts и worker synthetic end-to-end. |
+| `AQP-02` | Новые credentials вводятся и хранятся отдельно encrypted/owner-scoped; без действующей конфигурации запуск запрещён, ключи не попадают в UI/logs/diagnostics. Проверка: credential/authorization regressions. |
+| `AQP-03` | До запуска показываются и проверяются реальные provider limits и несовместимости diarization/dictionary/language/duration; silent fallback и отключение опций запрещены. Проверка: boundary/negative preflight tests. |
+| `AQP-04` | Ответы новых провайдеров нормализуются без потери текста; partial/malformed/ambiguous ответы не success. Внешний полный документ подтверждается, export-only recovery не вызывает повторный STT. Проверка: transport/output/recovery regressions. |
+| `AQP-05` | Выбор модели/провайдера сохраняется в provenance и duplicate identity; неизвестная цена отображается неизвестной, не нулевой. Проверка: manifest/metadata/cost tests. |
+| `AQP-06` | Подготовка/транскрибация показывают актуальный этап, прошедшее время и последнее подтверждённое обновление; долгие этапы worker имеют измеряемые bytes/media-time/files/parts при наличии. Проверка: progress contract и worker tests. |
+| `AQP-07` | Ожидание внешнего STT имеет неопределённый progress без timer-percent; heartbeat не означает продвижение. Reload/reconnect восстанавливают durable state, старые ответы не откатывают UI, отмена сохраняется. Проверка: component/lease/terminal tests. |
+| `AQP-08` | Один сохраняемый интервал задаётся перетаскиванием начала/конца либо точными полями на исходной шкале; видны границы/длительность, reset, keyboard/touch управление и playback. Проверка: UI/component/browser и media-duration tests. |
+| `AQP-09` | Пустые/обратные/nonfinite/out-of-bounds интервалы отклоняются до обработки; original source не изменяется. Точная обрезка copy требует явного WAV/FLAC выбора, без скрытого перекодирования. Проверка: API/FFmpeg negative и immutable-source tests. |
+| `AQP-10` | Обрезка аудио и аудиодорожки видео применяется до сокращения пауз и согласована с ordered concat/mono/format; один глобальный интервал относится к ordered исходной шкале. Проверка: synthetic boundary/concat/silence/channel tests. |
+| `AQP-11` | Шкала различает amplitude, silence и обнаруженную речь; unavailable speech analysis обозначен явно, energy не выдаётся за VAD. Проверка: synthetic speech/non-speech и UI legend/error states. |
+| `AQP-12` | Длинные записи отображаются с bounded waveform data и памятью, zoom/pan и доступными controls без horizontal page overflow; browser-local ограничения явно ведут к server path. Проверка: bounded-data и responsive tests. |
+| `AQP-13` | Trim recipe сохраняется после reload и используется в download/export regeneration из доступных исходников без постоянного finished S3 object; expired-source recovery понятен. Проверка: recipe compatibility/regeneration tests. |
+| `AQP-14` | Для сравнения лекций/IT-созвонов сохранена методика одинакового корпуса: текст/термины/спикеры/полнота/скорость/цена. Добавление провайдера не запускает платный benchmark; новые paid calls требуют отдельного бюджета. Проверка: documentation/self-review и synthetic-only tests. |
+
+
 Часть [canonical spec](../project-spec.md). Единственный владелец формулировок AC этой подсистемы. Статусы/Evidence находятся в [реестре](../delivery/extensions.md).
 
 ### Эпик `BRAND-VOICEOPS-01` — единый бренд и публичная информация

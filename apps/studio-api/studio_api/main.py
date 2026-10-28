@@ -162,6 +162,7 @@ from .audio_preparation_service import (
     list_owned_audio_preparation_jobs,
     load_owned_audio_preparation_job,
     start_audio_preparation_job,
+    update_audio_trim,
     queue_audio_drive_export,
 )
 from .runtime_observability import (
@@ -479,6 +480,13 @@ class AudioPreparationCreateIn(BaseModel):
         if (self.output_destination == "google_drive") != bool(self.output_drive_folder_id):
             raise ValueError("Для Google Drive выберите целевую папку")
         return self
+
+class AudioTrimIn(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    start_seconds: float = Field(default=0, ge=0, le=604800)
+    end_seconds: float | None = Field(default=None, gt=0, le=604800)
+    output_format: str = Field(pattern=r"^(wav|flac|copy)$")
+
 
 class AccountPreferencesPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -3285,6 +3293,22 @@ def start_audio_preparation(job_id: str, pair=Depends(require_csrf), db: Session
         db.commit()
         job = load_owned_audio_preparation_job(db, owner_user_id=user.id, job_id=job.id)
     except AudioPreparationServiceError as exc:
+        db.rollback()
+        _raise_audio_preparation_error(exc)
+    return audio_preparation_payload(job)
+
+
+@app.patch("/api/audio-preparations/{job_id}/trim")
+def patch_audio_trim(job_id: str, data: AudioTrimIn, pair=Depends(require_csrf), db: Session=Depends(get_db), _=Depends(require_same_origin)):
+    _, user = pair
+    limiter.check("audio-preparation:trim:" + user.id, 60, 3600)
+    try:
+        job = update_audio_trim(db, owner_user_id=user.id, job_id=job_id,
+            start_seconds=data.start_seconds, end_seconds=data.end_seconds, output_format=data.output_format)
+        audit(db, "audio_preparation.trim_updated", actor_user_id=user.id, subject_user_id=user.id, project_id=job.project_id, job_id=job.id)
+        db.commit()
+        job = load_owned_audio_preparation_job(db, owner_user_id=user.id, job_id=job.id)
+    except (AudioPreparationServiceError, AudioPreparationError) as exc:
         db.rollback()
         _raise_audio_preparation_error(exc)
     return audio_preparation_payload(job)

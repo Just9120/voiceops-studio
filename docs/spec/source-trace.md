@@ -1,5 +1,7 @@
 # Трассировка согласованных требований
 
+Решение `OWNER-AQP-20261028`: согласованы пять STT providers, подробный измеряемый progress и visual single-interval trim; Google Doc обновлён точечно с revision guard/readback28Oct. Новые условия трассируются в AQP-01..14, прежние Q/AP/PS ID не перенумеровываются. Поддержка новых providers не означает оплаченный benchmark или live calls; voice identity и commercial не возвращаются в scope.
+
 Часть [canonical spec](../project-spec.md). Google Doc ID `1uaYvnqpbns_iyHTtQDZYjNYygT4ikUhmhuhRDWySrzI`; targeted native read/edit/readback25Oct2026: отменена voice identity, task notifications только Telegram, сохранены остальные paragraphs/styles. Q001..Q308 сохраняют стабильные исторические ID; отменённые пункты не перенумеровываются и не являются действующими обязательствами. Более ранний полный snapshot10Oct/S001..S289 сохранён для трассировки. Статусы и ограничения Evidence — [delivery dashboard](../delivery-plan.md).
 
 Q301..308 задают отдельные действия владельца и внешней модели, не автоматически запускаемую feature Studio. Отсутствие повторного упоминания прежнего AC не отменяет его; явные изменения и SUPERSEDED перечислены в spec/плане. Широкий диапазон означает распределённое покрытие; атомарные условия принадлежат единственному spec соответствующего эпика.

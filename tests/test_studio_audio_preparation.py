@@ -46,6 +46,38 @@ def test_presets_are_effective_and_user_overrides_remain_explicit():
     assert lecture.silence_threshold_db == -35
 
 
+def test_trim_uses_original_concat_timeline_before_silence_processing():
+    opts = options(trim_start_seconds=45, trim_end_seconds=90, silence_enabled=True)
+    command = build_ffmpeg_command([Path("first.wav"), Path("second.wav")], Path("out.wav"), opts, [probe(), probe()])
+    filters = command[command.index("-filter_complex") + 1]
+    assert "atrim=start=45:end=60" in filters
+    assert "atrim=start=0:end=30" in filters
+    assert filters.index("atrim") < filters.index("silenceremove")
+    assert "concat=n=2" in filters
+    assert build_preview([probe(), probe()], (), opts).estimated_output_duration_seconds == 45
+
+
+def test_trim_skips_inputs_outside_selection_without_empty_concat_streams():
+    command = build_ffmpeg_command([Path("a.wav"), Path("b.wav")], Path("out.flac"),
+        options(output_format="flac", trim_start_seconds=70, trim_end_seconds=80), [probe(), probe()])
+    filters = command[command.index("-filter_complex") + 1]
+    assert "[0:a:0]" not in filters
+    assert "[1:a:0]atrim=start=10:end=20" in filters
+    assert "concat=" not in filters
+
+
+@pytest.mark.parametrize("start,end", [(0, 0), (20, 10), (60, None), (0, 61), (-1, 3), (float("nan"), 3), (0, float("inf")), (True, 4)])
+def test_invalid_trim_is_rejected_before_render(start, end):
+    with pytest.raises(AudioPreparationError):
+        build_preview([probe()], (), options(trim_start_seconds=start, trim_end_seconds=end))
+
+
+def test_exact_trim_requires_explicit_conversion_and_legacy_recipe_stays_valid():
+    with pytest.raises(AudioPreparationError):
+        options(output_format="copy", trim_start_seconds=1)
+    assert options(output_format="copy").trim_end_seconds is None
+
+
 @pytest.mark.parametrize(
     "payload",
     [

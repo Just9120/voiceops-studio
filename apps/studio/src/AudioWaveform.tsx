@@ -30,7 +30,7 @@ const reductionLabel = (seconds: number) => seconds > 0 && seconds < 1
   ? seconds < 0.01 ? "менее 0,01 с" : `${seconds.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} с`
   : timestamp(seconds);
 
-export function AudioWaveform({ visual: value, before, after }: { visual: unknown; before: number; after: number }) {
+export function AudioWaveform({ visual: value, before, after, selection }: { visual: unknown; before: number; after: number; selection?: [number, number] }) {
   const pattern = useId().replaceAll(":", "");
   const visual = parseAudioVisual(value);
   if (!visual) return <p className="muted">Визуальная шкала недоступна для этой проверки.</p>;
@@ -42,9 +42,10 @@ export function AudioWaveform({ visual: value, before, after }: { visual: unknow
   const truncated = visual.sources.some((source) => source.intervals_truncated);
   const hasWaveform = visual.sources.some((source) => source.peaks.length > 0);
   return <section className="audio-waveform" aria-label="Анализ звука и пауз">
-    <p>До: {timestamp(before)} · после сокращения: {timestamp(after)} · сокращение: {reductionLabel(Math.max(0, before - after))}</p>
+    {!selection && <p>До: {timestamp(before)} · после сокращения: {timestamp(after)} · сокращение: {reductionLabel(Math.max(0, before - after))}</p>}
     {hasWaveform ? <svg viewBox="0 0 1000 100" preserveAspectRatio="none" role="img" aria-label={`Звуковая огибающая. Найдено пауз: ${count}. Штриховкой отмечены сокращаемые участки.`}>
       <defs><pattern id={pattern} width="8" height="8" patternUnits="userSpaceOnUse"><path d="M0 8L8 0" stroke="currentColor" strokeWidth="2" /></pattern></defs>
+      {selection && <g><rect x="0" y="0" width={selection[0] / total * 1000} height="100" fill="currentColor" opacity="0.3" /><rect x={selection[1] / total * 1000} y="0" width={(total - selection[1]) / total * 1000} height="100" fill="currentColor" opacity="0.3" />{selection.map((bound, index) => <line key={index} x1={bound / total * 1000} x2={bound / total * 1000} y1="0" y2="100" stroke="currentColor" strokeWidth="3" />)}</g>}
       {intervals.map((part, index) => <g key={index}>
         <rect x={part.start / total * 1000} y="0" width={(part.end - part.start) / total * 1000} height="100" fill="currentColor" opacity="0.15" />
         {part.removed_seconds > 0 && <rect x={(part.start + (part.end - part.start - part.removed_seconds) / 2) / total * 1000} y="0" width={part.removed_seconds / total * 1000} height="100" fill={`url(#${pattern})`} />}

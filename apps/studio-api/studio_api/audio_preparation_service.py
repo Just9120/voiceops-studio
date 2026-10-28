@@ -9,7 +9,7 @@ from enum import Enum
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, object_session, selectinload
 
-from .audio_preparation import MAX_AUDIO_INPUTS, AudioPreparationOptions, normalize_options
+from .audio_preparation import MAX_AUDIO_INPUTS, AudioPreparationOptions, normalize_options, estimate_trimmed_duration
 from .models import (
     AudioPreparationJob,
     AudioPreparationJobInput,
@@ -159,6 +159,22 @@ def list_owned_audio_preparation_jobs(
             .limit(max(1, min(limit, 100)))
         ).scalars().all()
     )
+
+
+def update_audio_trim(db: Session, *, owner_user_id: str, job_id: str,
+                      start_seconds: float, end_seconds: float | None, output_format: str) -> AudioPreparationJob:
+    job = _locked_owned_job(db, owner_user_id, job_id)
+    if job.status is not AudioPreparationStatus.preview_ready or job.download_slot == 1:
+        raise AudioPreparationServiceError(AudioPreparationServiceReason.invalid_state)
+    payload = json.loads(job.options_json)
+    payload.update(trim_start_seconds=start_seconds, trim_end_seconds=end_seconds, output_format=output_format)
+    options = normalize_options(payload)
+    duration = (job.total_input_duration_ms or 0) / 1000
+    visual = json.loads(job.visual_analysis_json or "{}")
+    job.options_json = serialize_options(options)
+    job.estimated_output_duration_ms = round(estimate_trimmed_duration(options, duration, visual) * 1000)
+    db.flush()
+    return job
 
 
 def start_audio_preparation_job(

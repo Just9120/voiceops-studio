@@ -163,6 +163,7 @@ def render_audio_result(db, *, job, root, settings, output_root=None, paths=None
     preview_start = 0.0
     if preview:
         options = replace(options, output_format=AudioOutputFormat.wav)
+    if preview and options.trim_start_seconds == 0 and options.trim_end_seconds is None:
         position = 0
         if job.visual_analysis_json:
             for source in json.loads(job.visual_analysis_json).get("sources", []):
@@ -204,8 +205,9 @@ def render_audio_result(db, *, job, root, settings, output_root=None, paths=None
     # FFmpeg limits the file while writing, rather than after exhausting tmpfs.
     command[1:1] = ["-filter_threads", "2", "-filter_complex_threads", "2"]
     command[-1:-1] = ["-threads", "2", "-fs", str(output_budget)]
-    if preview:
+    if preview and options.trim_start_seconds == 0 and options.trim_end_seconds is None:
         command[command.index("-i"):command.index("-i")] = ["-ss", str(preview_start), "-t", "60"]
+    if preview:
         command[-1:-1] = ["-t", "30"]
     expected_duration_seconds = max(
         1.0,

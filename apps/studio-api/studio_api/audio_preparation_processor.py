@@ -14,6 +14,7 @@ from .audio_preparation import (
     AudioPreparationReason,
     AudioProbe,
     build_preview,
+    estimate_trimmed_duration,
     probe_media,
 )
 from .audio_preparation_service import (
@@ -144,8 +145,11 @@ def process_claimed_audio_preparation_job(
                 if is_preview:
                     _checkpoint(db, job, "analyzing", 10 + round(((index + 1) / len(paths)) * 80))
             if is_preview:
-                preview = replace(preview, estimated_output_duration_seconds=max(0.0,
-                    preview.input_duration_seconds - sum(item.removed_seconds for item in analyses)))
+                visual = visual_payload(analyses, [probe.duration_seconds for probe in probes], options.silence_keep_duration_seconds)
+                estimate = (estimate_trimmed_duration(options, preview.input_duration_seconds, visual)
+                    if options.trim_start_seconds or options.trim_end_seconds is not None
+                    else max(0.0, preview.input_duration_seconds - sum(item.removed_seconds for item in analyses)))
+                preview = replace(preview, estimated_output_duration_seconds=estimate)
             if job.status is AudioPreparationStatus.analyzing:
                 complete_audio_preview(
                     db,
