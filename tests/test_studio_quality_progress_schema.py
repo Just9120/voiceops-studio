@@ -35,6 +35,9 @@ def test_quality_progress_upgrade_old_schema_and_repeat_are_additive():
             connection.execute(models.User.__table__.insert().values(id="owner", email="synthetic@example.test"))
             revision.module.upgrade()
             revision.module.upgrade()
+            for provider in ("mistral", "gemini", "tbank"):
+                connection.execute(models.SttProviderHealth.__table__.insert().values(provider=provider, operating_mode="standard", consecutive_failures=2))
+            assert connection.scalar(text("SELECT COUNT(*) FROM stt_provider_health")) == 3
             assert connection.scalar(text("SELECT COUNT(*) FROM users WHERE id='owner'")) == 1
             inspector = inspect(connection)
             for table in ("audio_preparation_jobs", "transcription_jobs"):

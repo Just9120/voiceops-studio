@@ -17,6 +17,11 @@ def upgrade():
     if bind.dialect.name == "postgresql":
         for value in ("tbank", "mistral", "gemini"):
             op.execute(sa.text(f"ALTER TYPE credentialprovider ADD VALUE IF NOT EXISTS '{value}'"))
+    health_checks = {c["name"]: c["sqltext"] for c in sa.inspect(bind).get_check_constraints("stt_provider_health")}
+    if "mistral" not in health_checks.get("ck_stt_provider_health_provider", ""):
+        with op.batch_alter_table("stt_provider_health") as batch:
+            batch.drop_constraint("ck_stt_provider_health_provider", type_="check")
+            batch.create_check_constraint("ck_stt_provider_health_provider", "provider IN ('elevenlabs','yandex','mistral','gemini','tbank')")
     existing = {c["name"] for c in sa.inspect(bind).get_columns("stt_provider_operations")}
     for column in (sa.Column("external_file_id", sa.String(256), nullable=True),
                    sa.Column("external_file_credential_version_id", sa.String(36), nullable=True),
@@ -37,8 +42,12 @@ def upgrade():
 def downgrade():
     bind = op.get_bind()
     if (bind.execute(sa.text("SELECT COUNT(*) FROM stt_provider_operations WHERE provider <> 'yandex'")).scalar()
-        or bind.execute(sa.text("SELECT COUNT(*) FROM provider_credentials WHERE provider IN ('tbank','mistral','gemini')")).scalar()):
+        or bind.execute(sa.text("SELECT COUNT(*) FROM provider_credentials WHERE provider IN ('tbank','mistral','gemini')")).scalar()
+        or bind.execute(sa.text("SELECT COUNT(*) FROM stt_provider_health WHERE provider IN ('tbank','mistral','gemini')")).scalar()):
         raise RuntimeError("New provider records require forward recovery; do not delete credential or usage history for rollback")
+    with op.batch_alter_table("stt_provider_health") as batch:
+        batch.drop_constraint("ck_stt_provider_health_provider", type_="check")
+        batch.create_check_constraint("ck_stt_provider_health_provider", "provider IN ('elevenlabs','yandex')")
     op.drop_index("ix_stt_provider_operations_file_cleanup", table_name="stt_provider_operations")
     with op.batch_alter_table("stt_provider_operations") as batch:
         batch.drop_constraint("ck_stt_provider_operations_provider", type_="check")

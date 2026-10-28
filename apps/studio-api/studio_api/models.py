@@ -841,7 +841,7 @@ class SttProviderHealth(Base):
     last_failure_code: Mapped[str|None]=mapped_column(String(80))
     updated_at: Mapped[datetime]=mapped_column(DateTime(timezone=True), nullable=False, default=now, onupdate=now)
     __table_args__=(
-        CheckConstraint("provider IN ('elevenlabs','yandex')", name="ck_stt_provider_health_provider"),
+        CheckConstraint("provider IN ('elevenlabs','yandex','mistral','gemini','tbank')", name="ck_stt_provider_health_provider"),
         CheckConstraint("operating_mode IN ('economic','standard','premium','realtime')", name="ck_stt_provider_health_mode"),
         CheckConstraint("consecutive_failures >= 0", name="ck_stt_provider_health_failures_nonnegative"),
     )
