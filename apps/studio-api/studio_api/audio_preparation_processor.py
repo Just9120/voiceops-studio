@@ -141,6 +141,7 @@ def process_claimed_audio_preparation_job(
                     analysis = analyze_audio_visual(path, duration=probes[index].duration_seconds, channels=probes[index].channels, sample_rate=probes[index].sample_rate, options=options,
                         points=points,
                         progress=lambda seconds: report_work("media_analysis", sum(p.duration_seconds for p in probes[:index]) + seconds, preview.input_duration_seconds, "seconds"),
+                        speech_progress=lambda seconds: report_work("speech_analysis", sum(p.duration_seconds for p in probes[:index]) + seconds, preview.input_duration_seconds, "seconds"),
                         runner=runner, check=lambda: _require_not_cancelled(db, job))
                     analyses.append(analysis)
                     remaining_points -= points

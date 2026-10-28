@@ -14,6 +14,8 @@ export type PcmAudio = {
 };
 
 export type LocalAudioOptions = {
+  trimStartSeconds?: number;
+  trimEndSeconds?: number | null;
   operationMode: LocalAudioOperationMode;
   channelMode: LocalAudioChannelMode;
   silenceEnabled: boolean;
@@ -167,7 +169,18 @@ function concatenate(inputs: PcmAudio[], options: LocalAudioOptions): PcmAudio {
   if (inputs.length === 0) throw new Error("local_audio_no_inputs");
   const sampleRate = inputs[0].sampleRate;
   if (inputs.some((input) => input.sampleRate !== sampleRate)) throw new Error("local_audio_sample_rate_mismatch");
-  const processed = inputs.map((input) => applySilence(copyChannels(input, options.channelMode), sampleRate, options));
+  const duration = inputs.reduce((sum, input) => sum + input.channels[0].length / sampleRate, 0);
+  const start = options.trimStartSeconds ?? 0, end = options.trimEndSeconds ?? duration;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end > duration || end <= start) throw new Error("local_audio_invalid_trim");
+  let timelineOffset = 0;
+  const selected = inputs.flatMap((input) => {
+    const inputDuration = input.channels[0].length / sampleRate;
+    const from = Math.max(0, Math.round((start - timelineOffset) * sampleRate));
+    const to = Math.min(input.channels[0].length, Math.round((end - timelineOffset) * sampleRate));
+    timelineOffset += inputDuration;
+    return to > from ? [{ ...input, channels: input.channels.map((channel) => channel.subarray(from, to)) }] : [];
+  });
+  const processed = selected.map((input) => applySilence(copyChannels(input, options.channelMode), sampleRate, options));
   const channelCount = Math.max(...processed.map((channels) => channels.length));
   const normalized = processed.map((channels) => channelCount === 2 && channels.length === 1 ? [channels[0], channels[0]] : channels);
   if (normalized.some((channels) => channels.length !== channelCount)) throw new Error("local_audio_channel_mismatch");

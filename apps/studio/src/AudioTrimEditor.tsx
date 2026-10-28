@@ -4,10 +4,11 @@ import { formatAudioDuration } from "./formatters";
 
 export type AudioTrim = { trim_start_seconds?: number; trim_end_seconds?: number | null; output_format?: string };
 
-export function AudioTrimEditor({ duration, visual, options, disabled, onSave, onDirtyChange }: {
+export function AudioTrimEditor({ duration, visual, options, disabled, onSave, onDirtyChange, local = false }: {
   duration: number; visual: unknown; options: AudioTrim; disabled: boolean;
   onSave: (value: { start_seconds: number; end_seconds: number | null; output_format: string }) => Promise<void>;
   onDirtyChange: (dirty: boolean) => void;
+  local?: boolean;
 }) {
   const initialStart = options.trim_start_seconds ?? 0;
   const initialEnd = options.trim_end_seconds ?? duration;
@@ -32,7 +33,7 @@ export function AudioTrimEditor({ duration, visual, options, disabled, onSave, o
   }
   return <fieldset className="audio-trim-editor" disabled={disabled}>
     <legend>Обрезка аудио</legend>
-    <p className="muted">Оставьте один участок на исходной шкале, до сокращения пауз. Исходники сохранятся. После изменения примените границы; затем можно прослушать первые 30 секунд выбранного результата.</p>
+    <p className="muted">Оставьте один участок на исходной шкале, до сокращения пауз. Исходники сохранятся. {local ? "Примените границы: плеер ниже будет воспроизводить новый результат. Локальный формат — WAV." : "После изменения примените границы; затем можно прослушать первые 30 секунд выбранного результата."}</p>
     <label>Масштаб шкалы <select value={zoom} onChange={(e) => setZoom(Number(e.target.value))}>
       {[1, 2, 4, 8, 16].map((value) => <option key={value} value={value}>{value}×</option>)}
     </select></label>
@@ -47,8 +48,8 @@ export function AudioTrimEditor({ duration, visual, options, disabled, onSave, o
       <label>Начало, секунд<input inputMode="decimal" value={start} onChange={(e) => change("start", e.target.value)} aria-invalid={!valid} /></label>
       <label>Конец, секунд<input inputMode="decimal" value={end} onChange={(e) => change("end", e.target.value)} aria-invalid={!valid} /></label>
       <label>Формат результата<select value={format} onChange={(e) => { setFormat(e.target.value); onDirtyChange(true); }}>
-        <option value="wav">WAV</option><option value="flac">FLAC</option>
-        {options.output_format === "copy" && <option value="copy">Исходный формат, без обрезки</option>}
+        <option value="wav">WAV</option>{!local && <option value="flac">FLAC</option>}
+        {!local && options.output_format === "copy" && <option value="copy">Исходный формат, без обрезки</option>}
       </select></label>
     </div>
     <p aria-live="polite">{valid ? `Выбрано: ${formatAudioDuration(a)}–${formatAudioDuration(b)} · ${formatAudioDuration(b - a)}` : "Укажите начало и конец внутри записи. Конец должен быть позже начала."}</p>

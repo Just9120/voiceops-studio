@@ -11,7 +11,7 @@ from sqlalchemy import update, select
 from .security import utcnow
 
 _reporter = ContextVar("work_progress_reporter", default=None)
-STAGES = frozenset({"source_download", "source_copy", "media_probe", "media_processing", "media_analysis",
+STAGES = frozenset({"source_download", "source_copy", "media_probe", "media_processing", "media_analysis", "speech_analysis",
     "provider_upload", "provider_wait", "part_merge", "document_output", "audio_processing"})
 UNITS = frozenset({"bytes", "seconds", "files", "parts"})
 

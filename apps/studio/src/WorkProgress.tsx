@@ -5,6 +5,7 @@ const labels = {
   source_download: "Получаем исходник", source_copy: "Подготавливаем рабочую копию",
   media_probe: "Проверяем запись", media_processing: "Преобразуем аудио",
   media_analysis: "Анализируем запись", audio_processing: "Обрабатываем выбранное аудио",
+  speech_analysis: "Находим участки речи",
   provider_upload: "Передаём запись для распознавания", provider_wait: "Ожидаем ответ сервиса распознавания",
   part_merge: "Собираем текст", document_output: "Сохраняем документ",
 } as const;
