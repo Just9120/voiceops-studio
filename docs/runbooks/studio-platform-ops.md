@@ -649,6 +649,44 @@ The Files & Storage reconciliation control is owner-scoped and dry-run by defaul
 
 Before enabling the release, an operator must confirm without recording names or secrets: two distinct private buckets exist; each independently scoped credential can access only its intended bucket; each declared lifecycle rule exists and is enabled; both safe runtime health boundaries are `ready`. Missing evidence is `PENDING_EXTERNAL_GATE`, not authority to reuse the legacy bucket or credential.
 
+## Scoped TLS certificate renewal
+
+The canonical `studio.cloud-nodes.net` certificate is host-owned Certbot state:
+`/etc/letsencrypt/live/studio.cloud-nodes.net`, HTTP-01 webroot
+`/var/lib/letsencrypt`, existing `certbot.timer`. Application/component/edge CD
+does not issue certificates or install renewal hooks.
+
+The [deploy hook](../../deploy/studio/certbot-deploy-hook.sh) handles only that
+exact lineage after successful renewal. It runs `nginx -t` before a graceful
+reload; syntax failure stops reload. Missing or unrelated `RENEWED_LINEAGE`
+causes no action. It does not modify nginx routes, runtime files or containers.
+The old `studio.librechat.online` certificate, redirect and renewal configuration
+remain unchanged; this hook does not handle that lineage or the LibreChat service.
+
+Install only in a separately authorized host-config window from a reviewed merged
+artifact. Target `/etc/letsencrypt/renewal-hooks/deploy/50-studio-nginx` must be a
+regular root-owned file, group root, mode `0750`. First verify source SHA,
+`/bin/sh -n`, directory hooks, absence of an overlapping reload hook and concurrent
+delivery; retain exact target state, including absence. Do not overwrite an
+unknown existing target. Identical bytes/ownership/mode permit an idempotent
+no-op. Preserve renewal conf, account, live/archive and all other hooks.
+
+Read back installed bytes/ownership/mode and run `nginx -t`. Calling the hook
+with its lineage performs a real reload and belongs to this config window.
+An explicitly authorized scoped staging check may use
+`certbot renew --cert-name studio.cloud-nodes.net --dry-run --run-deploy-hooks`;
+review all applicable hooks first, because this may execute existing hooks too.
+Do not treat it as a secretless CI fixture or force a production renewal.
+Verify hook logs, local/public TLS, file/served fingerprint equality, web/API
+health and neighboring sites. Certbot exit status alone is insufficient proof
+that the running nginx loaded the renewed certificate.
+
+On failed post-check, stop. Restore only this hook's captured state, or remove
+only the newly installed target after confirming its exact hash. Do not revert
+certificates, application/database state or OAuth settings. If renewal succeeded
+but reload failed, diagnose syntax/reload and recheck serving; removing the hook
+does not repair that already pending certificate activation.
+
 ## Google OAuth runtime configuration
 
 ### Studio domain cutover (DOMAIN-STUDIO-20261017)
