@@ -695,3 +695,14 @@ PR337, head8f9d649 и run39942848202 — initial validation, не основан
 CI39942848202 FAIL разобран: primary-navigation tests имели неоднозначный unnamed selector после добавления отдельного именованного info landmark;4 selector уточнены именем основной навигации, действия/assertions сохраняются. Guard документации поймал случайное совпадение части английского слова, формулировка заменена без изменения guard. Транспортный preflight fixture исправлен обновлением3 workflow arguments выше. User23Oct сообщил, что Google приложение опубликовано; это owner report, независимый OAuth Console readback пока недоступен.
 
 Grouped CI correction23Oct: local43 CI/Colab/doc-guard tests и256 App/Login/Sidebar tests PASS; lightweight/diff/self-review PASS. Все подтверждённые причины initial FAIL исправлены одним batch; следующий push требует новый exact-revision CI. Fresh GCP readback: project VoiceOps Studio ACTIVE; Picker key ограничен current host и Drive/Picker APIs, значения ключей не читались. CLI не раскрывает OAuth Audience/Data Access/client origins; owner report о публикации принят с этим ограничением.
+
+
+## TLS renewal — отдельная операция 2026-11-01
+
+Основание: поручение владельца унифицировать обслуживание сертификатов Contabo; рабочие SSH/API keys, LibreChat и persistent runtime state сохраняются. Основная Current Goal выше не меняется.
+
+Scope: exact-lineage Certbot deploy hook проекта и процедура его отдельной установки. Обычный application CD hook не устанавливает. Не меняются certificate/account/webroot/renewal conf/timer, workflows, nginx routes, контейнеры и БД.
+
+Проверки: POSIX shell syntax и synthetic reload/skip/failure scenarios с подменой только nginx/systemctl; diff/links; обязательный CI repository. Установка — после merged source, проверки отсутствия пересекающейся поставки, backup/CAS target и nginx -t; затем scoped reload/renewal и TLS/health readback.
+
+Checkpoint: локальная ветка codex/prepare-certbot-renewal-20261101. Реализация hook и runbook подготовлены; Linux behavior harness PASS. PR/required CI/merge и host installation пока PENDING. Детальная fleet inventory и baseline хранятся вне repository в пакете текущего аудита.
