@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, mutateWithCsrfRetry } from "./apiClient";
+import { RealtimeSessionHistory } from "./RealtimeSessionHistory";
 import {
   requestCredentialCollection,
   type Credential,
@@ -201,13 +202,18 @@ export function LiveTranscriptionPanel({
   const [consumerStatus, setConsumerStatus] = useState<Record<string, string>>(
     {},
   );
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const [preparingStart, setPreparingStart] = useState(false);
+  const startingRef = useRef(false);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const captureEpochRef = useRef(0);
   const controllerRef = useRef<RealtimeSessionController | null>(null);
   const credentialRequestEpochsRef = useRef(new Map<string, number>());
   const credentialRequestControllersRef = useRef(
     new Map<string, AbortController>(),
   );
   const sessionStartedAtRef = useRef<number | null>(null);
-  const sessionHasRetainedTextRef = useRef(false);
   const committedRef = useRef<HTMLDivElement | null>(null);
   const segmentsRef = useRef([...initialSegments]);
   const segmentMetadataRef = useRef<(RealtimeSegmentMetadata | null)[]>(initialSegments.map(() => null));
@@ -416,10 +422,10 @@ export function LiveTranscriptionPanel({
       draftRef.current?.client_session_id !== nextDraft.client_session_id ||
       draftRef.current?.revision !== nextDraft.revision
     ) {
-      return localSaved && serverSaved;
+      return localSaved || serverSaved;
     }
     setDraftStatus(localSaved && serverSaved ? "saved" : "degraded");
-    return localSaved && serverSaved;
+    return localSaved || serverSaved;
   }
 
   function checkpointDraft(
@@ -497,14 +503,27 @@ export function LiveTranscriptionPanel({
           return parsed;
         })
         .catch(() => undefined),
-    ]).then(([localDraft, serverDraft]) => {
+    ]).then(async ([localDraft, serverDraft]) => {
       if (cancelled) return;
-      if (serverDraft === undefined) {
-        setRecoveryState("error");
-      } else {
-        setRecoveryState("ready");
+      let recoveryUnavailable = serverDraft === undefined;
+      let candidate = newestRealtimeDraft(localDraft, serverDraft ?? null);
+      if (candidate && candidate.client_session_id !== serverDraft?.client_session_id) {
+        const localCandidate = candidate;
+        const verified = await runBoundedRequest(signal => api<unknown>(
+          `/projects/${projectId}/realtime/drafts/${encodeURIComponent(localCandidate.client_session_id)}`,
+          {signal, cache:"no-store"}), REALTIME_DRAFT_REQUEST_TIMEOUT_MS).catch(() => null);
+        if (cancelled) return;
+        if (verified?.status === "completed" && verified.value && typeof verified.value === "object"
+          && (verified.value as {cleared?:unknown}).cleared === true && (verified.value as {draft?:unknown}).draft === null) {
+          await deleteLocalRealtimeDraft(ownerUserId, projectId, localCandidate.client_session_id).catch(() => undefined);
+          if (cancelled) return;
+          candidate = serverDraft ?? null;
+        } else if (verified?.status !== "completed" || parseLatestRealtimeDraftResponse(verified.value, ownerUserId, projectId) === undefined) {
+          recoveryUnavailable = true;
+        }
       }
-      const candidate = newestRealtimeDraft(localDraft, serverDraft ?? null);
+      if (cancelled) return;
+      setRecoveryState(recoveryUnavailable ? "error" : "ready");
       if (
         candidate &&
         (candidate.committed_segments.length > 0 || candidate.partial)
@@ -521,6 +540,7 @@ export function LiveTranscriptionPanel({
       }
       cancelled = true;
       mountedRef.current = false;
+      captureEpochRef.current += 1;
       draftMutationGenerationRef.current += 1;
       if (partialCheckpointTimerRef.current !== null) {
         window.clearTimeout(partialCheckpointTimerRef.current);
@@ -699,18 +719,71 @@ export function LiveTranscriptionPanel({
     return () => window.removeEventListener("beforeunload", warnBeforeUnload);
   }, [running, actionableDraftText]);
 
+  function resetVisibleDraft() {
+    if (partialCheckpointTimerRef.current !== null) {
+      window.clearTimeout(partialCheckpointTimerRef.current);
+      partialCheckpointTimerRef.current = null;
+    }
+    draftRef.current = null;
+    segmentsRef.current = [];
+    segmentMetadataRef.current = [];
+    partialRef.current = "";
+    setSegments([]); setSegmentMetadata([]); setPartial("");
+    onSegmentsChange?.([]);
+    setRecoveryCandidate(null);
+    setDraftStatus("idle");
+    publishCaption([], "");
+  }
+
+  async function openSavedSession(candidate: RealtimeDraft) {
+    if (running || startingRef.current || draftDeletePendingRef.current || !activeRef.current) return;
+    const generation = captureEpochRef.current;
+    if (draftRef.current?.client_session_id !== candidate.client_session_id && realtimeTranscriptText(segmentsRef.current, partialRef.current)) {
+      checkpointDraft(segmentsRef.current, partialRef.current);
+      if (!draftRef.current || !(await persistDraft(draftRef.current))) {
+        setError("Текущий текст ещё не сохранён. Скачайте его перед переключением сессии.");
+        return;
+      }
+    }
+    if (captureEpochRef.current !== generation || startingRef.current || !mountedRef.current || !activeRef.current) return;
+    resetVisibleDraft();
+    draftRef.current = candidate;
+    sessionStartedAtRef.current = null;
+    setElapsedSeconds(0);
+    segmentsRef.current = [...candidate.committed_segments];
+    segmentMetadataRef.current = candidate.segment_metadata ?? candidate.committed_segments.map(() => null);
+    partialRef.current = candidate.partial;
+    setSegments(segmentsRef.current); setSegmentMetadata(segmentMetadataRef.current); setPartial(candidate.partial);
+    onSegmentsChange?.(segmentsRef.current);
+    setExportNotice("Сохранённая сессия открыта. Новая запись будет храниться отдельно.");
+  }
+
   async function start() {
-    if (running) return;
+    if (running || startingRef.current || draftDeletePendingRef.current || !activeRef.current) return;
+    startingRef.current = true;
+    setPreparingStart(true);
+    try {
+      if (realtimeTranscriptText(segmentsRef.current, partialRef.current)) {
+        checkpointDraft(segmentsRef.current, partialRef.current);
+        if (!draftRef.current || !(await persistDraft(draftRef.current))) {
+          setError("Не удалось сохранить прежнюю сессию. Скачайте её текст перед новой записью.");
+          return;
+        }
+      }
+      if (!mountedRef.current || !activeRef.current) return;
+      resetVisibleDraft();
+      const captureEpoch = ++captureEpochRef.current;
     setError("");
     setExportNotice("");
     sessionStartedAtRef.current = null;
-    sessionHasRetainedTextRef.current = Boolean(realtimeTranscriptText(segmentsRef.current, partialRef.current));
     consumerSequenceRef.current = 0;
     setElapsedSeconds(0);
     setFollowTranscript(true);
     const controller = new RealtimeSessionController(
       {
         onStatus: (nextStatus) => {
+          if (captureEpoch !== captureEpochRef.current) return;
+          if (nextStatus === "stopped" || nextStatus === "closed") setHistoryVersion(value => value + 1);
           if (
             (nextStatus === "connected" || nextStatus === "transcribing") &&
             sessionStartedAtRef.current === null
@@ -734,12 +807,14 @@ export function LiveTranscriptionPanel({
           }
         },
         onPartial: (text) => {
+          if (captureEpoch !== captureEpochRef.current) return;
           partialRef.current = text;
           setPartial(text);
           publishCaption(segmentsRef.current, text);
           schedulePartialCheckpoint(text);
         },
         onCommitted: (text, metadata) => {
+          if (captureEpoch !== captureEpochRef.current) return;
           if (partialCheckpointTimerRef.current !== null) {
             window.clearTimeout(partialCheckpointTimerRef.current);
             partialCheckpointTimerRef.current = null;
@@ -759,9 +834,10 @@ export function LiveTranscriptionPanel({
           publishCaption(next, partialRef.current);
           if (update.inserted && !metadata?.gap) deliverCommittedCaption(text);
         },
-        onError: setError,
-        onInputLevel: setInputLevel,
+        onError: (message) => { if (captureEpoch === captureEpochRef.current) setError(message); },
+        onInputLevel: (level) => { if (captureEpoch === captureEpochRef.current) setInputLevel(level); },
         onSourceLevel: (kind, level) => {
+          if (captureEpoch !== captureEpochRef.current) return;
           if (kind === "display") setDisplayInputLevel(level);
           else setMicrophoneInputLevel(level);
         },
@@ -798,6 +874,10 @@ export function LiveTranscriptionPanel({
       microphone,
       microphoneDeviceId: microphoneDeviceId || undefined,
     });
+    } finally {
+      startingRef.current = false;
+      setPreparingStart(false);
+    }
   }
 
   function stop() {
@@ -833,7 +913,7 @@ export function LiveTranscriptionPanel({
       segments: segmentsRef.current,
       metadata: segmentMetadataRef.current,
       partial: partialRef.current,
-      ...(sessionStartedAtRef.current !== null && !sessionHasRetainedTextRef.current ? { startedAt: new Date(sessionStartedAtRef.current).toISOString() } : {}),
+      ...(sessionStartedAtRef.current !== null ? { startedAt: new Date(sessionStartedAtRef.current).toISOString() } : {}),
     }, selectedExportSession));
   }
 
@@ -930,8 +1010,26 @@ export function LiveTranscriptionPanel({
   }
 
   async function restoreRecoveryDraft() {
-    const candidate = recoveryCandidate;
+    let candidate = recoveryCandidate;
     if (!candidate) return;
+    const recoveringId = candidate.client_session_id;
+    const generation = captureEpochRef.current;
+    const verified = await runBoundedRequest(signal => api<unknown>(
+      `/projects/${projectId}/realtime/drafts/${encodeURIComponent(recoveringId)}`,
+      {signal, cache:"no-store"}), REALTIME_DRAFT_REQUEST_TIMEOUT_MS).catch(() => null);
+    if (generation !== captureEpochRef.current || running || startingRef.current || !mountedRef.current) return;
+    if (verified?.status === "completed" && verified.value && typeof verified.value === "object"
+      && (verified.value as {cleared?:unknown}).cleared === true && (verified.value as {draft?:unknown}).draft === null) {
+      await deleteLocalRealtimeDraft(ownerUserId, projectId, candidate.client_session_id).catch(() => undefined);
+      if (generation !== captureEpochRef.current || !mountedRef.current) return;
+      setRecoveryCandidate(null);
+      setExportNotice("Эта сессия уже очищена в Studio. Старая локальная копия не восстановлена.");
+      return;
+    }
+    if (verified?.status === "completed") {
+      const latest = parseLatestRealtimeDraftResponse(verified.value, ownerUserId, projectId);
+      if (latest?.client_session_id === candidate.client_session_id) candidate = newestRealtimeDraft(candidate, latest)!;
+    }
     const retainedSegments = [...segmentsRef.current];
     const candidateSegments = [...candidate.committed_segments];
     const candidateExtendsRetained = segmentsArePrefix(
@@ -980,6 +1078,8 @@ export function LiveTranscriptionPanel({
     }
     draftRef.current = candidate;
     segmentsRef.current = candidateSegments;
+    sessionStartedAtRef.current = null;
+    setElapsedSeconds(0);
     segmentMetadataRef.current = candidate.segment_metadata ?? candidateSegments.map(() => null);
     setSegmentMetadata(segmentMetadataRef.current);
     partialRef.current = candidate.partial;
@@ -1026,7 +1126,7 @@ export function LiveTranscriptionPanel({
   const sourceReady =
     (displayAudio && displayAudioSupported) ||
     (microphone && microphoneSupported);
-  const startDisabled = running ||
+  const startDisabled = running || preparingStart ||
                 credentialsState !== "ready" ||
                 recoveryState === "loading" ||
                 recoveryCandidate !== null ||
@@ -1117,9 +1217,16 @@ export function LiveTranscriptionPanel({
             >
               Удалить черновик
             </button>
+            <button type="button" disabled={preparingStart || running} onClick={() => {
+              setRecoveryCandidate(null);
+              setExportNotice("Сохранённый текст доступен в списке Live-сессий. Можно начать отдельную запись.");
+            }}>Начать отдельную запись</button>
           </div>
         </section>
       )}
+
+      <RealtimeSessionHistory ownerUserId={ownerUserId} projectId={projectId} disabled={running || preparingStart}
+        currentDraft={draftRef.current} refreshKey={historyVersion} onOpen={openSavedSession} />
 
       <div className="live-config-grid">
         <section className="live-config-card">
@@ -1463,10 +1570,10 @@ export function LiveTranscriptionPanel({
             <h3>Текст Live-транскрибации</h3>
             <p className="muted">
               Хранится до вашей ручной очистки. Не попадает в
-              Google Docs, каталог, историю, аналитику или диагностику.
+              Google Docs, каталог, пакетную историю, аналитику или диагностику.
             </p>
             <p className="muted" aria-label="Статистика live-сессии">
-              Сессия: {formatElapsed(elapsedSeconds)} · Фрагментов:{" "}
+              Сессия: {running || elapsedSeconds > 0 ? formatElapsed(elapsedSeconds) : actionableDraftText ? "сохранённый текст" : "не запущена"} · Фрагментов:{" "}
               {segments.length} · Символов: {transcript.length}
             </p>
           </div>

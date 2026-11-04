@@ -972,6 +972,9 @@ code {
   padding: 1rem;
   background: var(--studio-soft);
 }
+.live-session-history ul { list-style: none; padding: 0; display: grid; gap: 0.75rem; }
+.live-session-history li { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem; }
+.live-session-history li span { flex: 1 1 18rem; min-width: 0; overflow-wrap: anywhere; }
 .live-config-card .check-row {
   display: flex;
   align-items: flex-start;

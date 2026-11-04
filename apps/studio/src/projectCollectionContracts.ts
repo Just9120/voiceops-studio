@@ -240,9 +240,9 @@ function requestCollectionPage(
   });
 }
 
-function parseCollectionPage<T>(
+export function parseCollectionPage<T>(
   candidate: unknown,
-  collectionKey: "sources" | "jobs",
+  collectionKey: "sources" | "jobs" | "sessions",
   items: T[],
 ): CollectionPage<T> | null {
   if (!isRecord(candidate) || !Array.isArray(candidate[collectionKey])) {

@@ -493,7 +493,28 @@ describe("LiveTranscriptionPanel", () => {
     );
   });
 
-  it("preserves prior sessions and downloads selected timed text without a new capture", async () => {
+  it("starts independent captures and opens prior timed sessions without another paid capture", async () => {
+    const stored = new Map<string, {client_session_id:string;revision:number;updated_at:string;expires_at:null;committed_segments:string[];partial:string;segment_metadata?:unknown[]}>();
+    const fetchMock = vi.mocked(fetch);
+    const defaultFetch = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation((url, init) => {
+      const path = String(url);
+      if (path.includes("/realtime/drafts/") && init?.method === "PUT") {
+        const id = path.split("/").at(-1)!;
+        const saved = { ...JSON.parse(String(init.body)), client_session_id:id,
+          updated_at:stored.get(id)?.updated_at ?? `2026-08-22T12:00:0${stored.size}Z`, expires_at:null };
+        stored.set(id, saved);
+        return response({draft:{client_session_id:id,revision:saved.revision,updated_at:saved.updated_at,expires_at:null}});
+      }
+      if (path.includes("/realtime/drafts?page_size=")) return response({sessions:[...stored.values()].map(row => ({
+        client_session_id:row.client_session_id,revision:row.revision,updated_at:row.updated_at,
+        committed_segment_count:row.committed_segments.length,committed_character_count:row.committed_segments.join("").length,partial_character_count:row.partial.length,
+      })),next_cursor:null,page_size:50});
+      if (path.includes("/realtime/drafts/") && !path.endsWith("/latest") && !init?.method) {
+        return response({draft:stored.get(path.split("/").at(-1)!) ?? null,cleared:false});
+      }
+      return defaultFetch?.(url, init) ?? response({ok:true});
+    });
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
     click.mockClear();
     render(<LiveTranscriptionPanel projectId="project-safe" csrf="csrf-safe" onCsrf={vi.fn()} active />);
@@ -501,34 +522,34 @@ describe("LiveTranscriptionPanel", () => {
     await waitFor(() => expect(start).toBeEnabled());
     await userEvent.click(start);
     act(() => controllerState.instances[0].callbacks.onCommitted("первая сессия", {
-      id: "first.0", session_id: "capture_first_123456", start_seconds: 10, end_seconds: 12,
+      id:"first.0", session_id:"capture_first_123456", start_seconds:10, end_seconds:12,
     }));
-    await userEvent.click(screen.getByRole("button", { name: "Остановить" }));
-    await userEvent.click(screen.getByRole("button", { name: "Начать" }));
-    await userEvent.click(screen.getByRole("button", { name: "Скачать .txt" }));
-    const retainedBlob = vi.mocked(URL.createObjectURL).mock.calls.at(-1)![0] as Blob;
-    const retainedText = await new Promise<string>((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.readAsText(retainedBlob);
+    await userEvent.click(screen.getByRole("button", {name:"Остановить"}));
+    await userEvent.click(start);
+    await waitFor(() => expect(controllerState.instances).toHaveLength(2));
+    expect(screen.queryByText("первая сессия")).not.toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"Скачать .txt"})).toBeDisabled();
+    act(() => {
+      controllerState.instances[0].callbacks.onCommitted("поздняя старая реплика");
+      controllerState.instances[1].callbacks.onCommitted("вторая сессия", {
+        id:"second.0",session_id:"capture_second_123456",start_seconds:1,end_seconds:2,
+      });
     });
-    expect(retainedText).toContain("первая сессия");
-    expect(retainedText).not.toContain("Created at:");
-    click.mockClear();
-    act(() => controllerState.instances[1].callbacks.onCommitted("вторая сессия", {
-      id: "second.0", session_id: "capture_second_123456", start_seconds: 1, end_seconds: 2,
-    }));
-    expect(screen.getByText("первая сессия")).toBeInTheDocument();
+    expect(screen.queryByText("поздняя старая реплика")).not.toBeInTheDocument();
     expect(screen.getByText("вторая сессия")).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "SRT" })).toBeDisabled();
-    await userEvent.selectOptions(screen.getByLabelText("Сессия скачивания Live"), "capture_second_123456");
-    expect(screen.getByRole("option", { name: "SRT" })).toBeEnabled();
+    expect(screen.getByRole("option",{name:"SRT"})).toBeEnabled();
     await userEvent.selectOptions(screen.getByLabelText("Формат скачивания Live"), "srt");
-    await userEvent.click(screen.getByRole("button", { name: "Скачать .srt" }));
+    await userEvent.click(screen.getByRole("button",{name:"Скачать .srt"}));
     expect(click).toHaveBeenCalledOnce();
+    await userEvent.click(screen.getByRole("button",{name:"Остановить"}));
+    await userEvent.click(screen.getByText("Сохранённые Live-сессии"));
+    const buttons = await screen.findAllByRole("button",{name:"Открыть сессию"});
+    expect(buttons).toHaveLength(2);
+    await userEvent.click(buttons.at(-1)!);
+    expect(await screen.findByText("первая сессия")).toBeInTheDocument();
+    expect(screen.queryByText("вторая сессия")).not.toBeInTheDocument();
     expect(controllerState.instances).toHaveLength(2);
     expect(controllerState.instances[1].start).toHaveBeenCalledOnce();
-    expect(screen.getByText("первая сессия")).toBeInTheDocument();
   });
 
   it("replaces indexed corrections, preserves the next partial and gates timed downloads", async () => {
@@ -629,6 +650,30 @@ describe("LiveTranscriptionPanel", () => {
       "Фрагментов: 2",
     );
     expect(onSegmentsChange).not.toHaveBeenCalled();
+  });
+
+  it("verifies a local recovery candidate before offering text cleared by another browser", async () => {
+    const local = realtimeDrafts.makeRealtimeDraft({ownerUserId:"owner-safe", projectId:"project-safe",
+      clientSessionId:"session_retired_123456", revision:4, committedSegments:["retired local text"],partial:""});
+    const load = vi.spyOn(realtimeDrafts,"loadLocalRealtimeDraft").mockResolvedValue(local);
+    const remove = vi.spyOn(realtimeDrafts,"deleteLocalRealtimeDraft").mockResolvedValue(undefined);
+    const fallback = vi.mocked(fetch).getMockImplementation();
+    let resolveRead: ((value:Response) => void) | undefined;
+    vi.mocked(fetch).mockImplementation((url, init) => {
+      if (String(url).endsWith(`/realtime/drafts/${local.client_session_id}`) && !init?.method) {
+        return new Promise<Response>(resolve => { resolveRead=resolve; });
+      }
+      return fallback?.(url,init) ?? response({ok:true});
+    });
+    render(<LiveTranscriptionPanel projectId="project-safe" csrf="csrf" onCsrf={vi.fn()} active />);
+    await waitFor(() => expect(resolveRead).toBeDefined());
+    expect(screen.getByRole("button",{name:"Начать"})).toBeDisabled();
+    expect(screen.queryByRole("button",{name:"Восстановить"})).not.toBeInTheDocument();
+    await act(async () => { resolveRead?.(await response({draft:null,cleared:true})); });
+    await waitFor(() => expect(screen.getByRole("button",{name:"Начать"})).toBeEnabled());
+    expect(remove).toHaveBeenCalledWith("owner-safe","project-safe",local.client_session_id);
+    expect(screen.queryByText("retired local text")).not.toBeInTheDocument();
+    load.mockRestore(); remove.mockRestore();
   });
 
   it("offers an owner-scoped server draft after reload and restores partial as unconfirmed", async () => {
