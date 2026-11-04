@@ -15,7 +15,9 @@ from .google_connection_access import GoogleConnectionAccessError, refresh_user_
 from .google_drive import GoogleDriveContentError, GoogleDriveContentReason, fetch_drive_file_content, fetch_drive_file_metadata
 from .job_claim_lease import is_lease_active
 from .job_source_availability import verify_processing_job_sources
-from .models import JobSourceStatus, JobStatus, Project, SourceType, SourceUploadStatus, TranscriptionJob, TranscriptionJobSource
+from .audio_timeline import AudioTimeline, AudioTimelineError
+from .media_context import load_prepared_audio_timeline, parse_prepared_audio_context
+from .models import JobSourceStatus, JobStatus, Project, Source, SourceType, SourceUploadStatus, TranscriptionJob, TranscriptionJobSource
 from .security import utcnow
 from .work_progress import report_work
 from .yandex_disk import YandexDiskClient, YandexDiskError
@@ -77,6 +79,8 @@ class MaterializedJobSource:
     source_type: str | None = None
     source_created_at: datetime | None = None
     source_created_at_provenance: str | None = None
+    prepared_audio_context_json: str | None = field(default=None, repr=False)
+    original_timeline: AudioTimeline | None = field(default=None, repr=False)
 
     def __repr__(self) -> str:
         return (
@@ -118,6 +122,7 @@ class _SourceSnapshot:
     original_filename: str
     drive_revision_id: str | None = None
     drive_md5_checksum: str | None = None
+    prepared_audio_context_json: str | None = field(default=None, repr=False)
 
 
 @contextmanager
@@ -167,6 +172,10 @@ def materialize_processing_job_source(
             if not availability.ready:
                 raise SourceMaterializationError(_availability_reason(availability.blocking_reasons))
             snap = _load_selected_snapshot(db, job_id, job_source_id, lease_owner_id, lease_generation, check_now, settings)
+            try:
+                timeline = load_prepared_audio_timeline(db, db.get(Source, snap.source_id), owner_user_id=snap.job_owner_user_id)
+            except AudioTimelineError as exc:
+                raise SourceMaterializationError(SourceMaterializationReason.selected_source_changed) from exc
             # All authority fields needed for the download are now immutable
             # scalars. A fresh snapshot is compared after the external I/O.
             db.rollback()
@@ -188,6 +197,7 @@ def materialize_processing_job_source(
                 disk_client_factory=disk_client_factory,
             )
             _validate_materialized_metadata(snap, byte_count, response_mime, response_length, settings)
+            _verify_prepared_content(temp, snap.prepared_audio_context_json, check)
             _compare_snapshot(snap, _load_selected_snapshot(db, job_id, job_source_id, lease_owner_id, lease_generation, clock(), settings))
             temp.seek(0)
             handle = MaterializedJobSource(
@@ -200,6 +210,8 @@ def materialize_processing_job_source(
                 source_type=snap.source_type,
                 source_created_at=snap.source_created_at,
                 source_created_at_provenance=snap.source_created_at_provenance,
+                prepared_audio_context_json=snap.prepared_audio_context_json,
+                original_timeline=timeline,
             )
         except SourceMaterializationError:
             raise
@@ -232,6 +244,8 @@ def _load_selected_snapshot(db, job_id, job_source_id, owner, generation, now, s
     if rel is None or rel.job_id != job.id or rel.source is None:
         raise SourceMaterializationError(SourceMaterializationReason.job_source_not_found)
     src = rel.source
+    if src.prepared_audio_context_json is not None and parse_prepared_audio_context(src.prepared_audio_context_json) is None:
+        raise SourceMaterializationError(SourceMaterializationReason.selected_source_changed)
     mime = normalize_source_mime_type(src.mime_type)
     if rel.status == JobSourceStatus.skipped or src.project_id != job.project_id or (not allow_retired_source and (src.upload_status != SourceUploadStatus.uploaded or src.deleted_at is not None)):
         raise SourceMaterializationError(SourceMaterializationReason.job_source_not_processable)
@@ -241,7 +255,7 @@ def _load_selected_snapshot(db, job_id, job_source_id, owner, generation, now, s
         raise SourceMaterializationError(SourceMaterializationReason.job_source_not_processable)
     if not validate_source_size(src.size_bytes, settings.source_max_upload_bytes):
         raise SourceMaterializationError(SourceMaterializationReason.source_too_large)
-    return _SourceSnapshot(job.id, rel.id, src.id, rel.position, _value(rel.status), _value(src.source_type), src.project_id, src.drive_file_id, src.s3_bucket, src.s3_object_key, source_reference_class(src), mime, src.size_bytes, _value(src.upload_status), src.deleted_at, src.expires_at, src.source_created_at, src.source_created_at_provenance, job.lease_owner_id, job.lease_generation, job.cancel_requested_at, _value(job.status), project.archived_at, project.owner_user_id, job.owner_user_id, job.project_id, src.original_filename, src.drive_revision_id, src.drive_md5_checksum)
+    return _SourceSnapshot(job.id, rel.id, src.id, rel.position, _value(rel.status), _value(src.source_type), src.project_id, src.drive_file_id, src.s3_bucket, src.s3_object_key, source_reference_class(src), mime, src.size_bytes, _value(src.upload_status), src.deleted_at, src.expires_at, src.source_created_at, src.source_created_at_provenance, job.lease_owner_id, job.lease_generation, job.cancel_requested_at, _value(job.status), project.archived_at, project.owner_user_id, job.owner_user_id, job.project_id, src.original_filename, src.drive_revision_id, src.drive_md5_checksum, src.prepared_audio_context_json)
 
 
 def processing_source_control(db, *, job_id, job_source_id, lease_owner_id, lease_generation, clock, settings, expected=None):
@@ -336,6 +350,20 @@ def _copy_source_bytes(snap, temp, settings, storage_factory, drive_token_resolv
         raise SourceMaterializationError(SourceMaterializationReason.external_source_unavailable) from exc
     finally:
         stream.close()
+
+
+def _verify_prepared_content(stream, context_json, check):
+    """Verify the exact prepared body for every transport before STT can read it."""
+    context = parse_prepared_audio_context(context_json)
+    if context is None or context.get("version") != 2:
+        return
+    stream.seek(0)
+    digest = hashlib.sha256()
+    while chunk := stream.read(_CHUNK_SIZE):
+        check()
+        digest.update(chunk)
+    if digest.hexdigest() != context["content_sha256"]:
+        raise SourceMaterializationError(SourceMaterializationReason.selected_source_changed)
 
 
 def _validate_materialized_metadata(snap, count, response_mime, response_length, settings):

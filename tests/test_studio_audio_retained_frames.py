@@ -170,3 +170,78 @@ def test_real_concat_render_and_reload_regenerate_recorded_edits_without_running
     second = render_audio_result(db, job=job, root=tmp_path, paths=paths, probes=probes, settings=settings)
     assert second.recipe_json == first.recipe_json and second.timeline_json == first.timeline_json
     assert second.sha256_checksum == first.sha256_checksum
+
+
+def test_real_repeated_preparation_and_concat_keep_the_root_recording_clock(tmp_path):
+    """Actual PCM -> retained edit -> verified Drive body -> second trim/concat."""
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("FFmpeg unavailable; real nested rendering remains required in Linux CI")
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from studio_api.audio_export_receipt import AudioExportReceipt
+    from studio_api.media_context import prepared_audio_source_context
+    from studio_api.models import Base, User, Project, Source, SourceType, SourceUploadStatus, AudioPreparationJob, AudioPreparationJobInput
+    rate = 44100
+    originals = [array("h", [10000] * round(.4 * rate) + [0] * round(1.2 * rate) + [-10000] * round(.4 * rate)),
+                 array("h", [15000] * rate)]
+    source_paths = []
+    for index, samples in enumerate(originals):
+        path = tmp_path / f"original-{index}.wav"
+        with wave.open(str(path), "wb") as out:
+            out.setnchannels(1); out.setsampwidth(2); out.setframerate(rate); out.writeframes(samples.tobytes())
+        source_paths.append(path)
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    settings = SimpleNamespace(source_max_upload_bytes=1024 * 1024)
+    with Session(engine, expire_on_commit=False) as db:
+        db.add_all([User(id="owner", email="nested@example.test"), Project(id="project", owner_user_id="owner", title="Synthetic")]); db.flush()
+        sources = [Source(project_id="project", source_type=SourceType.google_drive, drive_file_id=f"original-{i}",
+            original_filename=p.name, size_bytes=p.stat().st_size, mime_type="audio/wav", upload_status=SourceUploadStatus.uploaded)
+            for i, p in enumerate(source_paths)]
+        db.add_all(sources); db.flush()
+        first = AudioPreparationJob(project_id="project", owner_user_id="owner", title="Synthetic", recipe_version=2,
+            status=AudioPreparationStatus.processing, total_input_duration_ms=2000,
+            options_json=serialize_options(options(output_format="wav", trim_start_seconds=.2, trim_end_seconds=1.8)))
+        db.add(first); db.flush()
+        first.inputs = [AudioPreparationJobInput(source=sources[0], position=0)]
+        first_root = tmp_path / "first"; first_root.mkdir()
+        rendered = render_audio_result(db, job=first, root=first_root, paths=[source_paths[0]], settings=settings)
+        first.status = AudioPreparationStatus.completed
+        first.output_duration_ms = rendered.duration_ms
+        first.output_timeline_json = rendered.timeline_json
+        first.output_drive_file_id = "prepared"
+        first.output_drive_web_view_url = "https://drive.google.com/file/d/prepared/view"
+        first.retained_frames_json = rendered.recipe_json
+        payloads = {"prepared": rendered.path.read_bytes(), "original-1": source_paths[1].read_bytes()}
+        receipt = AudioExportReceipt("prepared", rendered.size_bytes, rendered.sha256_checksum, None)
+        prepared = Source(project_id="project", source_type=SourceType.google_drive, drive_file_id="prepared",
+            original_filename="prepared.wav", size_bytes=rendered.size_bytes, mime_type="audio/wav",
+            upload_status=SourceUploadStatus.uploaded, prepared_audio_context_json=prepared_audio_source_context(first, receipt))
+        db.add(prepared); db.flush()
+        boundary = AudioTimeline.parse(rendered.timeline_json).output_duration_seconds
+        second = AudioPreparationJob(project_id="project", owner_user_id="owner", title="Synthetic", recipe_version=2,
+            status=AudioPreparationStatus.processing, total_input_duration_ms=round((boundary + 1) * 1000),
+            options_json=serialize_options(options(output_format="wav", silence_enabled=False,
+                trim_start_seconds=boundary-.1, trim_end_seconds=boundary+.2)))
+        db.add(second); db.flush()
+        second.inputs = [AudioPreparationJobInput(source=prepared, position=0), AudioPreparationJobInput(source=sources[1], position=1)]
+        db.commit()
+        class Stream:
+            def __init__(self, payload): self.payload = payload; self.closed = False
+            def iter_chunks(self, _): yield self.payload
+            def close(self): self.closed = True
+        streams = []
+        def download(token, file_id):
+            stream = Stream(payloads[file_id]); streams.append(stream); return stream
+        second_root = tmp_path / "second"; second_root.mkdir()
+        result = render_audio_result(db, job=second, root=second_root, settings=settings,
+            drive_token_resolver=lambda *a, **kw: "synthetic", drive_content_fetcher=download)
+        assert all(s.closed for s in streams)
+        timeline = AudioTimeline.parse(result.timeline_json)
+        assert timeline.original_duration_us == 3_000_000
+        assert timeline.retained == ((1_700_000, 1_800_000), (2_000_000, 2_200_000))
+        assert timeline.original_interval(.1, .1) == (2, 2)
+        with wave.open(str(result.path), "rb") as out:
+            pcm = array("h"); pcm.frombytes(out.readframes(out.getnframes()))
+        assert pcm == array("h", [-10000] * round(.1 * rate) + [15000] * round(.2 * rate))
+    engine.dispose()

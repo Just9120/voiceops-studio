@@ -193,6 +193,54 @@ def test_prepared_document_retains_inputs_recipe_not_export_date(db, models, cas
         assert next(line for line in body.splitlines() if line.startswith(prefix)) in rewritten
 
 
+@pytest.mark.parametrize("proof", ["none", "verified", "different_content", "changed_during_write"])
+def test_drive_preparation_provenance_requires_the_exact_verified_content(db, models, proof):
+    from studio_api.audio_export_receipt import AudioExportReceipt
+    from studio_api.media_context import prepared_audio_source_context
+    from studio_api.job_google_docs_output import create_processing_job_google_doc_from_transcript, JobGoogleDocsOutputError
+    user, project, source, job, relation, now = make_job(db, models)
+    source.source_type = models.SourceType.google_drive
+    source.drive_file_id = "prepared-drive-file"
+    source.source_created_at_provenance = "google_drive_created_time"
+    original = models.Source(project_id=project.id, source_type=models.SourceType.local_upload,
+        original_filename="actual-recording.wav", mime_type="audio/wav", size_bytes=5,
+        source_created_at=datetime(2024, 1, 1), source_created_at_provenance="embedded_media_metadata",
+        upload_status=models.SourceUploadStatus.uploaded)
+    db.add(original); db.flush()
+    receipt = AudioExportReceipt(source.drive_file_id, 5, "a" * 64, None)
+    preparation = models.AudioPreparationJob(owner_user_id=user.id, project_id=project.id,
+        title="Prepared", options_json='{"silence_enabled":true,"output_format":"flac"}',
+        status=models.AudioPreparationStatus.completed, output_drive_file_id=source.drive_file_id,
+        output_drive_web_view_url="https://drive.google.com/file/d/prepared-drive-file/view",
+        output_drive_receipt_json=receipt.serialize(), total_input_duration_ms=2000, output_duration_ms=1000)
+    db.add(preparation); db.flush()
+    db.add(models.AudioPreparationJobInput(job_id=preparation.id, source_id=original.id, position=0))
+    if proof != "none":
+        source.prepared_audio_context_json = prepared_audio_source_context(preparation, receipt)
+    if proof == "different_content":
+        preparation.output_drive_receipt_json = AudioExportReceipt(source.drive_file_id, 5, "b" * 64, None).serialize()
+    db.commit()
+    def mutate():
+        source.prepared_audio_context_json = None
+        db.commit()
+    transport = FakeTransport(mutate if proof == "changed_during_write" else None)
+    context = create_processing_job_google_doc_from_transcript(db, job_id=job.id, job_source_id=relation.id,
+        lease_owner_id="worker", lease_generation=7, transcript=Transcript(), settings=Settings(),
+        clock=lambda: now, token_resolver=lambda *a, **k: "synthetic", metadata_fetcher=good_meta,
+        google_docs_transport=transport)
+    if proof in {"different_content", "changed_during_write"}:
+        expected = "selected_source_changed" if proof == "different_content" else "lifecycle_changed_after"
+        with pytest.raises(JobGoogleDocsOutputError, match=expected):
+            with context: pytest.fail("a changed body/context must not acquire old recording provenance")
+        assert len(transport.calls) == (0 if proof == "different_content" else 1)
+    else:
+        with context: pass
+        body = transport.calls[0]["document_text"]
+        assert ("Original source: actual-recording.wav" in body) == (proof == "verified")
+        assert ("Created at: 2024-01-01" in body) == (proof == "verified")
+        assert "Created at: 2025-12-31" not in body
+
+
 def test_transport_multipart_and_redaction():
     from studio_api.google_docs_output import GoogleDocsTranscriptTransport
     calls = []

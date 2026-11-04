@@ -10,7 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .audio_preparation import AudioOutputFormat, AudioPreparationError, AudioPreparationReason, build_ffmpeg_command, probe_media, render_output_filename, run_processing, trim_range
-from .audio_timeline import AudioTimeline
+from .audio_timeline import AudioTimeline, AudioTimelineError
+from .media_context import load_prepared_audio_timeline, parse_prepared_audio_context
 from .audio_preparation_service import AudioPreparationServiceError, AudioPreparationServiceReason, deserialize_options, serialize_options
 from .google_connection_access import refresh_user_google_drive_access_token
 from .google_drive import fetch_drive_file_content
@@ -62,6 +63,10 @@ def materialize_audio_inputs(
             or not is_supported_source_mime_type(source.mime_type)
         ):
             raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
+        selected_identity = _input_identity(source)
+        prepared_context = getattr(source, "prepared_audio_context_json", None)
+        if prepared_context is not None and parse_prepared_audio_context(prepared_context) is None:
+            raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
         extension = safe_filename(source.original_filename).rsplit(".", 1)[-1].lower()
         if not extension or len(extension) > 12:
             extension = "media"
@@ -105,6 +110,7 @@ def materialize_audio_inputs(
                 raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable) from exc
             if copied <= 0:
                 raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
+            _verify_input_body(db, source, selected_identity, path, prepared_context, check)
             total_copied += copied
             paths.append(path)
             continue
@@ -140,8 +146,55 @@ def materialize_audio_inputs(
             raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
         if checksum is not None and checksum.hexdigest() != source.drive_md5_checksum:
             raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
+        _verify_input_body(db, source, selected_identity, path, prepared_context, check)
         paths.append(path)
     return paths
+
+
+def _input_identity(source):
+    return tuple(getattr(source, name, None) for name in (
+        "id", "project_id", "source_type", "upload_status", "deleted_at", "expires_at",
+        "s3_bucket", "s3_object_key", "drive_file_id", "drive_revision_id", "drive_md5_checksum",
+        "size_bytes", "mime_type", "prepared_audio_context_json"))
+
+
+def _verify_input_body(db, source, selected_identity, path, context_json, check):
+    context = parse_prepared_audio_context(context_json)
+    if context and context.get("version") == 2:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(_COPY_CHUNK_SIZE), b""):
+                check()
+                digest.update(chunk)
+        if digest.hexdigest() != context["content_sha256"]:
+            raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
+    from sqlalchemy import inspect
+    if inspect(source, raiseerr=False) is not None:
+        db.refresh(source)
+    if _input_identity(source) != selected_identity:
+        raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
+
+
+def _compose_input_timeline(db, job, probes, child):
+    """Keep the root recording clock through repeated trim/silence/concat edits."""
+    if len(job.inputs) != len(probes):
+        raise AudioTimelineError("prepared_audio_inputs_changed")
+    parents = []
+    for item, probe in zip(job.inputs, probes):
+        source = item.source
+        context_json = getattr(source, "prepared_audio_context_json", None)
+        if context_json:
+            # Historical summaries contain durations, not the removed ranges.
+            context = parse_prepared_audio_context(context_json)
+            if context is None or context.get("version") != 2 or context["timeline_sha256"] is None:
+                return None
+            timeline = load_prepared_audio_timeline(db, source, owner_user_id=job.owner_user_id)
+            if timeline is None or timeline.output_duration_us != round(probe.duration_seconds * 1_000_000):
+                raise AudioTimelineError("prepared_audio_duration_changed")
+        else:
+            timeline = AudioTimeline.identity(probe.duration_seconds)
+        parents.append(timeline)
+    return AudioTimeline.concatenate(parents).compose(child)
 
 
 
@@ -305,22 +358,23 @@ def render_audio_result(db, *, job, root, settings, output_root=None, paths=None
                 sha256.update(chunk)
                 md5.update(chunk)
         sha256_checksum, md5_checksum = sha256.hexdigest(), md5.hexdigest()
-        nested = any(
-            item.source and item.source.prepared_audio_context_json for item in job.inputs
-        )
+        timeline = None
         if recipe:
             timeline = recipe.timeline()
             if abs(output_probe.duration_seconds - timeline.output_duration_seconds) > 0.005:
                 raise AudioPreparationError(AudioPreparationReason.timeline_unavailable)
-            if not nested:
-                timeline_json = timeline.serialize()
-        # Legacy silence flags do not establish removed ranges. Nested sources
-        # still require composition with their recorded parent map.
-        elif not options.silence_enabled and not nested:
+        # Legacy silence flags cannot establish removed ranges; plain trims can.
+        elif not options.silence_enabled:
             total = sum(probe.duration_seconds for probe in probes)
             start, end = trim_range(options, total)
             if abs(output_probe.duration_seconds - (end - start)) <= 0.005:
-                timeline_json = AudioTimeline.from_seconds(total, [(start, end)]).serialize()
+                timeline = AudioTimeline.from_seconds(total, [(start, end)])
+        if timeline is not None:
+            try:
+                original = _compose_input_timeline(db, job, probes, timeline)
+                timeline_json = original.serialize() if original else None
+            except AudioTimelineError as exc:
+                raise AudioPreparationError(AudioPreparationReason.timeline_unavailable) from exc
     return RenderedAudio(output_path, "Фрагмент.wav" if preview else job.output_filename or output_filename,
         "audio/wav" if preview else job.output_mime_type or mime_type, output_size, round(output_probe.duration_seconds * 1000),
         sha256_checksum, md5_checksum, timeline_json, recipe.serialize() if recipe and not preview else None)

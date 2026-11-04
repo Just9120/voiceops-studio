@@ -483,6 +483,63 @@ def test_heartbeat_only_lease_expiry_change_does_not_trip_source_snapshot(sqlite
         assert handle.byte_count == 100
 
 
+@pytest.mark.parametrize("transport", ["local_upload", "google_drive", "yandex_disk"])
+@pytest.mark.parametrize("changed", [False, True])
+def test_prepared_body_hash_is_checked_before_any_transport_reaches_stt(sqlite_session, models, transport, changed):
+    import hashlib
+    import json
+    from studio_api.job_source_materialization import materialize_processing_job_source, SourceMaterializationError
+    from studio_api.yandex_disk import resource_from_payload
+    payload = b"a" * 100
+    context = json.dumps(dict(version=2, job_id="0" * 36, input_duration_ms=5000,
+        output_duration_ms=3000, pauses_removed=True,
+        content_sha256=hashlib.sha256(payload).hexdigest(), timeline_sha256=None))
+    job, _, relation, _, now, _ = make_job(sqlite_session, models,
+        source_type=getattr(models.SourceType, transport), source_kwargs={"prepared_audio_context_json": context})
+    actual = b"b" * 100 if changed else payload
+    body = FakeBody([actual[:50], actual[50:]])
+    stream = FakeStream(body)
+    resource = resource_from_payload({"type": "file", "path": "disk:/test.mp3",
+        "name": "test.mp3", "size": 100, "mime_type": "audio/mpeg"})
+    class DiskClient:
+        def download_to(self, selected, target, *, maximum_bytes, check):
+            check()
+            target.write(actual)
+            return len(actual)
+    operation = materialize_processing_job_source(sqlite_session, job_id=job.id, job_source_id=relation.id,
+        lease_owner_id="worker-1", lease_generation=1, settings=SimpleSettings(), now=now,
+        storage_factory=lambda _: FakeStorage(stream), drive_token_resolver=lambda *a, **kw: "synthetic",
+        drive_content_fetcher=lambda *a, **kw: stream, drive_metadata_fetcher=fake_drive_meta,
+        disk_resource_verifier=lambda *a, **kw: resource,
+        disk_token_resolver=lambda *a, **kw: "synthetic", disk_client_factory=lambda _: DiskClient())
+    if changed:
+        with pytest.raises(SourceMaterializationError, match="selected_source_changed"):
+            with operation:
+                pytest.fail("different same-sized prepared bytes must not reach STT")
+    else:
+        with operation as selected:
+            assert selected.stream.read() == payload
+            assert selected.prepared_audio_context_json == context
+            assert context not in repr(selected)
+    if transport != "yandex_disk":
+        assert body.closed
+
+
+def test_prepared_context_change_during_download_is_rejected(sqlite_session, models):
+    import json
+    from studio_api.job_source_materialization import SourceMaterializationError
+    context = dict(job_id="0" * 36, input_duration_ms=5000, output_duration_ms=3000, pauses_removed=True)
+    job, source, rel, _, now, _ = make_job(sqlite_session, models,
+        source_kwargs={"prepared_audio_context_json": json.dumps(context)})
+    def mutation():
+        source.prepared_audio_context_json = json.dumps(dict(context, input_duration_ms=6000))
+        sqlite_session.flush()
+    storage = FakeStorage(FakeStream(FakeBody([b"a" * 100], before_eof=mutation)))
+    with pytest.raises(SourceMaterializationError, match="selected_source_changed"):
+        with materialize(sqlite_session, job, rel, storage=storage, now=now):
+            pytest.fail("a different recipe must not be applied to the downloaded body")
+
+
 @pytest.mark.parametrize("mutate,reason", [
     (lambda m,j,r,s,n: setattr(j, "lease_owner_id", "other"), "lease_not_owned"),
     (lambda m,j,r,s,n: setattr(j, "lease_generation", 2), "lease_not_owned"),

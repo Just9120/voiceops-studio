@@ -1,5 +1,6 @@
 """Prepared bytes and original clock must travel as one recorded receipt."""
 import json
+import hashlib
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -47,3 +48,36 @@ def test_render_receipt_distinguishes_equal_size_bytes_and_records_only_known_ti
         assert timeline == AudioTimeline.from_seconds(120, [(30, 90)])
         assert timeline.original_interval(0, 1) == (30, 31)
         assert timeline.prepared_interval(40, 50) == (10, 20)
+
+
+@pytest.mark.parametrize("mutation", [None, "body", "context"])
+def test_audio_reprocessing_checks_prepared_bytes_and_recipe_before_rendering(tmp_path, mutation):
+    from studio_api.audio_result_rendering import materialize_audio_inputs
+    from studio_api.audio_preparation_service import AudioPreparationServiceError
+    from studio_api.models import SourceType, SourceUploadStatus
+    context = dict(version=2, job_id="0" * 36, input_duration_ms=5000, output_duration_ms=3000,
+        pauses_removed=True, content_sha256=hashlib.sha256(b"a" * 100).hexdigest(), timeline_sha256=None)
+    source = SimpleNamespace(project_id="project", source_type=SourceType.google_drive,
+        upload_status=SourceUploadStatus.uploaded, deleted_at=None, expires_at=None, size_bytes=100,
+        mime_type="audio/wav", original_filename="prepared.wav", drive_file_id="prepared",
+        drive_revision_id=None, drive_md5_checksum=None, prepared_audio_context_json=json.dumps(context))
+    class Stream:
+        closed = False
+        def iter_chunks(self, size):
+            yield b"b" * 100 if mutation == "body" else b"a" * 100
+            if mutation == "context":
+                source.prepared_audio_context_json = json.dumps(dict(context, input_duration_ms=6000))
+        def close(self): self.closed = True
+    stream = Stream()
+    job = SimpleNamespace(project_id="project", owner_user_id="owner", inputs=[SimpleNamespace(source=source, position=0)])
+    db = SimpleNamespace(get=lambda *a: SimpleNamespace(owner_user_id="owner", archived_at=None))
+    operation = lambda: materialize_audio_inputs(db, job=job, root=tmp_path,
+        settings=SimpleNamespace(source_max_upload_bytes=1000), storage_factory=None,
+        drive_token_resolver=lambda *a, **kw: "synthetic", drive_content_fetcher=lambda *a, **kw: stream)
+    if mutation:
+        with pytest.raises(AudioPreparationServiceError, match="source_unavailable"):
+            operation()
+    else:
+        paths = operation()
+        assert len(paths) == 1 and paths[0].read_bytes() == b"a" * 100
+    assert stream.closed

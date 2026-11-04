@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
 
@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 from .google_connection_access import GoogleConnectionAccessError, refresh_user_google_drive_access_token
 from .google_drive import GOOGLE_FOLDER_MIME_TYPE, GoogleDriveMetadataError, GoogleDriveMetadataReason, fetch_drive_file_metadata
 from .job_claim_lease import is_lease_active
+from .media_context import parse_prepared_audio_context
 from .models import JobStatus, Project, SourceType, SourceUploadStatus, TranscriptionJob, TranscriptionJobSource
 from .security import utcnow
 from .yandex_disk import YandexDiskError
@@ -85,6 +86,7 @@ class SourceRelationSnapshot:
     expires_at: datetime | None
     drive_revision_id: str | None = None
     drive_md5_checksum: str | None = None
+    prepared_audio_context_json: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -230,6 +232,8 @@ def _snapshot(job, js, *, now):
     if src is None:
         return {"source_id": None, "position": js.position, "source_type": None, "original_filename": None, "mime_type": None, "size_bytes": None, "reasons": ["source_missing"]}
     source_type = str(src.source_type.value)
+    if src.prepared_audio_context_json is not None and parse_prepared_audio_context(src.prepared_audio_context_json) is None:
+        reasons.append("source_state_changed")
     mime = normalize_source_mime_type(src.mime_type)
     if src.project_id != job.project_id:
         reasons.append("source_project_mismatch")
@@ -241,7 +245,7 @@ def _snapshot(job, js, *, now):
         reasons.append("unsupported_source_type")
     if not is_supported_source_mime_type(mime):
         reasons.append("unsupported_mime_type")
-    return {"source_id": src.id, "position": js.position, "source_type": source_type, "original_filename": src.original_filename, "mime_type": mime, "size_bytes": src.size_bytes, "project_id": src.project_id, "upload_status": str(src.upload_status.value), "deleted_at": src.deleted_at, "expires_at": src.expires_at, "s3_bucket": src.s3_bucket, "s3_object_key": src.s3_object_key, "reference_class": source_reference_class(src), "drive_file_id": src.drive_file_id, "drive_revision_id": src.drive_revision_id, "drive_md5_checksum": src.drive_md5_checksum, "retention_access_allowed": operation_retains_source(job, src.expires_at, now), "reasons": reasons}
+    return {"source_id": src.id, "position": js.position, "source_type": source_type, "original_filename": src.original_filename, "mime_type": mime, "size_bytes": src.size_bytes, "project_id": src.project_id, "upload_status": str(src.upload_status.value), "deleted_at": src.deleted_at, "expires_at": src.expires_at, "s3_bucket": src.s3_bucket, "s3_object_key": src.s3_object_key, "reference_class": source_reference_class(src), "drive_file_id": src.drive_file_id, "drive_revision_id": src.drive_revision_id, "drive_md5_checksum": src.drive_md5_checksum, "prepared_audio_context_json": src.prepared_audio_context_json, "retention_access_allowed": operation_retains_source(job, src.expires_at, now), "reasons": reasons}
 
 
 def _verify_local(snap, now, settings, storage_factory):
@@ -296,6 +300,10 @@ def _verify_drive(snap, token, settings, fetcher):
         return None, None, ["drive_metadata_unavailable"]
     reasons = []
     mime = normalize_source_mime_type(meta.mime_type)
+    context = parse_prepared_audio_context(snap["prepared_audio_context_json"])
+    if (context and context.get("version") == 2 and getattr(meta, "sha256_checksum", None)
+            and meta.sha256_checksum != context["content_sha256"]):
+        reasons.append("source_state_changed")
     if meta.id != snap["drive_file_id"]:
         reasons.append("drive_file_identity_mismatch")
     if (snap["drive_revision_id"] and getattr(meta, "head_revision_id", None) != snap["drive_revision_id"]
@@ -344,6 +352,7 @@ def _relation_source_identity(job_source) -> SourceRelationSnapshot:
         drive_file_id=src.drive_file_id if src else None,
         drive_revision_id=src.drive_revision_id if src else None,
         drive_md5_checksum=src.drive_md5_checksum if src else None,
+        prepared_audio_context_json=src.prepared_audio_context_json if src else None,
         s3_bucket=src.s3_bucket if src else None,
         s3_object_key=src.s3_object_key if src else None,
         reference_class=source_reference_class(src) if src else None,

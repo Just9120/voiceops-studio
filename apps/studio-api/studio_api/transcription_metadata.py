@@ -55,19 +55,42 @@ def source_provenance(db, snapshot):
     and the preparation recipe supply provenance even after their bytes expire.
     No filename matching or foreign-owner inference is permitted.
     """
-    from sqlalchemy import or_, select
-    from .models import AudioPreparationJob, Project
+    from sqlalchemy import and_, or_, select
+    from .models import AudioPreparationJob, AudioPreparationStatus, Project
+    from .audio_export_receipt import AudioExportReceipt
+    from .media_context import parse_prepared_audio_context
 
+    context = parse_prepared_audio_context(getattr(snapshot, "prepared_audio_context_json", None))
     filters = [AudioPreparationJob.output_source_id == snapshot.source_id]
     if snapshot.drive_file_id:
-        filters.append(AudioPreparationJob.output_drive_file_id == snapshot.drive_file_id)
-    prepared = db.execute(select(AudioPreparationJob).where(
+        drive_filter = AudioPreparationJob.output_drive_file_id == snapshot.drive_file_id
+        filters.append(and_(drive_filter, AudioPreparationJob.id == context["job_id"])
+            if context and context.get("version") == 2 else drive_filter)
+    candidates = db.execute(select(AudioPreparationJob).where(
         AudioPreparationJob.owner_user_id == snapshot.job_owner_user_id,
         AudioPreparationJob.project_id == snapshot.source_project_id,
         or_(*filters),
     ).order_by(AudioPreparationJob.id).limit(2)).scalars().all()
     lines = [f"Source: {snapshot.source_id} · {_line(snapshot.original_filename)}"]
+    prepared = []
+    for candidate in candidates:
+        # A retired local output Source has an exact database relationship.
+        if candidate.output_source_id == snapshot.source_id:
+            prepared.append(candidate)
+        elif context and context.get("version") == 2 and candidate.id == context["job_id"]:
+            receipt = AudioExportReceipt.parse(candidate.output_drive_receipt_json)
+            if (candidate.status is not AudioPreparationStatus.completed
+                    or receipt.file_id != snapshot.drive_file_id or receipt.size_bytes != snapshot.size_bytes
+                    or receipt.sha256 != context["content_sha256"]):
+                raise ValueError("prepared source content changed")
+            prepared.append(candidate)
+    if context and context.get("version") == 2 and not prepared:
+        raise ValueError("prepared source provenance unavailable")
     if not prepared:
+        if candidates:
+            # The same external ID alone proves neither bytes nor a recipe.
+            # In particular, an export's createdTime is not a recording date.
+            return tuple(lines), None, None
         return tuple(lines), snapshot.source_created_at, snapshot.source_created_at_provenance
     if len(prepared) != 1:
         raise ValueError("ambiguous preparation provenance")
