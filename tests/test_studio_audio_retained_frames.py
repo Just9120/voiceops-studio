@@ -75,6 +75,38 @@ def test_decoder_must_report_actual_duration_instead_of_accepting_an_estimate():
             runner=lambda *a, **k: SimpleNamespace(stdout="out_time_us=2000000\n", stderr=""))
 
 
+def test_decoded_sample_count_not_last_muxer_packet_timestamp_defines_retained_tail():
+    def decoder(command, **_):
+        assert "astats=measure_perchannel=0:measure_overall=Number_of_samples" in command[command.index("-af") + 1]
+        return SimpleNamespace(stdout="out_time_us=1578957\n", stderr="[Parsed_astats_3] Number of samples: 70560\n")
+    decoded, silences = _scan_selected(Path("synthetic.wav"), rate=44100, seek=8820,
+        requested=70560, options=options(), runner=decoder)
+    assert decoded == 70560 and silences == []
+    # The last21ms remain available for both this export and a later trim.
+    assert decoded / 44100 == 1.6
+
+
+@pytest.mark.parametrize("counter", ["0", "8002", "8000\nNumber of samples: 8000"])
+def test_invalid_or_ambiguous_decoder_sample_count_cannot_authorize_a_recipe(counter):
+    with pytest.raises(AudioPreparationError, match="timeline_unavailable"):
+        _scan_selected(Path("synthetic.wav"), rate=8000, seek=0, requested=8000, options=options(),
+            runner=lambda *a, **k: SimpleNamespace(stdout="out_time_us=1000000\n",
+                stderr=f"Number of samples: {counter}\n"))
+
+
+@pytest.mark.parametrize("mono_mode", ["preserve", "mixdown", "left", "right"])
+def test_real_decoder_counts_sample_frames_once_for_stereo_and_channel_selection(tmp_path, mono_mode):
+    if not shutil.which("ffmpeg"):
+        pytest.skip("FFmpeg unavailable; real sample counting remains required in Linux CI")
+    source = tmp_path / "stereo.wav"
+    with wave.open(str(source), "wb") as out:
+        out.setnchannels(2); out.setsampwidth(2); out.setframerate(8000)
+        out.writeframes(array("h", [10000, -15000] * 8000).tobytes())
+    decoded, silences = _scan_selected(source, rate=8000, seek=0, requested=8000,
+        options=options(mono_mode=mono_mode))
+    assert decoded == 8000 and silences == []
+
+
 def test_cancelled_analysis_kills_and_reaps_its_owned_decoder(monkeypatch):
     children = []
     popen = subprocess.Popen

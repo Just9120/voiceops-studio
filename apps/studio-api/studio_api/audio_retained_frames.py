@@ -24,6 +24,7 @@ from .worker_progress import worker_operation
 
 _SILENCE = re.compile(r"silence_end:\s*([0-9]+(?:\.[0-9]+)?)\s*\|\s*silence_duration:\s*([0-9]+(?:\.[0-9]+)?)")
 _ELAPSED = re.compile(r"out_time_us=([0-9]{1,15})$")
+_SAMPLE_COUNT = re.compile(r"Number of samples:\s*([0-9]{1,15})(?:\.0+)?\s*$")
 
 
 def channel_filters(mode):
@@ -204,15 +205,26 @@ def _scan_selected(path, *, rate, seek, requested, options, runner=None, check=l
     filters = ["asetpts=N/SR/TB", f"atrim=end_sample={requested}", *channel_filters(options.mono_mode)]
     if options.silence_enabled:
         filters.append(f"silencedetect=noise={options.silence_threshold_db}dB:d={options.silence_min_duration_seconds}")
+    # Muxer progress is a presentation clock, not an audio sample count: some
+    # FFmpeg versions report the last packet's start instead of its end. Keep
+    # an exact counter after trim/channel filters so their packet size cannot
+    # silently remove speech or shift a later edit's original clock.
+    filters.append("astats=measure_perchannel=0:measure_overall=Number_of_samples")
     command = ["ffmpeg", "-nostdin", "-v", "info", "-xerror", "-threads", "2", "-filter_threads", "2",
         "-ss", format(seek / rate, ".12f"), "-t", format(requested / rate, ".12f"), "-i", str(path),
         "-map", "0:a:0", "-af", ",".join(filters), "-f", "null", "-", "-nostats", "-stats_period", "5", "-progress", "pipe:1"]
     silence = []
     elapsed_us = None
+    decoded_samples = None
     failures = []
     def consume(line, *, stderr):
-        nonlocal elapsed_us
+        nonlocal elapsed_us, decoded_samples
         if stderr:
+            count = _SAMPLE_COUNT.search(line)
+            if count:
+                if decoded_samples is not None:
+                    raise AudioPreparationError(AudioPreparationReason.timeline_unavailable)
+                decoded_samples = int(count.group(1))
             match = _SILENCE.search(line)
             if match:
                 end, duration = map(float, match.groups())
@@ -273,9 +285,9 @@ def _scan_selected(path, *, rate, seek, requested, options, runner=None, check=l
                 for thread in threads: thread.join(timeout=2)
                 process.stdout.close(); process.stderr.close()
     check()
-    if elapsed_us is None or elapsed_us <= 0:
+    if decoded_samples is None:
         raise AudioPreparationError(AudioPreparationReason.timeline_unavailable)
-    decoded = round(elapsed_us * rate / 1_000_000)
+    decoded = decoded_samples
     if not 0 < decoded <= requested + 1:
         raise AudioPreparationError(AudioPreparationReason.timeline_unavailable)
     decoded = min(decoded, requested)

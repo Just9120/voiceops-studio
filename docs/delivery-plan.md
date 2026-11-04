@@ -6,11 +6,11 @@
 
 Основание: владелец04Nov выбрал все18 findings аудита и затронутые AC единой Goal/одним основным PR, включая local Nemotron. Built-in Goal ACTIVE. Платные STT/Live/security проверки запрещены; F09/F62/F66 отложены, automatic voice identity исключена. Cloudflare менять разрешено только для exact Studio host; F85 оказался false positive, действующий strict override сохранён без mutation корневого домена/других hosts.
 
-Repository `Just9120/voiceops-studio`; branch `codex/personal-audit-findings-20261104`, один primary worktree. Fresh fetch04Nov: base/current `origin/main` `597443b63e02a7848b06163497ca0c98e043f879`, divergence0/33 до этого docs checkpoint, open PR0. Runtime API/web/worker0f098f0/schema0044 healthy; app source между0f098f0 и main597443b не менялся. Current code checkpoint35e64c0, документация ниже — текущий diff. GitHub CLI401/protection-read403 ограничивают чтение; это не отменяет required `ci-required` и protected migration reviewer gate. Условия поставки — в [operations](runbooks/studio-platform-ops.md).
+Repository `Just9120/voiceops-studio`; branch `codex/personal-audit-findings-20261104`, один primary worktree. Fresh fetch04Nov: base/current `origin/main` `597443b63e02a7848b06163497ca0c98e043f879`, divergence0/34 на initial push, PR347 открыт с head0f2af2d. Runtime API/web/worker0f098f0/schema0044 healthy; app source между0f098f0 и main597443b не менялся. Initial code checkpoint35e64c0; текущий CI-fix diff описан ниже. Штатный CLI с существующим Git credential восстановлен без вывода ключа; protection readback04Nov подтверждает strict ci-required/admin enforcement/reviews0; это не отменяет required `ci-required` и protected migration reviewer gate. Условия поставки — в [operations](runbooks/studio-platform-ops.md).
 
 Scope findings: F02/F10/F12/F17/F19/F42/F69/F78/F81/F82/F83/F84 и UXR33..37; F85 CLOSED/FALSE_POSITIVE.17 выбранных existing AC плюс обязательные existing dependencies PM-06/REC-05 и4NEM дают23 критерия qualification: MC-03/04,PS-03/04,UXN-05,AP-16/23,STORAG-06,AQP-13,PR-12,RS-01/03,YD-03,REC-01/03/04/05/06,PM-06,NEM-01..04. Existing ID/история сохранены;4NEM восстановлены из уже согласованного источника. Подробный аудит и исследовательские материалы остаются вне repository.
 
-**Код кандидата:23/23 READY; Goal не DONE.** Подходящие local/synthetic checks и дополнительные actual probes ниже подтверждают код в своих условиях. Current remote CI/review/release rehearsal, merge, protected schema0044→0045/API и совместимые web/worker, exact runtime health/smoke и safe owned-branch cleanup ещё PENDING. Нет initial push/PR/CD этой Goal. Нельзя выдавать candidate READY за реализованное в main или за completed delivery.
+**Код кандидата:23/23 READY; Goal не DONE.** Подходящие local/synthetic checks и дополнительные actual probes ниже подтверждают код в своих условиях. Current final revision CI/review, merge, protected schema0044→0045/API и совместимые web/worker, exact runtime health/smoke и safe owned-branch cleanup ещё PENDING. PR347 опубликован. Initial run41906652441: Studio/browser/release rehearsal PASS; root2741PASS/7FAIL/1SKIP/8subtests. Единственный SKIP — real current-user Windows DPAPI roundtrip на Linux (N/A платформе; этот test входит в Windows companion cohort). Ошибки разобраны в текущем grouped cycle, исправленная final revision CI ещё PENDING; CD не запускался. Нельзя выдавать candidate READY за реализованное в main или за completed delivery.
 
 Реализованные блоки:
 
@@ -26,6 +26,14 @@ Scope findings: F02/F10/F12/F17/F19/F42/F69/F78/F81/F82/F83/F84 и UXR33..37; F8
 - F19/F42: canonical command/processing drift исправлен; current source revision повторно проверена04Nov и не изменилась.397paragraph/326bullet requirements полностью трассированы:276 unchanged,27 meaning updates плюс withdrawalQ009,23 newQ309..331.734 unique IDs spec=plan;701 active,33 ALIAS/SUPERSEDED. Registry guard сохраняет все122 F/UXR IDs и5 security IDs; future224/mail1 classified явно. Прежние READY для усиленных AC не перенесены вслепую. Предыдущие completed Goal/pre-merge snapshots и старые оценки — в [архиве](delivery-plan-archive.md#исторические-checkpoints-до04nov2026); все findings сохранены ниже.
 
 Non-goals: коммерция, email/recovery mail, lecture/cleaned experiment, identity по голосу, новый backup schedule/retention, перенос worker в Cloudflare, изменения пользовательских документов или данных, paid providers/security scans. Additional actual probes не включали production restore или новую production pairing identity.
+
+### PR347 — первый CI correction cycle04Nov
+
+Initial head0f2af2d/root41906652441 обнаружил7 failures. Три actual Linux FFmpeg случая показали, что muxer out_time_us нельзя считать длиной декодированного аудио: терялся хвост и смещалась повторная обрезка. Исправлено exact astats sample counter после trim/channel filters; прежние строгие PCM/original-clock assertions сохранены, добавлены truncated presentation-clock и invalid/duplicate counter regressions. Affected local140 tests PASS31.94s; additional stereo/channel-selection/counter boundaries8 PASS (overlap не суммируется); independent owned cached-Linux image WAV/FLAC exact PCM/re-render PASS1.41s и79380samples на track. Cleanup/readback PASS. Первая попытка этого helper остановилась на штатном64MiB scratch reserve при64MiB tmpfs; повторный owned probe получил128MiB, product guard не ослаблялся.
+
+Остальные4 failures: missing human labels local_device.paired/revoked/rotated (labels добавлены); устаревший fast-uri pin assertion обновлён на исправленный3.1.9; historical0044 test проверяет ancestry/single head вместо запрета следующей migration (новый0045 head guard сохранён отдельно); synthetic processing E2E media fake теперь сообщает authoritative full-source duration1s, как реальный media adapter. Production validation не получает fallback/подставленную duration. Local lint/canonical build PASS; current full PG/CI ещё REQUIRED/PENDING, без speculative rerun старой revision.
+
+Initial release rehearsal exact test-mergec6d8c994 PASS193.15s:0044→0045→0044, API/web/worker, credential switch/revocation и source metadata retained; это isolated synthetic rollback, не production rollback. Fresh VPS20:28Z: checkout0f098f0, пять units healthy, schema0044,17.1GB free; production unchanged. Внешние изменения/paid calls не выполнялись. Исправления остаются в одном PR347; merge/delivery ещё PENDING.
 
 ## Готовность — проверенный main и незамерженный кандидат04Nov2026
 
@@ -292,7 +300,7 @@ Security findings24Oct2026 со стабильными `csf_…` IDs закры�
 
 ## Следующий шаг
 
-Завершить self-review и документационные guards текущего candidate, затем initial push и один основной PR. Дождаться required CI/release checks/review актуальной revision; исправлять подтверждённые failures в том же PR. После merge — protected signed backup/migration0044→0045/API и совместимые web/worker, exact revision/health/safe smoke и cleanup. Пока нет actual waiting deployment, owner approval заранее не запрашивается. Следующую implementation Goal не создавать.
+Завершить local validation/self-review grouped CI correction cycle и отправить один push в текущий PR347. Дождаться required CI/release checks/review актуальной revision; исправлять подтверждённые failures в том же PR. После merge — protected signed backup/migration0044→0045/API и совместимые web/worker, exact revision/health/safe smoke и cleanup. Пока нет actual waiting deployment, owner approval заранее не запрашивается. Следующую implementation Goal не создавать.
 
 ## Audit quality review04Nov
 
