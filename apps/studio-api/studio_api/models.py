@@ -885,6 +885,7 @@ class TranscriptionProviderPartCheckpoint(Base):
     )
 
 class RealtimeTranscriptDraft(Base):
+    cleared_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
     __tablename__="realtime_transcript_drafts"
     id: Mapped[str]=mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     owner_user_id: Mapped[str]=mapped_column(ForeignKey("users.id"), nullable=False)

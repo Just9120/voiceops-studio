@@ -1975,6 +1975,25 @@ def test_realtime_draft_routes_are_private_monotonic_and_no_store():
     finally:
         db.close()
 
+    sessions_path = f"/api/projects/{project['id']}/realtime/drafts"
+    assert TestClient(app).get(sessions_path).status_code == 401
+    assert other_client.get(sessions_path).status_code == 404
+    opened = owner_client.get(path)
+    assert opened.headers["cache-control"] == "no-store"
+    assert opened.json() == {"draft": latest.json()["draft"], "cleared": False}
+    second_path = sessions_path + "/session_987654321"
+    assert owner_client.put(second_path, json=body, headers=owner_headers).status_code == 200
+    first_page = owner_client.get(sessions_path, params={"page_size": 1})
+    assert first_page.headers["cache-control"] == "no-store" and first_page.headers["pragma"] == "no-cache"
+    assert "Секретный" not in first_page.text and "секретный partial" not in first_page.text
+    assert len(first_page.json()["sessions"]) == 1 and first_page.json()["next_cursor"]
+    second_page = owner_client.get(sessions_path, params={"page_size": 1, "cursor": first_page.json()["next_cursor"]})
+    sessions = first_page.json()["sessions"] + second_page.json()["sessions"]
+    assert {item["client_session_id"] for item in sessions} == {session_id, "session_987654321"}
+    assert second_page.json()["next_cursor"] is None
+    assert all(item["committed_segment_count"] == 1 for item in sessions)
+    assert owner_client.delete(second_path, headers=owner_headers).status_code == 200
+
     assert owner_client.delete(
         path,
         headers={"origin": "https://evil.test", "x-csrf-token": owner_csrf},
@@ -1984,6 +2003,10 @@ def test_realtime_draft_routes_are_private_monotonic_and_no_store():
     assert deleted.headers["cache-control"] == "no-store"
     assert deleted.json() == {"ok": True, "deleted": True}
     assert owner_client.get(latest_path).json() == {"draft": None}
+    assert owner_client.get(path).json() == {"draft": None, "cleared": True}
+    assert owner_client.get(sessions_path).json()["sessions"] == []
+    late_save = owner_client.put(path, json={**body, "revision": 999}, headers=owner_headers)
+    assert late_save.status_code == 409 and late_save.json()["detail"]["reason"] == "realtime_draft_cleared"
 
 
 def test_realtime_draft_validation_redacts_transcript_input():

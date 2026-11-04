@@ -866,7 +866,7 @@ export function LiveTranscriptionPanel({
       .catch(() => undefined)
       .then(async () => {
         try {
-          await deleteLocalRealtimeDraft(ownerUserId, projectId);
+          await deleteLocalRealtimeDraft(ownerUserId, projectId, draft.client_session_id);
           return true;
         } catch {
           return false;

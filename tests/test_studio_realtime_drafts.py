@@ -303,7 +303,11 @@ def test_legacy_expired_drafts_survive_restart_and_cleanup_until_explicit_clear(
     assert delete_realtime_draft(db, owner_user_id=project.owner_user_id,
         project=project, client_session_id=latest.client_session_id)
     db.commit()
-    assert db.query(RealtimeTranscriptDraft).count() == 3
+    assert db.query(RealtimeTranscriptDraft).filter(RealtimeTranscriptDraft.cleared_at.is_(None)).count() == 3
+    cleared = db.query(RealtimeTranscriptDraft).filter_by(owner_user_id=project.owner_user_id,
+        client_session_id=latest.client_session_id).one()
+    assert cleared.cleared_at is not None and cleared.ciphertext == cleared.nonce == b""
+    assert cleared.committed_character_count == cleared.partial_character_count == 0
     assert load_latest_realtime_draft(db, owner_user_id=project.owner_user_id,
         project=project, settings=DraftSettings(), now=later).committed_segments == ("2",)
     assert not delete_realtime_draft(db, owner_user_id=project.owner_user_id,
@@ -316,7 +320,7 @@ def test_owner_draft_budget_rejects_new_ids_without_losing_existing_text(draft_d
     db, project, other_project = draft_db
     settings = DraftSettings()
     settings.realtime_draft_max_count = 2
-    settings.realtime_draft_max_storage_bytes = 400
+    settings.realtime_draft_max_storage_bytes = 2000
     now = datetime(2026, 10, 3)
     def save(client, revision=1, text="saved text", target=project):
         return save_realtime_draft(db, owner_user_id=target.owner_user_id, project=target,
@@ -328,10 +332,54 @@ def test_owner_draft_budget_rejects_new_ids_without_losing_existing_text(draft_d
     assert db.query(RealtimeTranscriptDraft).count() == 2
     save("session_123456789a", 2, "updated text"); db.commit()
     with pytest.raises(RealtimeDraftError, match="realtime_draft_storage_limit"):
-        save("session_123456789a", 3, "x" * 390)
+        save("session_123456789a", 3, "x" * 1900)
     db.rollback()
     assert db.query(RealtimeTranscriptDraft).filter_by(client_session_id="session_123456789a").one().revision == 2
     save("session_123456789c", target=other_project); db.commit()
     assert delete_realtime_draft(db, owner_user_id=project.owner_user_id, project=project, client_session_id="session_123456789b")
     save("session_123456789c"); db.commit()
-    assert db.query(RealtimeTranscriptDraft).count() == 3
+    assert db.query(RealtimeTranscriptDraft).filter(RealtimeTranscriptDraft.cleared_at.is_(None)).count() == 3
+
+
+@pytest.mark.parametrize("first_saved", [False, True])
+def test_clear_fences_even_a_late_first_save_and_never_exposes_or_decrypts_retired_text(draft_db, first_saved):
+    from studio_api.realtime_drafts import save_realtime_draft, delete_realtime_draft, load_realtime_draft_state, RealtimeDraftError
+    from studio_api.models import RealtimeTranscriptDraft
+    db, project, other_project = draft_db
+    settings = DraftSettings()
+    now = datetime(2026, 11, 4)
+    client = "session_123456789z"
+    def save(revision):
+        return save_realtime_draft(db, owner_user_id=project.owner_user_id, project=project,
+            client_session_id=client, revision=revision, committed_segments=["text before clear"],
+            partial="", settings=settings, now=now)
+    if first_saved:
+        save(1); db.commit()
+    assert delete_realtime_draft(db, owner_user_id=project.owner_user_id, project=project,
+        client_session_id=client, settings=settings, now=now) is first_saved
+    db.commit()
+    with pytest.raises(RealtimeDraftError, match="realtime_draft_cleared"):
+        save(1000)
+    db.rollback()
+    assert load_realtime_draft_state(db, owner_user_id=project.owner_user_id, project=project,
+        client_session_id=client, settings=object()) == (None, True)
+    assert load_realtime_draft_state(db, owner_user_id=other_project.owner_user_id, project=other_project,
+        client_session_id=client, settings=settings) == (None, False)
+    row = db.query(RealtimeTranscriptDraft).filter_by(owner_user_id=project.owner_user_id, client_session_id=client).one()
+    assert row.ciphertext == row.nonce == b"" and not row.key_id
+    assert not delete_realtime_draft(db, owner_user_id=project.owner_user_id, project=project,
+        client_session_id=client, settings=settings, now=now)
+
+
+def test_content_free_clear_fences_are_bounded_by_the_owner_storage_budget(draft_db):
+    from studio_api.realtime_drafts import delete_realtime_draft, RealtimeDraftError, ROW_BUDGET_BYTES
+    db, project, _ = draft_db
+    settings = DraftSettings()
+    settings.realtime_draft_max_storage_bytes = ROW_BUDGET_BYTES * 2
+    for index in range(2):
+        delete_realtime_draft(db, owner_user_id=project.owner_user_id, project=project,
+            client_session_id=f"empty_session_123456789{index}", settings=settings)
+        db.commit()
+    with pytest.raises(RealtimeDraftError, match="realtime_draft_storage_limit"):
+        delete_realtime_draft(db, owner_user_id=project.owner_user_id, project=project,
+            client_session_id="empty_session_1234567893", settings=settings)

@@ -382,3 +382,53 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
     }
   });
 }
+
+
+test('Live local recovery migrates legacy text and isolates independently cleared sessions', async ({page}) => {
+  await page.goto('/about.html');
+  const result = await page.evaluate(async () => {
+    const databaseName = 'studio-realtime-recovery';
+    const owner = 'synthetic-owner';
+    const projectId = 'synthetic-project';
+    const legacy = {key: `${owner}:${projectId}`, owner_user_id: owner, project_id: projectId,
+      client_session_id: 'legacy_session_123456789', revision: 1, committed_segments: ['legacy retained text'],
+      partial: '', updated_at: '2026-01-01T00:00:00Z', expires_at: '2026-01-02T00:00:00Z'};
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 1);
+      request.onupgradeneeded = () => request.result.createObjectStore('drafts', {keyPath:'key'});
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const database = request.result;
+        const transaction = database.transaction('drafts', 'readwrite');
+        transaction.objectStore('drafts').put(legacy);
+        transaction.oncomplete = () => { database.close(); resolve(); };
+        transaction.onerror = () => { database.close(); reject(transaction.error); };
+      };
+    });
+    const modulePath = '/src/realtimeDrafts.ts';
+    const drafts = await import(modulePath);
+    const recovered = await drafts.loadLocalRealtimeDraft(owner, projectId);
+    const first = drafts.makeRealtimeDraft({ownerUserId:owner, projectId,
+      clientSessionId:'new_session_123456789a', revision:1, committedSegments:['first tab'], partial:''});
+    const second = drafts.makeRealtimeDraft({ownerUserId:owner, projectId,
+      clientSessionId:'new_session_123456789b', revision:1, committedSegments:['second tab'], partial:''});
+    await Promise.all([drafts.saveLocalRealtimeDraft(first), drafts.saveLocalRealtimeDraft(second)]);
+    const before = await drafts.listLocalRealtimeDrafts(owner, projectId);
+    await drafts.deleteLocalRealtimeDraft(owner, projectId, first.client_session_id);
+    let lateRejected = false;
+    try { await drafts.saveLocalRealtimeDraft({...first, revision:999}); }
+    catch (error) { lateRejected = error instanceof Error && error.message === 'realtime_draft_cleared'; }
+    const after = await drafts.listLocalRealtimeDrafts(owner, projectId);
+    const otherOwner = await drafts.listLocalRealtimeDrafts('other-owner', projectId);
+    const otherProject = await drafts.listLocalRealtimeDrafts(owner, 'other-project');
+    const cleared = await drafts.loadLocalRealtimeDraft(owner, projectId, new Date(), first.client_session_id);
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.deleteDatabase(databaseName);
+      request.onsuccess = () => resolve(); request.onerror = () => reject(request.error);
+    });
+    return {legacy: recovered?.committed_segments, before: before.length, after: after.map((row: {client_session_id:string}) => row.client_session_id).sort(),
+      lateRejected, cleared, otherOwner:otherOwner.length, otherProject:otherProject.length};
+  });
+  expect(result).toEqual({legacy:['legacy retained text'], before:3,
+    after:['legacy_session_123456789','new_session_123456789b'], lateRejected:true, cleared:null, otherOwner:0, otherProject:0});
+});

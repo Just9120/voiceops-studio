@@ -27,6 +27,7 @@ def test_source_version_migration_preserves_legacy_identity_and_guards_rollback(
             connection.execute(sa.text(f"ALTER TABLE sources DROP COLUMN {column}"))
         for table in ("transcription_jobs", "audio_preparation_jobs"):
             connection.execute(sa.text(f"ALTER TABLE {table} DROP COLUMN source_access_started_at"))
+        connection.execute(sa.text("ALTER TABLE realtime_transcript_drafts DROP COLUMN cleared_at"))
         connection.execute(sa.text("""INSERT INTO sources
             (id,project_id,source_type,original_filename,drive_file_id,upload_status,created_at,updated_at)
             VALUES ('legacy','p','google_drive','call.mp3','same-file','uploaded',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)"""))
@@ -34,6 +35,7 @@ def test_source_version_migration_preserves_legacy_identity_and_guards_rollback(
         revision.module.op = Operations(MigrationContext.configure(connection))
         try:
             revision.module.upgrade()
+            assert next(c for c in sa.inspect(connection).get_columns("realtime_transcript_drafts") if c["name"] == "cleared_at")["nullable"]
             for table in ("transcription_jobs", "audio_preparation_jobs"):
                 column = next(c for c in sa.inspect(connection).get_columns(table) if c["name"] == "source_access_started_at")
                 assert column["nullable"] and column["default"] is None

@@ -10,6 +10,8 @@ release_safety = "additive"
 
 
 def upgrade():
+    if "cleared_at" not in {column["name"] for column in sa.inspect(op.get_bind()).get_columns("realtime_transcript_drafts")}:
+        op.add_column("realtime_transcript_drafts", sa.Column("cleared_at", sa.DateTime(timezone=True), nullable=True))
     for table in ("transcription_jobs", "audio_preparation_jobs"):
         if "source_access_started_at" not in {column["name"] for column in sa.inspect(op.get_bind()).get_columns(table)}:
             op.add_column(table, sa.Column("source_access_started_at", sa.DateTime(timezone=True), nullable=True))
@@ -25,6 +27,8 @@ def upgrade():
 
 
 def downgrade():
+    if op.get_bind().execute(sa.text("SELECT COUNT(*) FROM realtime_transcript_drafts WHERE cleared_at IS NOT NULL")).scalar():
+        raise RuntimeError("Cleared Live session fences require forward recovery")
     for table in ("transcription_jobs", "audio_preparation_jobs"):
         if op.get_bind().execute(sa.text(f"SELECT COUNT(*) FROM {table} WHERE source_access_started_at IS NOT NULL")).scalar():
             raise RuntimeError("Active-source admission records require forward recovery")
@@ -40,3 +44,4 @@ def downgrade():
     op.drop_column("sources", "drive_revision_id")
     for table in ("transcription_jobs", "audio_preparation_jobs"):
         op.drop_column(table, "source_access_started_at")
+    op.drop_column("realtime_transcript_drafts", "cleared_at")

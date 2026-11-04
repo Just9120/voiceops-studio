@@ -50,6 +50,7 @@ from .realtime_drafts import (
     RealtimeDraftReason,
     delete_realtime_draft,
     load_latest_realtime_draft,
+    load_realtime_draft_state,
     save_realtime_draft,
 )
 from .speaker_identity import (
@@ -213,7 +214,7 @@ audio_downloads = AudioDownloadManager(SessionLocal, settings)
 LOGGER=logging.getLogger("studio_api.api")
 REALTIME_DRAFT_SAVE_LIMIT_PER_HOUR = 7_200
 REALTIME_DRAFT_ROUTE_PATTERN = re.compile(
-    r"^/api/projects/[^/]+/realtime/drafts/[^/]+$"
+    r"^/api/projects/[^/]+/realtime/drafts(?:/[^/]+)?$"
 )
 
 
@@ -2286,6 +2287,7 @@ def _write_realtime_diagnostic_event(
 
 def _raise_realtime_draft_failure(exc: RealtimeDraftError) -> None:
     status_code = {
+        RealtimeDraftReason.cleared: status.HTTP_409_CONFLICT,
         RealtimeDraftReason.storage_limit: status.HTTP_409_CONFLICT,
         RealtimeDraftReason.scope_conflict: status.HTTP_404_NOT_FOUND,
         RealtimeDraftReason.revision_conflict: status.HTTP_409_CONFLICT,
@@ -2399,6 +2401,55 @@ def get_project_latest_realtime_draft(
         else None
     }
 
+@app.get("/api/projects/{project_id}/realtime/drafts")
+def get_project_realtime_drafts(
+    project_id: str, response: Response,
+    cursor: str | None = Query(None, max_length=MAX_COLLECTION_CURSOR_LENGTH),
+    page_size: int = Query(DEFAULT_COLLECTION_PAGE_SIZE, ge=1, le=MAX_COLLECTION_PAGE_SIZE),
+    pair=Depends(current_session), db: Session=Depends(get_db),
+):
+    sess, user = pair
+    limiter.check("realtime:draft:list:" + user.id, 240, 3600)
+    project = owned_project_or_404(db, user, project_id)
+    _browser_capability_cache_headers(response)
+    scope = {"project_id": project.id}
+    try:
+        position = decode_collection_cursor(cursor, secret=sess.csrf_hash, owner_user_id=user.id,
+            surface="realtime_drafts", scope=scope)
+    except CollectionCursorError:
+        raise HTTPException(422, "Invalid Live sessions cursor") from None
+    from .models import RealtimeTranscriptDraft
+    query = db.query(RealtimeTranscriptDraft).filter(RealtimeTranscriptDraft.owner_user_id == user.id,
+        RealtimeTranscriptDraft.project_id == project.id, RealtimeTranscriptDraft.cleared_at.is_(None))
+    if position:
+        updated_at, row_id = position
+        query = query.filter(or_(RealtimeTranscriptDraft.updated_at < updated_at,
+            and_(RealtimeTranscriptDraft.updated_at == updated_at, RealtimeTranscriptDraft.id < row_id)))
+    rows = query.order_by(RealtimeTranscriptDraft.updated_at.desc(), RealtimeTranscriptDraft.id.desc()).limit(page_size + 1).all()
+    rows, next_cursor = page_envelope(rows, page_size=page_size, timestamp_attribute="updated_at",
+        secret=sess.csrf_hash, owner_user_id=user.id, surface="realtime_drafts", scope=scope)
+    return {"sessions": [{"client_session_id": row.client_session_id, "revision": row.revision,
+        "created_at": row.created_at.isoformat(), "updated_at": row.updated_at.isoformat(),
+        "committed_segment_count": row.committed_segment_count,
+        "committed_character_count": row.committed_character_count, "partial_character_count": row.partial_character_count}
+        for row in rows], "next_cursor": next_cursor, "page_size": page_size}
+
+
+@app.get("/api/projects/{project_id}/realtime/drafts/{client_session_id}")
+def get_project_realtime_draft(project_id: str, client_session_id: str, response: Response,
+    pair=Depends(current_session), db: Session=Depends(get_db)):
+    _, user = pair
+    limiter.check("realtime:draft:load:" + user.id, 240, 3600)
+    project = owned_project_or_404(db, user, project_id)
+    _browser_capability_cache_headers(response)
+    try:
+        draft, cleared = load_realtime_draft_state(db, owner_user_id=user.id, project=project,
+            client_session_id=client_session_id, settings=settings)
+    except RealtimeDraftError as exc:
+        _raise_realtime_draft_failure(exc)
+    return {"draft": _realtime_draft_payload(draft, include_text=True) if draft is not None else None, "cleared": cleared}
+
+
 @app.delete("/api/projects/{project_id}/realtime/drafts/{client_session_id}")
 def delete_project_realtime_draft(
     project_id: str,
@@ -2418,6 +2469,8 @@ def delete_project_realtime_draft(
             owner_user_id=user.id,
             project=project,
             client_session_id=client_session_id,
+            settings=settings,
+            now=utcnow(),
         )
         if deleted:
             audit(
