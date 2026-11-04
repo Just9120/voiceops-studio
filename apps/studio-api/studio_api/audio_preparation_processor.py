@@ -31,7 +31,7 @@ from .audio_analysis import analyze_audio_visual, visual_payload, MAX_WAVEFORM_P
 from .work_progress import measured_work, report_work
 from .google_connection_access import refresh_user_google_drive_access_token
 from .google_drive import fetch_drive_file_content
-from .google_drive_upload import upload_file_resumable
+from .google_drive_upload import upload_file_resumable, GoogleDriveUploadError, GoogleDriveUploadReason
 from .diagnostics import write_diagnostic_event
 from .models import (
     AudioPreparationJob,
@@ -217,10 +217,13 @@ def process_claimed_audio_preparation_job(
             db.flush()
             db.commit()
             return AudioProcessingResult(job.id, "completed", "completed", True)
-    except (AudioPreparationError, AudioPreparationServiceError) as exc:
+    except (AudioPreparationError, AudioPreparationServiceError, GoogleDriveUploadError) as exc:
         failure_stage = job.current_stage
         db.rollback()
         reason = getattr(getattr(exc, "reason", None), "value", "processing_failed")
+        if isinstance(exc, GoogleDriveUploadError):
+            reason = (AudioPreparationReason.output_copy_changed.value
+                if exc.reason is GoogleDriveUploadReason.content_mismatch else AudioPreparationReason.processing_failed.value)
         try:
             _discard_claimed_download(db, job_id, lease_owner_id, lease_generation, download_request_id, settings)
             if reason == AudioPreparationServiceReason.cancellation_requested.value:
@@ -245,6 +248,8 @@ def process_claimed_audio_preparation_job(
             _record_failure_diagnostic(failed_job, reason, failure_stage, exc)
         except Exception:
             db.rollback()
+        if isinstance(exc, GoogleDriveUploadError):
+            raise AudioPreparationError(AudioPreparationReason(reason)) from exc
         raise
     except Exception as exc:
         failure_stage = job.current_stage

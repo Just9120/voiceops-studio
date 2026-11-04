@@ -146,6 +146,23 @@ def test_failed_export_can_retry_without_losing_output_or_changing_target(export
     assert job.output_drive_file_id == "file"
 
 
+def test_changed_drive_copy_keeps_download_and_reports_a_specific_safe_recovery(export_state, tmp_path):
+    from studio_api.google_drive_upload import GoogleDriveUploadError, GoogleDriveUploadReason
+    from studio_api.audio_preparation import AudioPreparationError
+    db, job, source = export_state
+    queue(db); claim(db)
+    def changed_copy(*args, **kwargs):
+        raise GoogleDriveUploadError(GoogleDriveUploadReason.content_mismatch)
+    with pytest.raises(AudioPreparationError, match="output_copy_changed"):
+        process(db, job, tmp_path, changed_copy)
+    db.refresh(job); db.refresh(source)
+    assert job.status is AudioPreparationStatus.completed
+    assert job.current_stage == "google_drive_export_failed" and job.error_code == "output_copy_changed"
+    assert job.output_source_id == source.id and job.output_drive_file_id is None
+    assert source.upload_status is SourceUploadStatus.uploaded and source.deleted_at is None
+    assert audio_preparation_payload(job, now=NOW)["output"]["download_ready"] is True
+
+
 @pytest.mark.parametrize("claimed", [False, True])
 def test_cancel_export_retains_download_and_allows_explicit_retry(export_state, tmp_path, claimed):
     db, job, source = export_state

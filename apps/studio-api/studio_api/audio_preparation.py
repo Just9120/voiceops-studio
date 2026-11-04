@@ -49,6 +49,7 @@ class AudioPreparationReason(str, Enum):
     output_too_large = "output_too_large"
     timeline_unavailable = "timeline_unavailable"
     no_retained_audio = "no_retained_audio"
+    output_copy_changed = "output_copy_changed"
 
 
 class AudioPreparationError(RuntimeError):

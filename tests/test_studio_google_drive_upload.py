@@ -2,6 +2,8 @@ from pathlib import Path
 import sys
 import httpx
 import pytest
+import hashlib
+from contextlib import contextmanager
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "apps/studio-api"))
@@ -23,7 +25,8 @@ class Client:
     def __exit__(self, *_args): return None
     def get(self, *_args, **_kwargs): return Response(payload={"files": [self.existing] if self.existing else []})
     def post(self, *_args, **_kwargs): self.posts += 1; return Response(headers={"Location": "https://www.googleapis.com/upload/drive/v3/files?upload_id=safe-id"})
-    def put(self, *_args, **_kwargs): self.puts += 1; return Response(payload={"id": "file-id", "name": "result.flac", "size": "5", "webViewLink": "https://drive.google.com/file/d/file-id/view", "parents": ["folder-id"]})
+    def put(self, *_args, **_kwargs): self.puts += 1; return Response(payload={"id": "file-id", "name": "result.flac", "size": "5", "webViewLink": "https://drive.google.com/file/d/file-id/view", "parents": ["folder-id"], "sha256Checksum": hashlib.sha256(b"audio").hexdigest(), "headRevisionId": "revision-one"})
+    def stream(self, *_args, **_kwargs): pytest.fail("Available SHA256 must avoid an extra file download")
 
 
 def input_file(tmp_path):
@@ -33,10 +36,12 @@ def input_file(tmp_path):
 
 
 def test_resumable_upload_reuses_existing_idempotent_drive_result(tmp_path):
-    existing = {"id": "existing-id", "name": "result.flac", "size": "5", "webViewLink": "https://drive.google.com/file/d/existing-id/view", "parents": ["folder-id"]}
+    existing = {**complete_response().json(), "id": "existing-id", "webViewLink": "https://drive.google.com/file/d/existing-id/view"}
     client = Client(existing=existing)
     result = upload_file_resumable("token", folder_id="folder-id", path=input_file(tmp_path), filename="result.flac", mime_type="audio/flac", idempotency_key="job-id", client_factory=lambda **_kwargs: client)
     assert result.file_id == "existing-id"
+    assert result.sha256_checksum == hashlib.sha256(b"audio").hexdigest()
+    assert result.head_revision_id == "revision-one"
     assert client.posts == 0
     assert client.puts == 0
 
@@ -147,6 +152,78 @@ def test_large_file_uses_multiple_bounded_chunks(tmp_path, monkeypatch):
     path.write_bytes(b"x" * (256 * 1024 + 1))
     final = complete_response()
     final._payload["size"] = str(path.stat().st_size)
+    final._payload["sha256Checksum"] = hashlib.sha256(path.read_bytes()).hexdigest()
     client = ScriptedClient([Response(308, headers={"Range": "bytes=0-262143"}), final])
     upload_file_resumable("token", folder_id="folder-id", path=path, filename="result.flac", mime_type="audio/flac", idempotency_key="job-id", client_factory=lambda **kwargs: client)
     assert [len(r["content"]) for r in client.requests] == [256 * 1024, 1]
+
+
+def test_same_size_modified_copy_never_creates_or_overwrites_another_result(tmp_path):
+    existing = complete_response().json() | {"sha256Checksum": hashlib.sha256(b"wrong").hexdigest()}
+    client = Client(existing=existing)
+    with pytest.raises(GoogleDriveUploadError, match="content_mismatch"):
+        _upload(tmp_path, client)
+    assert client.posts == client.puts == 0
+
+
+@pytest.mark.parametrize("body", [b"audio", b"wrong", b"aud", b"audio-too-long"])
+@pytest.mark.parametrize("revision", [None, "revision-one"])
+def test_missing_remote_checksum_requires_bounded_actual_content_proof(tmp_path, body, revision):
+    existing = complete_response().json()
+    existing.pop("sha256Checksum")
+    existing["headRevisionId"] = revision
+    seen = []
+    class LegacyClient(Client):
+        @contextmanager
+        def stream(self, method, url, **kwargs):
+            seen.append((method, url, kwargs))
+            yield httpx.Response(200, content=body)
+    client = LegacyClient(existing=existing)
+    if body == b"audio":
+        result = _upload(tmp_path, client)
+        assert result.sha256_checksum == hashlib.sha256(body).hexdigest()
+    else:
+        with pytest.raises(GoogleDriveUploadError, match="content_mismatch"):
+            _upload(tmp_path, client)
+    assert len(seen) == 1 and client.posts == client.puts == 0
+    assert seen[0][0] == "GET" and seen[0][2]["params"]["alt"] == "media"
+    assert seen[0][1].endswith("/revisions/revision-one" if revision else "/file-id")
+
+
+def test_successful_upload_ack_still_requires_matching_content(tmp_path):
+    response = complete_response()
+    response._payload["sha256Checksum"] = "0" * 64
+    client = ScriptedClient([response])
+    with pytest.raises(GoogleDriveUploadError, match="content_mismatch"):
+        _upload(tmp_path, client)
+    assert client.posts == client.puts == 1
+
+
+def test_final_created_copy_is_verified_even_when_cancel_arrived_with_its_ack(tmp_path):
+    cancelled = False
+    class CompletionClient(Client):
+        def put(self, *args, **kwargs):
+            nonlocal cancelled
+            response = super().put(*args, **kwargs)
+            response._payload.pop("sha256Checksum")
+            cancelled = True
+            return response
+        @contextmanager
+        def stream(self, *args, **kwargs):
+            yield httpx.Response(200, content=b"audio")
+    def check():
+        if cancelled:
+            raise RuntimeError("cancelled")
+    client = CompletionClient()
+    result = _upload(tmp_path, client, check_cancelled=check)
+    assert result.sha256_checksum == hashlib.sha256(b"audio").hexdigest()
+    assert client.posts == client.puts == 1
+
+
+def test_cancellation_during_local_hash_never_creates_an_external_request(tmp_path):
+    def check():
+        raise RuntimeError("cancelled_before_transfer")
+    with pytest.raises(RuntimeError, match="cancelled_before_transfer"):
+        upload_file_resumable("token", folder_id="folder-id", path=input_file(tmp_path), filename="result.flac",
+            mime_type="audio/flac", idempotency_key="job-id", check_cancelled=check,
+            client_factory=lambda **kwargs: pytest.fail("Cancelled hash must not open an HTTP client"))
