@@ -114,10 +114,10 @@ def is_source_expired(source: Source, now: datetime) -> bool:
     return bool(source.source_type == SourceType.local_upload and source.expires_at is not None and _aware(source.expires_at) <= _aware(now))
 
 
-def is_source_listed_for_browser(source: Source, now: datetime) -> bool:
+def is_source_listed_for_browser(source: Source, now: datetime, *, retention_deferred: bool = False) -> bool:
     if source.source_type != SourceType.local_upload:
         return True
-    return bool(
+    return retention_deferred or bool(
         source.upload_status != SourceUploadStatus.expired
         and (source.expires_at is None or _aware(source.expires_at) > _aware(now))
     )
@@ -207,6 +207,32 @@ def _no_active_audio_reference_predicate(now):
     return ~exists(select(AudioPreparationJob.id).where(_active_audio_reference_predicate(Source.id, now)))
 
 
+def source_browser_visibility_predicate(now):
+    """Same visibility for collection and cleanup preview, without extending TTL."""
+    return or_(Source.source_type != SourceType.local_upload,
+        and_(Source.upload_status != SourceUploadStatus.expired,
+            or_(Source.expires_at.is_(None), Source.expires_at > now)),
+        ~_no_processing_reference_predicate(now), ~_no_active_audio_reference_predicate(now))
+
+
+def source_retention_deferrals(db: Session, source_ids: list[str], *, now: datetime) -> dict[str, str]:
+    if not source_ids:
+        return {}
+    processing = ~_no_processing_reference_predicate(now)
+    audio = ~_no_active_audio_reference_predicate(now)
+    result: dict[str, str] = {}
+    for offset in range(0, len(source_ids), 500):
+        rows = db.execute(select(Source.id, processing, audio).where(
+            Source.id.in_(source_ids[offset:offset + 500]), Source.source_type == SourceType.local_upload,
+            Source.deleted_at.is_(None),
+            or_(Source.upload_status == SourceUploadStatus.expired, Source.expires_at <= now),
+            or_(processing, audio),
+        )).all()
+        result.update({source_id: "transcription_in_progress" if transcription else "audio_processing_in_progress"
+                       for source_id, transcription, _audio in rows})
+    return result
+
+
 def deletion_readiness(db: Session, source: Source, *, now: datetime, locked_jobs: list[TranscriptionJob] | None = None, discard_failed_retry: bool = False) -> SourceDeletionReason:
     if source.deleted_at is not None or source.upload_status == SourceUploadStatus.deleted:
         return SourceDeletionReason.source_already_deleted
@@ -266,8 +292,9 @@ def bulk_source_deletion_preview(
     eligible_bytes = blocked_bytes = 0
     eligible_unknown = blocked_unknown = 0
     preview_entries: list[dict[str, str]] = []
+    deferrals = source_retention_deferrals(db, [source.id for source in sources], now=now)
     for source in sources:
-        is_listed = is_source_listed_for_browser(source, now)
+        is_listed = is_source_listed_for_browser(source, now, retention_deferred=source.id in deferrals)
         if is_listed:
             listed_count += 1
         else:

@@ -16,6 +16,7 @@ export type Source = {
     | "embedded_media_metadata"
     | null;
   expires_at: string | null;
+  retention_deferred_reason?: "transcription_in_progress" | "audio_processing_in_progress";
   deleted_at: string | null;
   delete_reason: string | null;
   created_at: string;

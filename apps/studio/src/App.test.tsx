@@ -1876,6 +1876,32 @@ describe("Studio PWA", () => {
     expect(fetchMock.mock.calls.some(([url, init]) => url === "/api/projects/p1/sources/bulk-deletion" && init?.method === "POST")).toBe(false);
   });
 
+  it.each([
+    ["transcription_in_progress", "идёт транскрибация"],
+    ["audio_processing_in_progress", "идёт обработка аудио"],
+  ])("explains expired-source retention deferral during %s without extending the deadline", async (reason, work) => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const defaultFetch = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (/^\/api\/projects\/p1\/sources(?:\?|$)/.test(url) && !init?.method) {
+        return json({ sources: [{ id: "expired-busy", project_id: "p1", source_type: "local_upload",
+          original_filename: "busy-recording.flac", mime_type: "audio/flac", size_bytes: 100,
+          drive_file_url: null, upload_status: "uploaded", uploaded_at: "2026-01-01T00:00:00Z",
+          source_created_at: null, source_created_at_provenance: null,
+          expires_at: "2026-01-04T00:00:00Z", retention_deferred_reason: reason,
+          deleted_at: null, delete_reason: null, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }], next_cursor: null, page_size: 50 });
+      }
+      return defaultFetch?.(url, init) ?? json({ ok: true });
+    });
+    renderApp();
+    await openSettingsSection("Файлы и хранилище");
+    const card = (await screen.findByText("busy-recording.flac")).closest("article")!;
+    expect(within(card).getByText("Статус: Очистка отложена")).toBeInTheDocument();
+    expect(within(card).getByRole("status")).toHaveTextContent(work);
+    expect(within(card).getByRole("status")).toHaveTextContent("для новых задач добавьте исходник заново");
+    expect(within(card).getByText(/Хранится до:/)).toHaveTextContent("04.01.2026");
+  });
+
   it("previews and confirms a Studio-only bulk file cleanup", async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     const defaultFetch = fetchMock.getMockImplementation();

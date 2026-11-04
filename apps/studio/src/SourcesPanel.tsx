@@ -494,7 +494,8 @@ export function SourcesPanel({
               ? "Google Drive"
               : source.source_type === "yandex_disk" ? "Яндекс Диск" : "С устройства"}
           </span>
-          <span>Статус: {sourceСтатусLabel(source.upload_status)}</span>
+          <span>Статус: {source.retention_deferred_reason ? "Очистка отложена" : sourceСтатусLabel(source.upload_status)}</span>
+          {source.retention_deferred_reason && <p className="notice" role="status">Срок хранения истёк. Очистка отложена: {source.retention_deferred_reason === "transcription_in_progress" ? "идёт транскрибация" : "идёт обработка аудио"}. Файл сохранён для текущей операции; для новых задач добавьте исходник заново.</p>}
           {!isUsableJobSource(source) && (
             <span>{unusableJobSourceReason(source)}</span>
           )}

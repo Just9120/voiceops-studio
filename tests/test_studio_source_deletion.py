@@ -480,6 +480,36 @@ def test_retention_does_not_keep_stalled_transcription_forever(sqlite_db, lease)
     assert mark_one_expired_source_for_cleanup(sqlite_db, now=now) is (lease != "active")
 
 
+@pytest.mark.parametrize("kind", ["transcription", "audio"])
+def test_expired_source_is_visible_with_deferral_reason_only_during_current_processing(sqlite_db, kind):
+    from sqlalchemy import select
+    from studio_api.source_deletion import source_browser_visibility_predicate, source_retention_deferrals, bulk_source_deletion_preview
+    m, user, project = _owner_project(sqlite_db)
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    source = _local_source(sqlite_db, m, project, now, expires_delta=timedelta(seconds=-1))
+    if kind == "transcription":
+        job, _ = _job_for_source(sqlite_db, m, user, project, source, status=m.JobStatus.processing)
+    else:
+        job = m.AudioPreparationJob(project_id=project.id, owner_user_id=user.id,
+            status=m.AudioPreparationStatus.processing, title="Synthetic", options_json="{}", output_destination="download")
+        sqlite_db.add(job); sqlite_db.flush()
+        sqlite_db.add(m.AudioPreparationJobInput(job_id=job.id, source_id=source.id, position=0, ephemeral_reference=False))
+    job.lease_owner_id = "worker"
+    job.lease_expires_at = now + timedelta(seconds=20)
+    sqlite_db.commit()
+    original_expiry = source.expires_at
+    visible = lambda at: list(sqlite_db.scalars(select(m.Source.id).where(m.Source.project_id == project.id, source_browser_visibility_predicate(at))))
+    assert visible(now) == [source.id]
+    assert source_retention_deferrals(sqlite_db, [source.id], now=now) == {
+        source.id: "transcription_in_progress" if kind == "transcription" else "audio_processing_in_progress"}
+    preview = bulk_source_deletion_preview(sqlite_db, owner_user_id=user.id, project_id=project.id, now=now)
+    assert preview.listed_count == 1 and preview.hidden_expired_count == 0
+    later = now + timedelta(seconds=21)
+    assert visible(later) == []
+    assert source_retention_deferrals(sqlite_db, [source.id], now=later) == {}
+    assert source.expires_at == original_expiry
+
+
 def test_retryable_failed_job_blocks_but_skipped_relation_is_ignored(sqlite_db):
     from studio_api.source_deletion import SourceDeletionReason, request_source_deletion
 

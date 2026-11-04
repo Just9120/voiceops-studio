@@ -105,6 +105,8 @@ from .source_deletion import (
     SourceDeletionReason,
     bulk_source_deletion_preview,
     validate_bulk_source_selection,
+    source_browser_visibility_predicate,
+    source_retention_deferrals,
     is_source_expired,
     request_source_deletion,
 )
@@ -1241,8 +1243,8 @@ def revoke_other(
 def project_payload(p: Project):
     return {"id": p.id, "title": p.title, "description": p.description, "output_provider": getattr(p,"output_provider","google_drive"), "output_drive_folder_id": p.output_drive_folder_id, "output_drive_folder_url": p.output_drive_folder_url, "output_drive_folder_name": p.output_drive_folder_name, "created_at": p.created_at.isoformat(), "updated_at": p.updated_at.isoformat(), "archived_at": p.archived_at.isoformat() if p.archived_at else None}
 
-def source_payload(s: Source):
-    return {**({"prepared_audio": context} if (context := prepared_audio_context_payload(s.prepared_audio_context_json)) else {}), "id": s.id, "project_id": s.project_id, "source_type": s.source_type.value, "original_filename": s.original_filename, "mime_type": s.mime_type, "size_bytes": s.size_bytes, "drive_file_url": s.drive_file_url, "upload_status": s.upload_status.value, "uploaded_at": s.uploaded_at.isoformat() if s.uploaded_at else None, "source_created_at": s.source_created_at.isoformat() if s.source_created_at else None, "source_created_at_provenance": s.source_created_at_provenance, "expires_at": s.expires_at.isoformat() if s.expires_at else None, "deleted_at": s.deleted_at.isoformat() if s.deleted_at else None, "delete_reason": s.delete_reason, "created_at": s.created_at.isoformat(), "updated_at": s.updated_at.isoformat()}
+def source_payload(s: Source, *, retention_deferred_reason: str | None = None):
+    return {**({"retention_deferred_reason": retention_deferred_reason} if retention_deferred_reason else {}), **({"prepared_audio": context} if (context := prepared_audio_context_payload(s.prepared_audio_context_json)) else {}), "id": s.id, "project_id": s.project_id, "source_type": s.source_type.value, "original_filename": s.original_filename, "mime_type": s.mime_type, "size_bytes": s.size_bytes, "drive_file_url": s.drive_file_url, "upload_status": s.upload_status.value, "uploaded_at": s.uploaded_at.isoformat() if s.uploaded_at else None, "source_created_at": s.source_created_at.isoformat() if s.source_created_at else None, "source_created_at_provenance": s.source_created_at_provenance, "expires_at": s.expires_at.isoformat() if s.expires_at else None, "deleted_at": s.deleted_at.isoformat() if s.deleted_at else None, "delete_reason": s.delete_reason, "created_at": s.created_at.isoformat(), "updated_at": s.updated_at.isoformat()}
 
 def _completed_source_retention_seconds(source: Source, user: User) -> int:
     if source_reference_class(source) == SourceReferenceClass.audio_processing.value:
@@ -1533,20 +1535,15 @@ def list_sources(
     query=db.query(Source).filter(
         Source.project_id==p.id,
         Source.deleted_at.is_(None),
-        or_(
-            Source.source_type!=SourceType.local_upload,
-            and_(
-                Source.upload_status!=SourceUploadStatus.expired,
-                or_(Source.expires_at.is_(None), Source.expires_at>now),
-            ),
-        ),
+        source_browser_visibility_predicate(now),
     )
     if position:
         created_at,row_id=position
         query=query.filter((Source.created_at < created_at) | ((Source.created_at == created_at) & (Source.id < row_id)))
     rows=query.order_by(Source.created_at.desc(), Source.id.desc()).limit(page_size+1).all()
     rows,next_cursor=page_envelope(rows, page_size=page_size, timestamp_attribute="created_at", secret=sess.csrf_hash, owner_user_id=user.id, surface="sources", scope=scope)
-    return {"sources":[source_payload(r) for r in rows], "next_cursor": next_cursor, "page_size": page_size}
+    deferrals = source_retention_deferrals(db, [r.id for r in rows], now=now)
+    return {"sources":[source_payload(r, retention_deferred_reason=deferrals.get(r.id)) for r in rows], "next_cursor": next_cursor, "page_size": page_size}
 def _browser_capability_cache_headers(response: Response):
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"

@@ -370,6 +370,8 @@ function parseSource(
     source_created_at: rawSourceCreatedAt as string | null,
     source_created_at_provenance: creationProvenance,
     expires_at: candidate.expires_at,
+    ...((candidate.retention_deferred_reason === "transcription_in_progress" || candidate.retention_deferred_reason === "audio_processing_in_progress")
+      ? { retention_deferred_reason: candidate.retention_deferred_reason } : {}),
     deleted_at: candidate.deleted_at,
     delete_reason: deleteReason,
     created_at: candidate.created_at,
