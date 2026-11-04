@@ -13,9 +13,23 @@ from studio_api.db import Base
 from studio_api.models import (
     AudioPreparationJob, AudioPreparationStatus, GoogleConnection, GoogleConnectionStatus,
     JobStatus, Project, RealtimeTranscriptDraft, Session, TranscriptionJob, TrustedDevice, User, UserStatus,
-    JobNotificationDelivery, YandexDiskConnection, UserNotificationPreference, WebPushSubscription,
+    JobNotificationDelivery, YandexDiskConnection, UserNotificationPreference, WebPushSubscription, LocalExecutionDevice,
 )
 from studio_api.recovery_quarantine import quarantine_restored_database, quarantine_statements
+
+
+def test_pre_local_device_backup_can_still_be_quarantined():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(text("DROP TABLE local_execution_devices"))
+    with DbSession(engine) as db:
+        user = User(email="old-backup@example.test")
+        db.add(user); db.commit()
+        assert quarantine_restored_database(db, now=datetime.now(timezone.utc))["automatic_activation"] is False
+        db.commit(); db.refresh(user)
+        assert user.status == UserStatus.disabled
+    engine.dispose()
 
 
 @pytest.mark.parametrize("execution", ["orm", "literal_sql"])
@@ -32,6 +46,8 @@ def test_restore_quarantines_work_and_auth_without_erasing_recovery_content(exec
         session = Session(user_id=user.id, token_hash="s" * 64, csrf_hash="c" * 64,
             expires_at=now + timedelta(days=1), reauthenticated_at=now)
         trusted = TrustedDevice(user_id=user.id, token_hash="t" * 64, expires_at=now + timedelta(days=30))
+        local_device = LocalExecutionDevice(owner_user_id=user.id, label="Synthetic PC", creation_key="q" * 36,
+            token_hash="l" * 64, credential_revision=1, runtime_status="ready", last_seen_at=now)
         job = TranscriptionJob(owner_user_id=user.id, project_id=project.id, status=JobStatus.processing,
             lease_owner_id="old-worker", lease_generation=9, automatic_retry_reason="provider_rate_limited")
         audio = AudioPreparationJob(owner_user_id=user.id, project_id=project.id,
@@ -49,7 +65,7 @@ def test_restore_quarantines_work_and_auth_without_erasing_recovery_content(exec
         draft = RealtimeTranscriptDraft(owner_user_id=user.id, project_id=project.id, client_session_id="a" * 20,
             revision=1, ciphertext=b"encrypted-restored-text", nonce=b"n", key_id="test",
             payload_hmac="h" * 64, committed_segment_count=1, committed_character_count=5, partial_character_count=0)
-        db.add_all([session, trusted, job, audio, connection, yandex, preferences, push, draft])
+        db.add_all([session, trusted, local_device, job, audio, connection, yandex, preferences, push, draft])
         db.flush()
         notification = JobNotificationDelivery(owner_user_id=user.id, job_id=job.id,
             terminal_status="failed", attempt_number=1, channel="email", destination_id="synthetic",
@@ -69,6 +85,8 @@ def test_restore_quarantines_work_and_auth_without_erasing_recovery_content(exec
         assert result["automatic_activation"] is False
         assert user.status == UserStatus.disabled and project.archived_at is not None
         assert session.revoked_at is not None and session.reauthenticated_at is None and trusted.revoked_at is not None
+        assert local_device.revoked_at is not None and local_device.token_hash == "revoked"
+        assert local_device.last_seen_at is None and local_device.credential_revision == 2
         assert connection.status == GoogleConnectionStatus.revoked
         assert connection.maintenance_revoked_at is not None
         assert connection.maintenance_refresh_token_ciphertext == b"maintenance"

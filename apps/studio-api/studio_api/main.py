@@ -225,7 +225,8 @@ def _is_realtime_draft_route(path: str) -> bool:
 
 @app.exception_handler(RequestValidationError)
 async def request_validation_error_handler(request: Request, exc: RequestValidationError):
-    sensitive = request.url.path == "/api/credentials" or request.url.path.startswith("/api/credentials/")
+    sensitive = (request.url.path == "/api/credentials" or request.url.path.startswith("/api/credentials/")
+                 or request.url.path.startswith("/api/local-execution/"))
     if not _is_realtime_draft_route(request.url.path) and not sensitive:
         return await request_validation_exception_handler(request, exc)
     response = JSONResponse(
@@ -5232,6 +5233,9 @@ def audit_events(
 from .yandex_disk_routes import build_router as build_yandex_disk_router
 app.include_router(build_yandex_disk_router(recent_auth=require_recent_auth, limiter=limiter,
     project_loader=owned_project_or_404, source_serializer=source_payload, project_serializer=project_payload))
+
+from .local_execution_routes import build_router as build_local_execution_router
+app.include_router(build_local_execution_router(recent_auth=require_recent_auth, limiter=limiter))
 
 
 def _output_folder_key(provider, folder_id):

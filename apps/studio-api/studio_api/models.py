@@ -46,6 +46,30 @@ class User(Base):
     deleted_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
     __table_args__=(CheckConstraint("source_retention_ttl_seconds IN (3600, 86400, 259200, 604800, 2592000)", name="ck_users_source_retention_ttl_allowed"), CheckConstraint("accent_color IN ('blue', 'violet', 'teal', 'rose')", name="ck_users_accent_color_allowed"),)
 
+class LocalExecutionDevice(Base):
+    """A revocable PC capability, separate from browser sessions/provider keys."""
+    __tablename__ = "local_execution_devices"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    owner_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    creation_key: Mapped[str] = mapped_column(String(36), nullable=False)
+    label: Mapped[str] = mapped_column(String(80), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    credential_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default=text("1"))
+    runtime_status: Mapped[str] = mapped_column(String(24), nullable=False, default="unknown", server_default=text("'unknown'"))
+    runtime_version: Mapped[str|None] = mapped_column(String(80))
+    model: Mapped[str|None] = mapped_column(String(80))
+    last_seen_at: Mapped[datetime|None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now, onupdate=now)
+    revoked_at: Mapped[datetime|None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "creation_key", name="uq_local_execution_device_creation"),
+        CheckConstraint("credential_revision >= 1", name="ck_local_execution_device_revision"),
+        CheckConstraint("runtime_status IN ('unknown','ready','model_missing','runtime_missing','runtime_error')", name="ck_local_execution_device_status"),
+        CheckConstraint("length(trim(label)) > 0", name="ck_local_execution_device_label"),
+    )
+
+
 class UserNotificationPreference(Base):
     __tablename__="user_notification_preferences"
     user_id: Mapped[str]=mapped_column(ForeignKey("users.id"), primary_key=True)

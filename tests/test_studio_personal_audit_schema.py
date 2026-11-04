@@ -23,6 +23,7 @@ def test_source_version_migration_preserves_legacy_identity_and_guards_rollback(
     engine = sa.create_engine("sqlite://")
     with engine.begin() as connection:
         Base.metadata.create_all(connection)
+        connection.execute(sa.text("DROP TABLE local_execution_devices"))
         connection.execute(sa.text("ALTER TABLE transcription_jobs DROP COLUMN media_timeline_version"))
         connection.execute(sa.text("ALTER TABLE transcription_job_sources DROP COLUMN transcript_timeline_json"))
         for column in ("drive_revision_id", "drive_md5_checksum", "drive_sha256_checksum"):
@@ -39,6 +40,7 @@ def test_source_version_migration_preserves_legacy_identity_and_guards_rollback(
         revision.module.op = Operations(MigrationContext.configure(connection))
         try:
             revision.module.upgrade()
+            assert "local_execution_devices" in sa.inspect(connection).get_table_names()
             for table, name in (("transcription_jobs", "media_timeline_version"), ("transcription_job_sources", "transcript_timeline_json")):
                 column = next(c for c in sa.inspect(connection).get_columns(table) if c["name"] == name)
                 assert column["nullable"] and column["default"] is None
@@ -58,6 +60,25 @@ def test_source_version_migration_preserves_legacy_identity_and_guards_rollback(
             revision.module.downgrade()
             assert not {"drive_revision_id", "drive_md5_checksum", "drive_sha256_checksum"} & {c["name"] for c in sa.inspect(connection).get_columns("sources")}
             revision.module.upgrade()
+        finally:
+            revision.module.op = previous
+    engine.dispose()
+
+
+def test_migration_downgrade_cannot_resurrect_or_discard_paired_capabilities():
+    revision = ScriptDirectory.from_config(Config("apps/studio-api/alembic.ini")).get_revision("0045_personal_audit")
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        Base.metadata.create_all(connection)
+        connection.execute(Base.metadata.tables["users"].insert().values(id="u", email="device@example.test"))
+        connection.execute(Base.metadata.tables["local_execution_devices"].insert().values(
+            id="d", owner_user_id="u", creation_key="c", label="PC", token_hash="digest"))
+        previous = revision.module.op
+        revision.module.op = Operations(MigrationContext.configure(connection))
+        try:
+            with pytest.raises(RuntimeError, match="Local execution capabilities require forward recovery"):
+                revision.module.downgrade()
+            assert connection.execute(sa.text("SELECT COUNT(*) FROM local_execution_devices")).scalar_one() == 1
         finally:
             revision.module.op = previous
     engine.dispose()

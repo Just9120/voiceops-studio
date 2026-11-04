@@ -7,9 +7,9 @@ Source snapshot04Nov2026 paragraphs382..386 восстановлен в NEM-01..
 | AC | Состояние | CODE | TEST | CI | Остаток / Evidence |
 |---|---|---|---|---|---|
 | `NEM-01` | BACKLOG | PENDING | PENDING | PENDING | Явный local execution target, сохранённые model/device и no-cloud dispatch; прежний CPU probe проверял только модель отдельно от приложения. |
-| `NEM-02` | BACKLOG | PENDING | PENDING | PENDING | Owner/device auth boundary, start/progress/cancel, lease/result fencing и local companion; endpoint на PC не открыт наружу. |
+| `NEM-02` | IN_PROGRESS | PARTIAL | PARTIAL | PENDING | Owner/device pairing/CSRF/step-up, one-time token/hash, rotation/revocation/isolation и restore quarantine: synthetic API/schema tests PASS. Job claim/start/progress/cancel/result fences и companion ещё PENDING; endpoint на PC не открыт наружу. |
 | `NEM-03` | IN_PROGRESS | PARTIAL | PARTIAL | PENDING | Native result normalizer использует общие revocable words и prepared clock, не раскрывает local path/confidence как метаданные; synthetic negative tests и два сохранённых native outputs PASS. History/format/timeline/export/recovery через Studio ещё не интегрированы. |
-| `NEM-04` | BACKLOG | PENDING | PENDING | PENDING | Offline/missing model/runtime, reconnect и явное отсутствие платного fallback. |
+| `NEM-04` | IN_PROGRESS | PARTIAL | PARTIAL | PENDING | Dedicated heartbeat сообщает model/runtime readiness; freshness/offline/future-clock/unsupported identity negative tests PASS. UI/reconnect/no-cloud dispatch ещё PENDING. |
 
 ### `AUDIO-QUALITY-PROGRESS-TRIM-01`
 
