@@ -25,7 +25,7 @@ def test_source_version_migration_preserves_legacy_identity_and_guards_rollback(
         Base.metadata.create_all(connection)
         connection.execute(sa.text("ALTER TABLE transcription_jobs DROP COLUMN media_timeline_version"))
         connection.execute(sa.text("ALTER TABLE transcription_job_sources DROP COLUMN transcript_timeline_json"))
-        for column in ("drive_revision_id", "drive_md5_checksum"):
+        for column in ("drive_revision_id", "drive_md5_checksum", "drive_sha256_checksum"):
             connection.execute(sa.text(f"ALTER TABLE sources DROP COLUMN {column}"))
         for table in ("transcription_jobs", "audio_preparation_jobs"):
             connection.execute(sa.text(f"ALTER TABLE {table} DROP COLUMN source_access_started_at"))
@@ -49,14 +49,14 @@ def test_source_version_migration_preserves_legacy_identity_and_guards_rollback(
             for table in ("transcription_jobs", "audio_preparation_jobs"):
                 column = next(c for c in sa.inspect(connection).get_columns(table) if c["name"] == "source_access_started_at")
                 assert column["nullable"] and column["default"] is None
-            assert connection.execute(sa.text("SELECT drive_file_id,drive_revision_id,drive_md5_checksum FROM sources")).one() == ("same-file", None, None)
+            assert connection.execute(sa.text("SELECT drive_file_id,drive_revision_id,drive_md5_checksum,drive_sha256_checksum FROM sources")).one() == ("same-file", None, None, None)
             connection.execute(sa.text("UPDATE sources SET drive_revision_id='v1' WHERE id='legacy'"))
             with pytest.raises(RuntimeError, match="forward recovery"):
                 revision.module.downgrade()
             assert connection.execute(sa.text("SELECT drive_revision_id FROM sources")).scalar_one() == "v1"
             connection.execute(sa.text("UPDATE sources SET drive_revision_id=NULL"))
             revision.module.downgrade()
-            assert not {"drive_revision_id", "drive_md5_checksum"} & {c["name"] for c in sa.inspect(connection).get_columns("sources")}
+            assert not {"drive_revision_id", "drive_md5_checksum", "drive_sha256_checksum"} & {c["name"] for c in sa.inspect(connection).get_columns("sources")}
             revision.module.upgrade()
         finally:
             revision.module.op = previous

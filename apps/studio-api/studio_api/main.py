@@ -1703,7 +1703,7 @@ def _new_google_drive_source(project_id: str, meta, mime: str, uploaded_at: date
     source_created_at=parse_authoritative_source_created_at(meta.created_time)
     if source_created_at is None:
         raise HTTPException(502, "Google Drive creation time is unavailable")
-    return Source(project_id=project_id, source_type=SourceType.google_drive, original_filename=normalize_source_display_filename(meta.name or f"Google Drive source {meta.id}"), mime_type=mime, size_bytes=meta.size_bytes, drive_file_id=clean_drive_id(meta.id, "ID файла Google Drive"), drive_file_url=clean_drive_url(meta.web_view_link), drive_revision_id=getattr(meta, "head_revision_id", None), drive_md5_checksum=getattr(meta, "md5_checksum", None), upload_status=SourceUploadStatus.uploaded, uploaded_at=uploaded_at, source_created_at=source_created_at, source_created_at_provenance="google_drive_created_time", storage_cleanup_status=SourceStorageCleanupStatus.not_applicable)
+    return Source(project_id=project_id, source_type=SourceType.google_drive, original_filename=normalize_source_display_filename(meta.name or f"Google Drive source {meta.id}"), mime_type=mime, size_bytes=meta.size_bytes, drive_file_id=clean_drive_id(meta.id, "ID файла Google Drive"), drive_file_url=clean_drive_url(meta.web_view_link), drive_revision_id=getattr(meta, "head_revision_id", None), drive_md5_checksum=getattr(meta, "md5_checksum", None), drive_sha256_checksum=getattr(meta, "sha256_checksum", None), upload_status=SourceUploadStatus.uploaded, uploaded_at=uploaded_at, source_created_at=source_created_at, source_created_at_provenance="google_drive_created_time", storage_cleanup_status=SourceStorageCleanupStatus.not_applicable)
 
 def _inspect_google_drive_source_folder(db: Session, user: User, folder_id: str):
     from .google_drive_folder_intake import (
@@ -3468,13 +3468,16 @@ def reuse_prepared_audio(job_id: str, pair=Depends(require_csrf), db: Session=De
             raise HTTPException(409, detail={"reason": "output_copy_changed" if state == "changed" else "output_copy_unverified"})
     elif job.recipe_version == 2:
         raise HTTPException(409, detail={"reason": "output_copy_unverified"})
+    selected_sha256 = getattr(meta, "sha256_checksum", None) or (content_receipt.sha256 if content_receipt else None)
     source = db.execute(select(Source).where(Source.project_id == project_id,
         Source.source_type == SourceType.google_drive, Source.drive_file_id == drive_id,
         Source.drive_revision_id == getattr(meta, "head_revision_id", None),
         Source.drive_md5_checksum == getattr(meta, "md5_checksum", None),
+        Source.drive_sha256_checksum == selected_sha256,
         Source.deleted_at.is_(None)).order_by(Source.created_at, Source.id).limit(1)).scalar_one_or_none()
     if source is None:
         source = _new_google_drive_source(project_id, meta, mime, utcnow())
+        source.drive_sha256_checksum = selected_sha256
         db.add(source)
         db.flush()
         audit(db, "audio_preparation.reused", actor_user_id=user.id, subject_user_id=user.id,

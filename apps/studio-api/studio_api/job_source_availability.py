@@ -86,6 +86,7 @@ class SourceRelationSnapshot:
     expires_at: datetime | None
     drive_revision_id: str | None = None
     drive_md5_checksum: str | None = None
+    drive_sha256_checksum: str | None = None
     prepared_audio_context_json: str | None = field(default=None, repr=False)
 
 
@@ -245,7 +246,7 @@ def _snapshot(job, js, *, now):
         reasons.append("unsupported_source_type")
     if not is_supported_source_mime_type(mime):
         reasons.append("unsupported_mime_type")
-    return {"source_id": src.id, "position": js.position, "source_type": source_type, "original_filename": src.original_filename, "mime_type": mime, "size_bytes": src.size_bytes, "project_id": src.project_id, "upload_status": str(src.upload_status.value), "deleted_at": src.deleted_at, "expires_at": src.expires_at, "s3_bucket": src.s3_bucket, "s3_object_key": src.s3_object_key, "reference_class": source_reference_class(src), "drive_file_id": src.drive_file_id, "drive_revision_id": src.drive_revision_id, "drive_md5_checksum": src.drive_md5_checksum, "prepared_audio_context_json": src.prepared_audio_context_json, "retention_access_allowed": operation_retains_source(job, src.expires_at, now), "reasons": reasons}
+    return {"source_id": src.id, "position": js.position, "source_type": source_type, "original_filename": src.original_filename, "mime_type": mime, "size_bytes": src.size_bytes, "project_id": src.project_id, "upload_status": str(src.upload_status.value), "deleted_at": src.deleted_at, "expires_at": src.expires_at, "s3_bucket": src.s3_bucket, "s3_object_key": src.s3_object_key, "reference_class": source_reference_class(src), "drive_file_id": src.drive_file_id, "drive_revision_id": src.drive_revision_id, "drive_md5_checksum": src.drive_md5_checksum, "drive_sha256_checksum": src.drive_sha256_checksum, "prepared_audio_context_json": src.prepared_audio_context_json, "retention_access_allowed": operation_retains_source(job, src.expires_at, now), "reasons": reasons}
 
 
 def _verify_local(snap, now, settings, storage_factory):
@@ -301,6 +302,8 @@ def _verify_drive(snap, token, settings, fetcher):
     reasons = []
     mime = normalize_source_mime_type(meta.mime_type)
     context = parse_prepared_audio_context(snap["prepared_audio_context_json"])
+    if snap["drive_sha256_checksum"] and getattr(meta, "sha256_checksum", None) and meta.sha256_checksum != snap["drive_sha256_checksum"]:
+        reasons.append("source_state_changed")
     if (context and context.get("version") == 2 and getattr(meta, "sha256_checksum", None)
             and meta.sha256_checksum != context["content_sha256"]):
         reasons.append("source_state_changed")
@@ -352,6 +355,7 @@ def _relation_source_identity(job_source) -> SourceRelationSnapshot:
         drive_file_id=src.drive_file_id if src else None,
         drive_revision_id=src.drive_revision_id if src else None,
         drive_md5_checksum=src.drive_md5_checksum if src else None,
+        drive_sha256_checksum=src.drive_sha256_checksum if src else None,
         prepared_audio_context_json=src.prepared_audio_context_json if src else None,
         s3_bucket=src.s3_bucket if src else None,
         s3_object_key=src.s3_object_key if src else None,

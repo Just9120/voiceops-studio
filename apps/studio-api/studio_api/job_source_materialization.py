@@ -122,6 +122,7 @@ class _SourceSnapshot:
     original_filename: str
     drive_revision_id: str | None = None
     drive_md5_checksum: str | None = None
+    drive_sha256_checksum: str | None = None
     prepared_audio_context_json: str | None = field(default=None, repr=False)
 
 
@@ -197,7 +198,7 @@ def materialize_processing_job_source(
                 disk_client_factory=disk_client_factory,
             )
             _validate_materialized_metadata(snap, byte_count, response_mime, response_length, settings)
-            _verify_prepared_content(temp, snap.prepared_audio_context_json, check)
+            _verify_prepared_content(temp, snap.prepared_audio_context_json, check, snap.drive_sha256_checksum)
             _compare_snapshot(snap, _load_selected_snapshot(db, job_id, job_source_id, lease_owner_id, lease_generation, clock(), settings))
             temp.seek(0)
             handle = MaterializedJobSource(
@@ -255,7 +256,7 @@ def _load_selected_snapshot(db, job_id, job_source_id, owner, generation, now, s
         raise SourceMaterializationError(SourceMaterializationReason.job_source_not_processable)
     if not validate_source_size(src.size_bytes, settings.source_max_upload_bytes):
         raise SourceMaterializationError(SourceMaterializationReason.source_too_large)
-    return _SourceSnapshot(job.id, rel.id, src.id, rel.position, _value(rel.status), _value(src.source_type), src.project_id, src.drive_file_id, src.s3_bucket, src.s3_object_key, source_reference_class(src), mime, src.size_bytes, _value(src.upload_status), src.deleted_at, src.expires_at, src.source_created_at, src.source_created_at_provenance, job.lease_owner_id, job.lease_generation, job.cancel_requested_at, _value(job.status), project.archived_at, project.owner_user_id, job.owner_user_id, job.project_id, src.original_filename, src.drive_revision_id, src.drive_md5_checksum, src.prepared_audio_context_json)
+    return _SourceSnapshot(job.id, rel.id, src.id, rel.position, _value(rel.status), _value(src.source_type), src.project_id, src.drive_file_id, src.s3_bucket, src.s3_object_key, source_reference_class(src), mime, src.size_bytes, _value(src.upload_status), src.deleted_at, src.expires_at, src.source_created_at, src.source_created_at_provenance, job.lease_owner_id, job.lease_generation, job.cancel_requested_at, _value(job.status), project.archived_at, project.owner_user_id, job.owner_user_id, job.project_id, src.original_filename, src.drive_revision_id, src.drive_md5_checksum, src.drive_sha256_checksum, src.prepared_audio_context_json)
 
 
 def processing_source_control(db, *, job_id, job_source_id, lease_owner_id, lease_generation, clock, settings, expected=None):
@@ -352,17 +353,21 @@ def _copy_source_bytes(snap, temp, settings, storage_factory, drive_token_resolv
         stream.close()
 
 
-def _verify_prepared_content(stream, context_json, check):
+def _verify_prepared_content(stream, context_json, check, source_sha256=None):
     """Verify the exact prepared body for every transport before STT can read it."""
     context = parse_prepared_audio_context(context_json)
-    if context is None or context.get("version") != 2:
+    prepared_sha = context["content_sha256"] if context and context.get("version") == 2 else None
+    if source_sha256 and prepared_sha and source_sha256 != prepared_sha:
+        raise SourceMaterializationError(SourceMaterializationReason.selected_source_changed)
+    expected_sha = source_sha256 or prepared_sha
+    if expected_sha is None:
         return
     stream.seek(0)
     digest = hashlib.sha256()
     while chunk := stream.read(_CHUNK_SIZE):
         check()
         digest.update(chunk)
-    if digest.hexdigest() != context["content_sha256"]:
+    if digest.hexdigest() != expected_sha:
         raise SourceMaterializationError(SourceMaterializationReason.selected_source_changed)
 
 

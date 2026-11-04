@@ -178,8 +178,11 @@ def catalog_source_identity(source: Any) -> CatalogSourceIdentity | None:
 def _versioned_drive_identity(source, file_id: str) -> str:
     revision = _clean_private_identity(getattr(source, "drive_revision_id", None))
     checksum = _clean_private_identity(getattr(source, "drive_md5_checksum", None))
+    strong_checksum = _clean_private_identity(getattr(source, "drive_sha256_checksum", None))
     if revision:
         return f"{file_id}#revision={revision}"
+    if strong_checksum:
+        return f"{file_id}#sha256={strong_checksum}"
     if checksum:
         return f"{file_id}#md5={checksum}"
     return file_id  # Historical catalog authority is preserved, never backfilled.
@@ -191,6 +194,7 @@ def _drive_identity_sql(source):
     # independently allocated bind parameters are not equivalent grouping keys.
     return case(
         (source.drive_revision_id.is_not(None), source.drive_file_id + literal_column("'#revision='") + source.drive_revision_id),
+        (source.drive_sha256_checksum.is_not(None), source.drive_file_id + literal_column("'#sha256='") + source.drive_sha256_checksum),
         (source.drive_md5_checksum.is_not(None), source.drive_file_id + literal_column("'#md5='") + source.drive_md5_checksum),
         else_=source.drive_file_id,
     )

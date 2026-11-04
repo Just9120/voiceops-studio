@@ -76,7 +76,8 @@ def test_source_context_is_a_small_owner_project_and_map_bound_pointer_not_a_cop
     engine.dispose()
 
 
-def test_reuse_handler_preserves_original_map_and_creates_no_source_on_same_size_conflict(monkeypatch):
+@pytest.mark.parametrize("revision_metadata", [True, False])
+def test_reuse_handler_preserves_original_map_and_creates_no_source_on_same_size_conflict(monkeypatch, revision_metadata):
     """Actual handler/SQLite; auth/CSRF/PostgreSQL are separately required in CI."""
     from fastapi import HTTPException
     from studio_api import main as api
@@ -84,13 +85,13 @@ def test_reuse_handler_preserves_original_map_and_creates_no_source_on_same_size
     Base.metadata.create_all(engine)
     monkeypatch.setattr(api.limiter, "check", lambda *_: None)
     monkeypatch.setattr(api, "refreshed_google_drive_access_token", lambda *_: "synthetic-token")
-    metadata_state = {"sha256_checksum": "a" * 64, "head_revision_id": "revision-one"}
+    metadata_state = {"sha256_checksum": "a" * 64, "head_revision_id": "revision-one" if revision_metadata else None}
     calls = []
     def metadata(db, user, file_id, **kwargs):
         assert not db.in_transaction()
         calls.append(file_id)
         return SimpleNamespace(id=file_id, name="synthetic.flac", size_bytes=100, is_folder=False,
-            md5_checksum="c" * 32, created_time="2026-11-04T10:00:00Z", modified_time="2026-11-04T10:00:00Z",
+            md5_checksum="c" * 32 if revision_metadata else None, created_time="2026-11-04T10:00:00Z", modified_time="2026-11-04T10:00:00Z",
             web_view_link="https://drive.google.com/file/d/export/view", **metadata_state), "audio/flac"
     monkeypatch.setattr(api, "_validated_google_drive_source_metadata", metadata)
     with Session(engine, expire_on_commit=False) as db:
@@ -101,7 +102,7 @@ def test_reuse_handler_preserves_original_map_and_creates_no_source_on_same_size
             status=AudioPreparationStatus.completed, recipe_version=2, total_input_duration_ms=15000, output_duration_ms=10000,
             output_drive_file_id="export", output_drive_web_view_url="https://drive.google.com/file/d/export/view",
             output_timeline_json=AudioTimeline.from_seconds(15, [(0, 5), (10, 15)]).serialize(),
-            output_drive_receipt_json=AudioExportReceipt("export", 100, "a" * 64, "revision-one").serialize())
+            output_drive_receipt_json=AudioExportReceipt("export", 100, "a" * 64, "revision-one" if revision_metadata else None).serialize())
         db.add(job); db.commit()
         job_id = job.id
         first = api.reuse_prepared_audio(job_id, pair=(None, owner), db=db, _=None)
@@ -109,6 +110,7 @@ def test_reuse_handler_preserves_original_map_and_creates_no_source_on_same_size
         assert first["id"] == second["id"]
         assert first["prepared_audio"]["original_timeline_available"] is True
         source = db.get(Source, first["id"])
+        assert source.drive_sha256_checksum == "a" * 64
         original_context = source.prepared_audio_context_json
         assert source.s3_object_key is None
         db.commit()

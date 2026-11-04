@@ -355,6 +355,7 @@ class Source(Base):
     drive_file_id: Mapped[str|None]=mapped_column(String(256))
     drive_revision_id: Mapped[str|None]=mapped_column(String(256))
     drive_md5_checksum: Mapped[str|None]=mapped_column(String(32))
+    drive_sha256_checksum: Mapped[str|None]=mapped_column(String(64))
     drive_file_url: Mapped[str|None]=mapped_column(Text)
     s3_bucket: Mapped[str|None]=mapped_column(String(255))
     s3_object_key: Mapped[str|None]=mapped_column(Text)

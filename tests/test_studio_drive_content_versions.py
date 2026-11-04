@@ -82,15 +82,21 @@ def test_catalog_version_identity_matches_sql_and_separates_replaced_and_legacy_
         drive_file_id="same-file", original_filename="call.mp3")
     checksum_only = Source(id="checksum", project_id="p", source_type=SourceType.google_drive,
         drive_file_id="same-file", original_filename="call.mp3", drive_md5_checksum="c"*32)
+    strong_only = Source(id="strong", project_id="p", source_type=SourceType.google_drive,
+        drive_file_id="same-file", original_filename="call.mp3", drive_sha256_checksum="d"*64)
+    strong_changed = Source(id="strong-new", project_id="p", source_type=SourceType.google_drive,
+        drive_file_id="same-file", original_filename="call.mp3", drive_sha256_checksum="e"*64)
+    versions = (old, changed, legacy, checksum_only, strong_only, strong_changed)
     assert catalog_source_identity(old) == catalog_source_identity(same)
-    assert len({catalog_source_identity(item) for item in (old, changed, legacy, checksum_only)}) == 4
+    assert len({catalog_source_identity(item) for item in versions}) == 6
     with engine.begin() as connection:
-        for item in (old, changed, legacy, checksum_only):
+        for item in versions:
             connection.execute(Source.__table__.insert().values(id=item.id, project_id="p", source_type=item.source_type,
                 original_filename=item.original_filename, drive_file_id=item.drive_file_id,
-                drive_revision_id=item.drive_revision_id, drive_md5_checksum=item.drive_md5_checksum))
+                drive_revision_id=item.drive_revision_id, drive_md5_checksum=item.drive_md5_checksum,
+                drive_sha256_checksum=item.drive_sha256_checksum))
         rows = dict(connection.execute(select(Source.id, _drive_identity_sql(Source))).all())
-    assert rows == {item.id: catalog_source_identity(item).value for item in (old, changed, legacy, checksum_only)}
+    assert rows == {item.id: catalog_source_identity(item).value for item in versions}
     engine.dispose()
 
 

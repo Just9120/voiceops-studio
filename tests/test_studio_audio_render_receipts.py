@@ -81,3 +81,23 @@ def test_audio_reprocessing_checks_prepared_bytes_and_recipe_before_rendering(tm
         paths = operation()
         assert len(paths) == 1 and paths[0].read_bytes() == b"a" * 100
     assert stream.closed
+
+
+def test_renderer_rejects_a_changed_parent_claim_after_materialization_before_publishing_its_map(tmp_path):
+    from studio_api.audio_preparation_service import AudioPreparationServiceError
+    source_path = tmp_path / "input.wav"; source_path.write_bytes(b"synthetic")
+    source = SimpleNamespace(source_created_at=None, prepared_audio_context_json=None)
+    job = SimpleNamespace(project_id="p", title="Synthetic", output_filename=None, output_mime_type=None,
+        estimated_output_duration_ms=1000, total_input_duration_ms=1000,
+        inputs=[SimpleNamespace(source=source)],
+        options_json=serialize_options(normalize_options({"preset":"processing_only", "output_format":"wav"})))
+    def runner(command, **kwargs):
+        if command[0] == "ffprobe":
+            return SimpleNamespace(stdout=json.dumps({"streams":[{"codec_type":"audio", "duration":"1", "codec_name":"pcm_s16le", "sample_rate":"8000", "channels":1}], "format":{"duration":"1", "format_name":"wav"}}))
+        Path(command[-1]).write_bytes(b"encoded")
+        source.prepared_audio_context_json = '{"different_parent":true}'
+        return SimpleNamespace(stdout="", stderr="")
+    with pytest.raises(AudioPreparationServiceError, match="source_unavailable"):
+        render_audio_result(SimpleNamespace(get=lambda *a: SimpleNamespace(title="Synthetic")), job=job, root=tmp_path,
+            paths=[source_path], probes=[AudioProbe(1,"wav","pcm_s16le",8000,1,"mono")],
+            settings=SimpleNamespace(source_max_upload_bytes=1000), runner=runner)

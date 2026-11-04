@@ -675,7 +675,7 @@ def require_audio_result_sources(db: Session, job: AudioPreparationJob, *, now: 
 
 
 def _source_version_recorded(source: Source) -> bool:
-    return source.source_type is not SourceType.google_drive or bool(source.drive_revision_id or source.drive_md5_checksum)
+    return source.source_type is not SourceType.google_drive or bool(source.drive_revision_id or source.drive_md5_checksum or source.drive_sha256_checksum)
 
 
 def _destination_snapshot(destination: str, folder: object | None) -> tuple[str, tuple[str | None, str | None, str | None]]:

@@ -209,6 +209,27 @@ def test_selected_drive_revision_and_content_checksum_are_enforced_before_stt(sq
     assert body.closed
 
 
+@pytest.mark.parametrize("changed", [False, True])
+def test_sha_only_drive_version_is_enforced_without_a_prepared_claim_or_revision(sqlite_session, models, changed):
+    import hashlib
+    from dataclasses import replace
+    from studio_api.job_source_materialization import SourceMaterializationError
+    digest = hashlib.sha256(b"a" * 100).hexdigest()
+    job, _, relation, _, now, _ = make_job(sqlite_session, models,
+        source_type=models.SourceType.google_drive, source_kwargs={"drive_sha256_checksum": digest})
+    body = FakeBody([b"b" * 100 if changed else b"a" * 100])
+    context = materialize(sqlite_session, job, relation, now=now,
+        drive_meta=lambda token, file_id: replace(fake_drive_meta(token, file_id), sha256_checksum=digest),
+        drive_fetcher=lambda *a, **kw: FakeStream(body))
+    if changed:
+        with pytest.raises(SourceMaterializationError, match="selected_source_changed"):
+            with context: pytest.fail("same-size replacement must not reach STT")
+    else:
+        with context as selected:
+            assert selected.stream.read() == b"a" * 100
+    assert body.closed
+
+
 @pytest.mark.parametrize("failure", [None, "changed", "cancelled"])
 def test_yandex_source_is_revalidated_streamed_and_controlled(sqlite_session, models, monkeypatch, failure):
     from studio_api import job_source_materialization as materialization

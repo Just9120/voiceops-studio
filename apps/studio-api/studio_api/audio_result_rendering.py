@@ -154,22 +154,32 @@ def materialize_audio_inputs(
 def _input_identity(source):
     return tuple(getattr(source, name, None) for name in (
         "id", "project_id", "source_type", "upload_status", "deleted_at", "expires_at",
-        "s3_bucket", "s3_object_key", "drive_file_id", "drive_revision_id", "drive_md5_checksum",
+        "s3_bucket", "s3_object_key", "drive_file_id", "drive_revision_id", "drive_md5_checksum", "drive_sha256_checksum",
         "size_bytes", "mime_type", "prepared_audio_context_json"))
 
 
 def _verify_input_body(db, source, selected_identity, path, context_json, check):
     context = parse_prepared_audio_context(context_json)
-    if context and context.get("version") == 2:
+    prepared_sha = context["content_sha256"] if context and context.get("version") == 2 else None
+    source_sha = getattr(source, "drive_sha256_checksum", None)
+    if source_sha and prepared_sha and source_sha != prepared_sha:
+        raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
+    expected_sha = source_sha or prepared_sha
+    if expected_sha:
         digest = hashlib.sha256()
         with path.open("rb") as stream:
             for chunk in iter(lambda: stream.read(_COPY_CHUNK_SIZE), b""):
                 check()
                 digest.update(chunk)
-        if digest.hexdigest() != context["content_sha256"]:
+        if digest.hexdigest() != expected_sha:
             raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
+    _verify_input_identity(db, source, selected_identity)
+
+
+def _verify_input_identity(db, source, selected_identity):
     from sqlalchemy import inspect
-    if inspect(source, raiseerr=False) is not None:
+    state = inspect(source, raiseerr=False)
+    if state is not None and state.persistent:
         db.refresh(source)
     if _input_identity(source) != selected_identity:
         raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
@@ -222,6 +232,13 @@ def render_audio_result(db, *, job, root, settings, output_root=None, paths=None
         paths = materialize_audio_inputs(db, job=job, root=root, settings=settings,
             storage_factory=storage_factory, drive_token_resolver=drive_token_resolver,
             drive_content_fetcher=drive_content_fetcher, check=check, clock=clock)
+    if len(paths) != len(job.inputs):
+        raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
+    selected_inputs = [(item.source, _input_identity(item.source)) for item in job.inputs]
+    # Also cover processor-supplied scratch inputs: their earlier materialization
+    # must not let a subsequently changed claim select another parent clock.
+    for (source, identity), path in zip(selected_inputs, paths):
+        _verify_input_body(db, source, identity, path, getattr(source, "prepared_audio_context_json", None), check)
     if probes is None:
         probes = []
         for path in paths:
@@ -348,6 +365,9 @@ def render_audio_result(db, *, job, root, settings, output_root=None, paths=None
     if options.output_format is AudioOutputFormat.copy:
         output_filename = f"{Path(output_filename).stem}.{extension}"
     mime_type = _output_mime(options, job)
+    for source, identity in selected_inputs:
+        check()
+        _verify_input_identity(db, source, identity)
     sha256_checksum, md5_checksum, timeline_json = None, None, None
     if not preview:
         sha256 = hashlib.sha256()

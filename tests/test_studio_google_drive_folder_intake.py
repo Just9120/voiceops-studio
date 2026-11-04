@@ -59,10 +59,14 @@ def inspect(children, *, max_upload_bytes=100):
     )
 
 
-def test_preview_confirmation_is_invalidated_by_same_size_content_revision_change():
+@pytest.mark.parametrize("sha_only", [False, True])
+def test_preview_confirmation_is_invalidated_by_same_size_content_revision_change(sha_only):
     from dataclasses import replace
     first = replace(metadata("audio", "call.mp3", "audio/mpeg"), head_revision_id="v1", md5_checksum="a"*32)
     changed = replace(first, head_revision_id="v2", md5_checksum="b"*32)
+    if sha_only:
+        first = replace(first, head_revision_id=None, md5_checksum=None, sha256_checksum="a"*64)
+        changed = replace(changed, head_revision_id=None, md5_checksum=None, sha256_checksum="b"*64)
     previews = [inspect({("root", None): GoogleDriveFolderChildren("root", [item], None)}) for item in (first, changed)]
     tokens = [drive_folder_preview_token(preview, owner_user_id="owner", project_id="project") for preview in previews]
     assert tokens[0] != tokens[1]
