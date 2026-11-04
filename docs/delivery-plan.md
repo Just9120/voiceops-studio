@@ -31,6 +31,8 @@ DoD: исправления имеют meaningful regressions и совмест�
 
 Checkpoint04Nov: Goal активирована, источники/repo/base проверены, ветка создана. F85 признан false positive по первичному ruleset readback. Реализация остальных17 findings и новых/уточнённых AC ещё не завершена. Текущий процент UNSET до F42; исторические468/473 не перенесены как новый PASS. Следующий шаг — regression count input и общий source/version/timeline contract.
 
+Local checkpoint04Nov: UXR37 candidate `b1c3875` — empty count draft сохраняется, invalid1..50 блокирует readiness/preflight; App2 PASS, TypeScript/affected ESLint PASS. F10 следующий narrow block ограничивает retention protection действующей lease и реально выполняющимися audio/processing стадиями; idle preview/queued/stalled без lease не удерживает expiry. Source/audio-service/quarantine90 PASS, включая новые18 lease/status cases; старые active-work fixtures уточнены действующей lease, assertions защиты активной работы сохранены. Полная F10 UI-дефerral квалификация ещё PENDING. Эти локальные результаты не заменяют Linux PG/concurrency CI и delivery.
+
 ### AUDIO-QUALITY-PROGRESS-TRIM-20261028 — IN_PROGRESS
 
 Основание: явное поручение владельца28Oct2026 — сначала точечно обновить исходный Google Doc, затем реализовать согласованные новые требования единой Goal. Doc `1uaYvnqpbns_iyHTtQDZYjNYygT4ikUhmhuhRDWySrzI` обновлён с revision guard; readback подтвердил все3 изменённых раздела (провайдеры, визуальная обрезка, прогресс), остальные разделы сохранены. Revision `AHj4eMTtyuH0DJOk9_16Rda3GchxdZw-YldmFAyfJ7mRCpj5_hnttmoD6Mrll45uIVkd2zGLQakvZCLw-QOvOdF_xfF53H7bcvLPvTSkw80`.

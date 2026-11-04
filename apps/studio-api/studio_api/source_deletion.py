@@ -148,27 +148,33 @@ def _referencing_jobs(db: Session, source_id: str, *, lock: bool) -> list[Transc
     return list(db.execute(stmt).scalars().all())
 
 
+def _current_lease_predicate(model, now):
+    return and_(model.lease_owner_id.is_not(None), model.lease_owner_id != "",
+                model.lease_expires_at > _aware(now).replace(tzinfo=None))
+
+
+def _has_current_processing_lease(job, now):
+    return bool(job.status == JobStatus.processing and job.lease_owner_id
+                and job.lease_expires_at and _aware(job.lease_expires_at) > _aware(now))
+
+
 def _active_audio_reference_predicate(source_id, now):
     input_reference = exists(select(AudioPreparationJobInput.job_id).where(
         AudioPreparationJobInput.job_id == AudioPreparationJob.id,
         AudioPreparationJobInput.source_id == source_id,
     ).correlate(AudioPreparationJob, Source))
-    return or_(
+    return and_(_current_lease_predicate(AudioPreparationJob, now), or_(
         and_(input_reference, AudioPreparationJob.status.in_((
-            AudioPreparationStatus.preview_queued, AudioPreparationStatus.analyzing,
-            AudioPreparationStatus.preview_ready, AudioPreparationStatus.queued, AudioPreparationStatus.processing,
+            AudioPreparationStatus.analyzing, AudioPreparationStatus.processing,
         ))),
-        and_(input_reference, AudioPreparationJob.status == AudioPreparationStatus.completed,
-            or_(AudioPreparationJob.current_stage.in_(("google_drive_export_queued", "google_drive_upload")),
-                and_(AudioPreparationJob.current_stage.in_(("audio_download_queued", "audio_download_rendering")),
-                    AudioPreparationJob.download_slot == 1,
-                    or_(AudioPreparationJob.download_expires_at > _aware(now).replace(tzinfo=None),
-                        and_(AudioPreparationJob.lease_owner_id.is_not(None),
-                             AudioPreparationJob.lease_expires_at > _aware(now).replace(tzinfo=None)))))),
+        and_(input_reference, AudioPreparationJob.status.in_((AudioPreparationStatus.completed, AudioPreparationStatus.preview_ready)),
+            or_(AudioPreparationJob.current_stage == "google_drive_upload",
+                and_(AudioPreparationJob.current_stage == "audio_download_rendering",
+                    AudioPreparationJob.download_slot == 1))),
         and_(AudioPreparationJob.output_source_id == source_id,
             AudioPreparationJob.status == AudioPreparationStatus.completed,
-            AudioPreparationJob.current_stage.in_(("google_drive_export_queued", "google_drive_upload"))),
-    )
+            AudioPreparationJob.current_stage == "google_drive_upload"),
+    ))
 
 
 def _active_audio_preparation_references(db: Session, source_id: str, *, lock: bool, now: datetime) -> list[AudioPreparationJob]:
@@ -179,7 +185,7 @@ def _active_audio_preparation_references(db: Session, source_id: str, *, lock: b
 
 
 
-def _no_processing_reference_predicate():
+def _no_processing_reference_predicate(now):
     return ~exists(
         select(1)
         .select_from(TranscriptionJobSource)
@@ -188,6 +194,7 @@ def _no_processing_reference_predicate():
             TranscriptionJobSource.source_id == Source.id,
             TranscriptionJobSource.status != JobSourceStatus.skipped,
             TranscriptionJob.status == JobStatus.processing,
+            _current_lease_predicate(TranscriptionJob, now),
         )
     )
 
@@ -208,7 +215,7 @@ def deletion_readiness(db: Session, source: Source, *, now: datetime, locked_job
     for job in locked_jobs if locked_jobs is not None else _referencing_jobs(db, source.id, lock=False):
         if job.status == JobStatus.queued:
             return SourceDeletionReason.queued_job_uses_source
-        if job.status == JobStatus.processing:
+        if _has_current_processing_lease(job, now):
             return SourceDeletionReason.processing_job_uses_source
         if not discard_failed_retry and job.status == JobStatus.failed and compute_explicit_retry_readiness(db, job, now=now).available:
             return SourceDeletionReason.retryable_failed_job_uses_source
@@ -366,7 +373,7 @@ def mark_one_expired_source_for_cleanup(db: Session, *, now: datetime) -> bool:
             Source.expires_at.is_not(None),
             Source.expires_at <= now,
             Source.upload_status != SourceUploadStatus.expired,
-            _no_processing_reference_predicate(),
+            _no_processing_reference_predicate(now),
             _no_active_audio_reference_predicate(now),
         )
         .order_by(Source.expires_at.asc(), Source.id.asc())
@@ -376,7 +383,7 @@ def mark_one_expired_source_for_cleanup(db: Session, *, now: datetime) -> bool:
     if src is None:
         return False
     # Defence in depth for races between candidate selection and source mutation.
-    if any(job.status == JobStatus.processing for job in _referencing_jobs(db, src.id, lock=True)):
+    if any(_has_current_processing_lease(job, now) for job in _referencing_jobs(db, src.id, lock=True)):
         return False
     src.upload_status = SourceUploadStatus.expired
     src.delete_reason = "retention_expired"
@@ -456,7 +463,7 @@ def claim_next_source_cleanup(db: Session, *, owner_id: str, now: datetime) -> S
             Source.s3_object_key != "",
             stale,
             or_(Source.deleted_at.is_not(None), Source.expires_at <= now),
-            _no_processing_reference_predicate(),
+            _no_processing_reference_predicate(now),
             _no_active_audio_reference_predicate(now),
         )
         .order_by(Source.storage_cleanup_not_before_at.asc(), Source.created_at.asc(), Source.id.asc())
@@ -466,7 +473,7 @@ def claim_next_source_cleanup(db: Session, *, owner_id: str, now: datetime) -> S
     if src is None:
         return None
     # Defence in depth for races between candidate selection and source mutation.
-    if any(job.status == JobStatus.processing for job in _referencing_jobs(db, src.id, lock=True)):
+    if any(_has_current_processing_lease(job, now) for job in _referencing_jobs(db, src.id, lock=True)):
         return None
     src.storage_cleanup_generation = int(src.storage_cleanup_generation or 0) + 1
     src.storage_cleanup_owner_id = owner

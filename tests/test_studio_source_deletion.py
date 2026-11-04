@@ -125,6 +125,9 @@ class FakeStorageSettings:
 
 def _job_for_source(db, m, user, project, src, *, status, relation_status=None, attempt_count=1):
     job = m.TranscriptionJob(project_id=project.id, owner_user_id=user.id, status=status, provider="elevenlabs", provider_credential_id="cred", output_drive_folder_id="folder", attempt_count=attempt_count)
+    if status == m.JobStatus.processing:
+        job.lease_owner_id = "synthetic-worker"
+        job.lease_expires_at = src.uploaded_at + timedelta(days=1)
     db.add(job)
     db.flush()
     rel = m.TranscriptionJobSource(job_id=job.id, source_id=src.id, position=0, status=relation_status or m.JobSourceStatus.queued)
@@ -208,7 +211,8 @@ def test_audio_lease_protects_only_its_source_and_does_not_starve_other_cleanup(
         job, rel = _job_for_source(db, m, user, project, src, status=m.JobStatus.completed)
         _complete_document(db, m, job, rel, now)
     audio = m.AudioPreparationJob(project_id=project.id, owner_user_id=user.id,
-        title="Synthetic", status=m.AudioPreparationStatus.processing, options_json="{}", output_destination="download")
+        title="Synthetic", status=m.AudioPreparationStatus.processing, options_json="{}", output_destination="download",
+        lease_owner_id="synthetic-worker", lease_expires_at=now + timedelta(minutes=1))
     db.add(audio)
     db.flush()
     db.add(m.AudioPreparationJobInput(job_id=audio.id, source_id=protected.id, position=0, ephemeral_reference=False))
@@ -402,7 +406,7 @@ def test_deletion_blockers_and_terminal_history(sqlite_db, job_status, allowed):
         assert src.deleted_at is None
 
 
-def test_active_audio_preparation_blocks_source_deletion(sqlite_db):
+def test_idle_audio_preview_does_not_block_source_deletion(sqlite_db):
     from studio_api.source_deletion import SourceDeletionReason, request_source_deletion
 
     m, user, project = _owner_project(sqlite_db)
@@ -435,23 +439,45 @@ def test_active_audio_preparation_blocks_source_deletion(sqlite_db):
         now=now,
     )
 
-    assert result and not result.ok
-    assert result.reason == SourceDeletionReason.audio_preparation_uses_source
-    assert src.deleted_at is None
-    assert src.upload_status == m.SourceUploadStatus.uploaded
-
-    from studio_api.audio_preparation_service import cancel_audio_preparation_job
-
-    cancel_audio_preparation_job(
-        sqlite_db, owner_user_id=user.id, job_id=preparation.id, now=now
-    )
-    sqlite_db.commit()
-    after_cancel = request_source_deletion(
-        sqlite_db, owner_user_id=user.id, source_id=src.id, now=now
-    )
-    assert after_cancel and after_cancel.ok
+    assert result and result.ok
+    assert result.reason == SourceDeletionReason.available
     assert src.deleted_at is not None
     assert src.upload_status == m.SourceUploadStatus.deleted
+
+
+@pytest.mark.parametrize("status", ["preview_ready", "preview_queued", "queued", "analyzing", "processing"])
+@pytest.mark.parametrize("lease", ["missing", "expired", "active"])
+def test_retention_defers_only_for_actual_audio_processing(sqlite_db, status, lease):
+    from studio_api.source_deletion import mark_one_expired_source_for_cleanup, claim_next_source_cleanup
+    m, user, project = _owner_project(sqlite_db)
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    source = _local_source(sqlite_db, m, project, now, expires_delta=timedelta(seconds=-1))
+    job = m.AudioPreparationJob(project_id=project.id, owner_user_id=user.id,
+        status=m.AudioPreparationStatus(status), title="Synthetic", options_json="{}", output_destination="download",
+        lease_owner_id=None if lease == "missing" else "synthetic-worker",
+        lease_expires_at=None if lease == "missing" else now + timedelta(seconds=30 if lease == "active" else -1))
+    sqlite_db.add(job); sqlite_db.flush()
+    sqlite_db.add(m.AudioPreparationJobInput(job_id=job.id, source_id=source.id, position=0, ephemeral_reference=False))
+    sqlite_db.commit()
+    actual_work = status in {"analyzing", "processing"} and lease == "active"
+    assert mark_one_expired_source_for_cleanup(sqlite_db, now=now) is not actual_work
+    assert (claim_next_source_cleanup(sqlite_db, owner_id="cleanup", now=now) is None) is actual_work
+    if actual_work:
+        assert source.upload_status == m.SourceUploadStatus.uploaded
+        assert mark_one_expired_source_for_cleanup(sqlite_db, now=now + timedelta(seconds=31))
+
+
+@pytest.mark.parametrize("lease", ["missing", "expired", "active"])
+def test_retention_does_not_keep_stalled_transcription_forever(sqlite_db, lease):
+    from studio_api.source_deletion import mark_one_expired_source_for_cleanup
+    m, user, project = _owner_project(sqlite_db)
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    source = _local_source(sqlite_db, m, project, now, expires_delta=timedelta(seconds=-1))
+    job, _ = _job_for_source(sqlite_db, m, user, project, source, status=m.JobStatus.processing)
+    job.lease_owner_id = None if lease == "missing" else "synthetic-worker"
+    job.lease_expires_at = None if lease == "missing" else now + timedelta(seconds=30 if lease == "active" else -1)
+    sqlite_db.commit()
+    assert mark_one_expired_source_for_cleanup(sqlite_db, now=now) is (lease != "active")
 
 
 def test_retryable_failed_job_blocks_but_skipped_relation_is_ignored(sqlite_db):
