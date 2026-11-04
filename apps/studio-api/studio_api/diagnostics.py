@@ -64,7 +64,7 @@ ERROR_CODES = frozenset({
     "lifecycle_changed_before_provider_call", "credential_or_output_identity_changed_before_provider_call",
     "source_materialization_unavailable", "prerequisites_unavailable", "provider_mismatch", "existing_result_conflict", "pipeline_transcription_failed",
     "ffmpeg_unavailable", "media_preparation_timeout", "media_preparation_failed", "prepared_media_too_large",
-    "media_duration_unavailable", "media_duration_confirmation_required", "media_duration_too_long", "media_split_failed", "media_part_too_large", "media_clip_out_of_bounds", "partial_provider_result",
+    "media_duration_unavailable", "media_duration_confirmation_required", "media_duration_too_long", "media_split_failed", "media_part_too_large", "media_clip_out_of_bounds", "media_timeline_unavailable", "partial_provider_result",
     "provider_part_checkpoint_persistence_failed", "provider_part_checkpoint_scope_conflict", "provider_part_checkpoint_shape_conflict", "provider_part_progress_persistence_failed",
     "pipeline_google_docs_failed", "output_reconciliation_required", "incomplete_output_coverage", "commit_failed",
     "no_required_sources", "cancellation_requested", "google_docs_failed", "transcription_failed", "lease_heartbeat_failed", "lease_heartbeat_not_owned",

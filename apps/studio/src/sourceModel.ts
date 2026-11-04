@@ -33,8 +33,15 @@ export function sourceLocationLabel(kind: string | null) {
 
 export function knownSourceDurationSeconds(source: Source | null | undefined): number | null {
   const context = source ? preparedAudioContext(source) : null;
-  return context && context.output_duration_ms <= 604800000
-    ? context.output_duration_ms / 1000 : null;
+  return context?.original_timeline_available === true && context.input_duration_ms <= 604800000
+    ? context.input_duration_ms / 1000 : null;
+}
+
+export function sourceFragmentUnavailableReason(source: Source | null | undefined): string | null {
+  const context = source ? preparedAudioContext(source) : null;
+  return context && context.original_timeline_available !== true
+    ? "Для этой подготовленной версии нет подтверждённой исходной шкалы. Выберите исходный файл или обработайте запись целиком."
+    : null;
 }
 
 export function parsePreparedAudioContext(candidate: unknown): Source["prepared_audio"] | null {

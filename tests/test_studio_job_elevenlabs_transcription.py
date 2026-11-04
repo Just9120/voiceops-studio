@@ -503,6 +503,104 @@ def test_successful_single_source_flow_lifetime_and_one_call(db, models):
     assert transport.calls[0]["filename"] == "secret meeting.mp3"
 
 
+def test_original_clock_survives_provider_checkpoint_and_source_retirement_without_double_mapping(monkeypatch, db, models):
+    from studio_api.audio_timeline import AudioTimeline
+    from studio_api.job_elevenlabs_transcription import transcribe_processing_job_source_with_elevenlabs
+    from studio_api.job_cached_transcript import restore_cached_transcript
+    from studio_api.elevenlabs_transcription import normalize_elevenlabs_transcript_response, ElevenLabsTranscriptionError
+    from studio_api.media_preparation import PreparedMediaBatch, PreparedMediaInput
+    user, project, _, _, source, job, rel, now = make_job(db, models)
+    job.media_timeline_version = 2
+    job.media_clip_start_seconds, job.media_clip_end_seconds = 4, 12
+    source.prepared_audio_context_json = json.dumps(dict(job_id=str(uuid.uuid4()), input_duration_ms=20000,
+        output_duration_ms=15000, pauses_removed=True))
+    db.commit()
+    timeline = AudioTimeline.from_seconds(20, [(0, 5), (10, 20)])
+    @contextmanager
+    def materialize(*args, **kwargs):
+        with fake_source(*args, **kwargs) as handle:
+            handle.prepared_audio_context_json = source.prepared_audio_context_json
+            handle.original_timeline = timeline
+            yield handle
+    @contextmanager
+    def prepare(**kwargs):
+        assert (kwargs["media_clip_start_seconds"], kwargs["media_clip_end_seconds"]) == (4, 7)
+        yield PreparedMediaBatch((PreparedMediaInput("selected.wav", "audio/wav", 5, kwargs["stream"], duration_seconds=3),),
+            duration_seconds=3, source_duration_seconds=15)
+    class Provider:
+        calls = 0
+        def transcribe(self, **kwargs):
+            self.calls += 1
+            assert rel.transcript_timeline_json is not None  # Durable before transport.
+            return normalize_elevenlabs_transcript_response({"text":"first second", "words":[
+                {"text":"first", "start":0, "end":1}, {"text":"second", "start":1, "end":2}]})
+    provider = Provider()
+    with transcribe_processing_job_source_with_elevenlabs(db, job_id=job.id, job_source_id=rel.id,
+            lease_owner_id="worker", lease_generation=7, settings=Settings(), now=now, clock=lambda: now,
+            prerequisites_opener=fake_prereq, source_materializer=materialize, media_preparer=prepare,
+            elevenlabs_transport=provider, models=models) as result:
+        assert result.text == "first second"
+        assert [(w.start, w.end) for w in result.words] == [(4, 5), (10, 11)]
+        retained_word = result.words[1]
+    with pytest.raises(ElevenLabsTranscriptionError, match="context_closed"):
+        _ = retained_word.start
+    assert provider.calls == 1
+    assert b"first second" not in db.query(models.TranscriptionProviderPartCheckpoint).one().ciphertext
+    recorded = rel.transcript_timeline_json
+    # A later export-only attempt has no audio bytes, parent preparation or key.
+    later = now + timedelta(days=30)
+    source.deleted_at = now
+    source.upload_status = models.SourceUploadStatus.deleted
+    source.prepared_audio_context_json = None
+    job.attempt_count = 2
+    job.lease_expires_at = later + timedelta(minutes=5)
+    db.add(models.TranscriptionJobSourceAttempt(owner_user_id=user.id, project_id=project.id, job_id=job.id,
+        job_source_id=rel.id, attempt_number=2, stage=models.SourceAttemptStage.prepared,
+        retry_disposition=models.SourceAttemptRetryDisposition.undetermined, created_at=later, updated_at=later))
+    db.commit()
+    with restore_cached_transcript(db, job_id=job.id, job_source_id=rel.id, lease_owner_id="worker",
+            lease_generation=7, settings=Settings(), now=later) as restored:
+        assert restored.text == "first second"
+        assert [(w.start, w.end) for w in restored.words] == [(4, 5), (10, 11)]
+    assert rel.transcript_timeline_json == recorded and provider.calls == 1
+    second = db.query(models.TranscriptionJobSourceAttempt).filter_by(attempt_number=2).one()
+    assert int(second.provider_billed_duration_ms or 0) == 0
+
+
+@pytest.mark.parametrize("provider,model", [("yandex", "general"), ("gemini", "gemini-3.5-transcribe")])
+def test_operation_cache_restores_original_clock_with_no_source_or_provider_access(db, models, provider, model):
+    from studio_api.audio_timeline import AudioTimeline
+    from studio_api.provider_result_cache import persist_operation_result
+    from studio_api.job_stt_transcription import transcribe_processing_job_source
+    from studio_api.elevenlabs_transcription import normalize_elevenlabs_transcript_response
+    _, _, _, version, source, job, rel, now = make_job(db, models, provider=provider)
+    job.media_timeline_version = 2
+    rel.transcript_timeline_json = AudioTimeline.from_seconds(20, [(4, 5), (10, 12)]).serialize()
+    operation = models.SttProviderOperation(owner_user_id=job.owner_user_id, project_id=job.project_id, job_id=job.id,
+        job_source_id=rel.id, attempt_number=1, provider=provider, model=model, operating_mode="standard",
+        operation_id="synthetic-operation", status="pending")
+    db.add(operation); db.flush()
+    raw = normalize_elevenlabs_transcript_response({"text":"saved", "words":[{"text":"saved", "start":1, "end":2}]})
+    persist_operation_result(db, operation, raw, settings=Settings(), now=now)
+    raw.revoke()
+    assert operation.result_ciphertext and b"saved" not in operation.result_ciphertext
+    source.upload_status = models.SourceUploadStatus.deleted
+    source.deleted_at = now
+    version.ciphertext = None
+    job.attempt_count = 2
+    db.add(models.TranscriptionJobSourceAttempt(owner_user_id=job.owner_user_id, project_id=job.project_id,
+        job_id=job.id, job_source_id=rel.id, attempt_number=2, stage=models.SourceAttemptStage.prepared,
+        retry_disposition=models.SourceAttemptRetryDisposition.undetermined, created_at=now, updated_at=now))
+    db.commit()
+    def forbidden(*a, **kw): pytest.fail("cache restoration must not perform source/credential/provider I/O")
+    with transcribe_processing_job_source(db, job_id=job.id, job_source_id=rel.id, lease_owner_id="worker",
+            lease_generation=7, settings=Settings(), now=now, clock=lambda: now,
+            prerequisites_opener=forbidden, source_materializer=forbidden, elevenlabs_transport=forbidden) as restored:
+        assert restored.text == "saved" and [(w.start, w.end) for w in restored.words] == [(10, 11)]
+    second = db.query(models.TranscriptionJobSourceAttempt).filter_by(attempt_number=2).one()
+    assert int(second.provider_billed_duration_ms or 0) == 0
+
+
 def test_auto_detect_mode_omits_provider_language_code(db, models):
     *_, job, rel, now = make_job(db, models, language="detect")
     transport = CaptureTransport()

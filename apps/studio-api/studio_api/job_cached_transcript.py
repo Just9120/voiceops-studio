@@ -12,6 +12,8 @@ from .provider_part_checkpoints import (
     complete_provider_attempt, checkpoint_resume_count, load_provider_part_checkpoints,
 )
 from .elevenlabs_transcription import merge_elevenlabs_transcript_results
+from .audio_timeline import AudioTimelineError
+from .transcript_timeline import original_clock_transcript
 
 
 def fully_cached_relation(db, job, relation_id, now):
@@ -96,7 +98,10 @@ def restore_cached_yandex_transcript(db, *, job_id, job_source_id, lease_owner_i
         mark_attempt_provider_returned(db, job_id=job_id, job_source_id=job_source_id,
             lease_owner_id=lease_owner_id, lease_generation=lease_generation, now=now)
         db.commit()
-        yield result
+        with original_clock_transcript(db, job_id=job_id, job_source_id=job_source_id, result=result) as projected:
+            yield projected
+    except AudioTimelineError as exc:
+        raise ProviderPartCheckpointError(ProviderPartCheckpointReason.shape_conflict) from exc
     finally:
         result.revoke()
 
@@ -150,7 +155,10 @@ def restore_cached_transcript(db, *, job_id, job_source_id, lease_owner_id, leas
             result = merge_elevenlabs_transcript_results(_merge_inputs(SimpleNamespace(parts=parts), list(results)))
         if not result.text.strip():
             raise ProviderPartCheckpointError(ProviderPartCheckpointReason.payload_invalid)
-        yield result
+        with original_clock_transcript(db, job_id=job_id, job_source_id=job_source_id, result=result) as projected:
+            yield projected
+    except AudioTimelineError as exc:
+        raise ProviderPartCheckpointError(ProviderPartCheckpointReason.shape_conflict) from exc
     finally:
         if result is not None:
             result.revoke()

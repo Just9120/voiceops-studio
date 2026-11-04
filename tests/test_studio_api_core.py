@@ -7482,7 +7482,7 @@ def test_batch_rejects_out_of_bounds_known_prepared_version_before_creating_jobs
         "items": [{"source_id": source_a, "output_folder_id": "one", "media_clip_start_seconds": 0, "media_clip_end_seconds": 20}],
     }, headers={"origin": "https://studio.test", "x-csrf-token": csrf, "Idempotency-Key": "prepared-boundary-regression-0001"})
     assert response.status_code == 422
-    assert "длительность" in response.json()["detail"]
+    assert "исходной шкалы" in response.json()["detail"]
     assert _count_batch_rows() == (0, 0)
 
 

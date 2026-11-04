@@ -55,5 +55,5 @@ def whole_file_preparer(provider, *, diarize=False):
                 yield PreparedMediaBatch(parts=(PreparedMediaInput(filename=target.name,
                     mime_type="audio/mpeg" if extension == "mp3" else "audio/flac", byte_count=size, stream=prepared,
                     audio_extracted=True, duration_seconds=duration, timeline_offset_seconds=start),),
-                    duration_seconds=duration, source_created_at=creation)
+                    duration_seconds=duration, source_created_at=creation, source_duration_seconds=source_duration)
     return prepare

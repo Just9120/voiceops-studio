@@ -59,6 +59,7 @@ def source_provenance(db, snapshot):
     from .models import AudioPreparationJob, AudioPreparationStatus, Project
     from .audio_export_receipt import AudioExportReceipt
     from .media_context import parse_prepared_audio_context
+    from .transcript_timeline import recorded_transcript_clock
 
     context = parse_prepared_audio_context(getattr(snapshot, "prepared_audio_context_json", None))
     filters = [AudioPreparationJob.output_source_id == snapshot.source_id]
@@ -72,6 +73,11 @@ def source_provenance(db, snapshot):
         or_(*filters),
     ).order_by(AudioPreparationJob.id).limit(2)).scalars().all()
     lines = [f"Source: {snapshot.source_id} · {_line(snapshot.original_filename)}"]
+    clock, _, clock_digest = recorded_transcript_clock(db, job_id=snapshot.job_id, job_source_id=snapshot.job_source_id)
+    if clock_digest:
+        # Compared before/after external output, stripped by compact_provenance.
+        lines.append(f"Source clock receipt: {clock_digest}")
+        lines.append("Timeline: original recording" if clock == "original" else "Timeline: prepared audio; original clock unavailable")
     prepared = []
     for candidate in candidates:
         # A retired local output Source has an exact database relationship.
@@ -95,7 +101,9 @@ def source_provenance(db, snapshot):
     if len(prepared) != 1:
         raise ValueError("ambiguous preparation provenance")
     preparation = prepared[0]
-    lines += [f"Preparation: {preparation.id}", "Timeline: prepared audio", f"Transformations: {_line(preparation.options_json)}"]
+    lines += [f"Preparation: {preparation.id}", f"Transformations: {_line(preparation.options_json)}"]
+    if clock == "legacy":
+        lines.append("Timeline: prepared audio")
     dates = []
     originals = []
     inputs = preparation.inputs

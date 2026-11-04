@@ -241,6 +241,48 @@ def test_drive_preparation_provenance_requires_the_exact_verified_content(db, mo
         assert "Created at: 2025-12-31" not in body
 
 
+@pytest.mark.parametrize("diarize", [False, True])
+@pytest.mark.parametrize("mutate_clock", [False, True])
+def test_new_documents_show_original_clock_anchors_and_fence_the_map_during_creation(db, models, diarize, mutate_clock):
+    from studio_api.audio_timeline import AudioTimeline
+    from studio_api.elevenlabs_transcription import normalize_elevenlabs_transcript_response
+    from studio_api.job_google_docs_output import create_processing_job_google_doc_from_transcript, JobGoogleDocsOutputError
+    _, _, _, job, relation, now = make_job(db, models, options_json='{"diarize":' + str(diarize).lower() + '}')
+    job.media_timeline_version = 2
+    job.media_clip_start_seconds, job.media_clip_end_seconds = 4, 12
+    relation.transcript_timeline_json = AudioTimeline.from_seconds(20, [(4, 5), (10, 12)]).serialize()
+    db.commit()
+    transcript = normalize_elevenlabs_transcript_response({"text":"Первый второй", "words":[
+        {"text":"Первый", "start":4, "end":5, "speaker_id":"speaker_0"},
+        {"text":"второй", "start":10, "end":11, "speaker_id":"speaker_1"}]})
+    def mutate():
+        relation.transcript_timeline_json = AudioTimeline.identity(20).serialize()
+        db.commit()
+    transport = FakeTransport(mutate if mutate_clock else None)
+    context = create_processing_job_google_doc_from_transcript(db, job_id=job.id, job_source_id=relation.id,
+        lease_owner_id="worker", lease_generation=7, transcript=transcript, settings=Settings(), clock=lambda: now,
+        token_resolver=lambda *a, **kw: "synthetic", metadata_fetcher=good_meta, google_docs_transport=transport)
+    if mutate_clock:
+        with pytest.raises(JobGoogleDocsOutputError, match="lifecycle_changed_after"):
+            with context: pytest.fail("a different map must not be accepted after the external write")
+    else:
+        with context: pass
+    body = transport.calls[0]["document_text"]
+    assert "[00:00:04] Первый" in body and "[00:00:10] второй" in body
+    assert ("Спикер 1:" in body and "Спикер 2:" in body) == diarize
+    assert "Timeline: original recording" in body
+    assert "Source clock receipt:" not in body and "original_duration_us" not in body
+    transcript.revoke()
+
+
+def test_timed_formatter_keeps_full_text_when_word_alignment_is_incomplete():
+    from types import SimpleNamespace
+    from studio_api.job_google_docs_output import build_timed_transcript
+    word = SimpleNamespace(text="retained", start=0, end=1, speaker_id="speaker_0")
+    for diarize in (False, True):
+        assert build_timed_transcript([word], fallback_text="retained and otherwise omitted", diarize=diarize) == "retained and otherwise omitted"
+
+
 def test_transport_multipart_and_redaction():
     from studio_api.google_docs_output import GoogleDocsTranscriptTransport
     calls = []

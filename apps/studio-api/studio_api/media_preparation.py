@@ -89,6 +89,7 @@ class PreparedMediaBatch:
     duration_seconds: float
     split_reason: str | None = None
     source_created_at: datetime | None = None
+    source_duration_seconds: float | None = None
 
     def __repr__(self) -> str:
         return (
@@ -315,6 +316,7 @@ def prepare_elevenlabs_media_parts(
                         ),
                         duration_seconds=duration,
                         source_created_at=prepared.source_created_at,
+                        source_duration_seconds=source_duration,
                     )
                 else:
                     part_specs = _create_split_parts(
@@ -351,6 +353,7 @@ def prepare_elevenlabs_media_parts(
                         duration_seconds=duration,
                         split_reason=split_reason,
                         source_created_at=prepared.source_created_at,
+                        source_duration_seconds=source_duration,
                     )
             except (MediaPreparationError, PreparationInterrupted):
                 raise
@@ -441,6 +444,7 @@ def prepare_yandex_media_file(
                 ),),
                 duration_seconds=duration,
                 source_created_at=source_created_at,
+                source_duration_seconds=source_duration,
             )
         finally:
             prepared_stream.close()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import math
 
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -36,6 +37,8 @@ from .transcription_options import document_language, job_diarization_enabled
 class TranscriptWordProtocol(Protocol):
     text: str
     speaker_id: str | None
+    start: float | None
+    end: float | None
 
 
 class TranscriptResultProtocol(Protocol):
@@ -117,6 +120,7 @@ class _OutputJobSnapshot:
     clip_start: int | None
     clip_end: int | None
     output_provider: str = "google_drive"
+    media_timeline_version: int | None = None
 
 
 @contextmanager
@@ -291,6 +295,49 @@ def _join_transcript_tokens(tokens: list[str]) -> str:
     return text.strip()
 
 
+def build_timed_transcript(words, *, fallback_text, diarize):
+    """Readable paragraph anchors, preserving all provider text and speaker IDs."""
+    if not words or "".join("".join(word.text.split()) for word in words) != "".join(fallback_text.split()):
+        # Incomplete aligned words cannot replace the complete paid text.
+        return fallback_text.strip()
+    blocks, tokens, numbers = [], [], {}
+    speaker = None
+    anchor = last_end = None
+
+    def timestamp(value):
+        total = math.floor(value)
+        return f"[{total // 3600:02d}:{total % 3600 // 60:02d}:{total % 60:02d}]"
+
+    def flush():
+        text = _join_transcript_tokens(tokens)
+        if not text:
+            return
+        label = ""
+        if diarize and speaker:
+            number = numbers.setdefault(speaker, len(numbers) + 1)
+            label = f"Спикер {number}:\n"
+        blocks.append(label + (timestamp(anchor) + " " if anchor is not None else "") + text)
+
+    for word in words:
+        start = getattr(word, "start", None)
+        if type(start) not in (int, float) or not math.isfinite(start) or start < 0:
+            start = None
+        candidate = ((word.speaker_id or "").strip() or speaker) if diarize else None
+        if tokens and ((candidate is not None and candidate != speaker)
+                or start is not None and (anchor is None or start - anchor >= 60 or last_end is not None and start - last_end > 2)):
+            flush(); tokens = []; anchor = None
+        speaker = candidate
+        if not tokens:
+            anchor = start
+        tokens.append(word.text)
+        end = getattr(word, "end", None)
+        last_end = end if type(end) in (int, float) and math.isfinite(end) else None
+    flush()
+    if any(re.fullmatch(r"part_[1-9]\d*:.*", name) for name in numbers):
+        blocks.append("Примечание: Метки спикеров определены отдельно в каждой части; личность между частями не сопоставлялась.")
+    return "\n\n".join(blocks)
+
+
 def choose_transcript_document_title(*, job_title: str | None, original_filename: str | None) -> str:
     candidate = _first_nonblank(job_title)
     if candidate is None and original_filename:
@@ -332,7 +379,7 @@ def _load_output_job_snapshot(db: Session, job_id: str, owner: str, generation: 
             table.project_id == job.project_id).distinct().all())
     if identities:
         model = next(iter(identities))[1] if len(identities) == 1 and next(iter(identities))[0] == provider else "unknown"
-    return _OutputJobSnapshot(job.id, job.owner_user_id, project.id, job.title, job.language, job.options_json, job.output_drive_folder_id, job.lease_owner_id, job.lease_generation, job.cancel_requested_at, project.archived_at, project.owner_user_id, job.provider, model, job.media_clip_start_seconds, job.media_clip_end_seconds, job.output_provider)
+    return _OutputJobSnapshot(job.id, job.owner_user_id, project.id, job.title, job.language, job.options_json, job.output_drive_folder_id, job.lease_owner_id, job.lease_generation, job.cancel_requested_at, project.archived_at, project.owner_user_id, job.provider, model, job.media_clip_start_seconds, job.media_clip_end_seconds, job.output_provider, job.media_timeline_version)
 
 
 def _source_provenance_snapshot(db, source_snap):
@@ -435,7 +482,11 @@ def format_job_transcript(db, snap, source_snap, transcript):
     try:
         transcript_text = transcript.text
         diarization_enabled = job_diarization_enabled(snap.options_json)
-        if diarization_enabled:
+        from .transcript_timeline import recorded_transcript_clock
+        clock, _, _ = recorded_transcript_clock(db, job_id=snap.job_id, job_source_id=source_snap.job_source_id)
+        if clock == "original":
+            transcript_text = build_timed_transcript(transcript.words, fallback_text=transcript_text, diarize=diarization_enabled)
+        elif diarization_enabled:
             transcript_text = build_speaker_labeled_transcript(
                 transcript.words,
                 fallback_text=transcript_text,

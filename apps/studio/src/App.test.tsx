@@ -5208,14 +5208,40 @@ describe("Studio PWA", () => {
     expect(
       await screen.findByRole("heading", { name: "Транскрибации" }),
     ).toBeInTheDocument();
-    expect(
-      await screen.findByLabelText("Существующий файл для задачи 1"),
-    ).toHaveValue("s1");
+    await waitFor(() => expect(
+      screen.getByLabelText("Существующий файл для задачи 1"),
+    ).toHaveValue("s1"));
     expect(
       screen.getByText(
         "Результат обработки добавлен в новую задачу транскрибации.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it.each([true, false])("uses the original fragment clock only when its map is available: %s", async (available) => {
+    const baseFetch = fetch as unknown as ReturnType<typeof vi.fn>;
+    const defaultFetch = baseFetch.getMockImplementation();
+    baseFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      const response = await defaultFetch?.(url, init);
+      if (url.endsWith("/api/projects/p1/sources") && !init?.method) {
+        const payload = await response.json();
+        return json({ ...payload, sources: payload.sources.map((source: { id: string }) => source.id === "s1"
+          ? { ...source, prepared_audio: { job_id: "a".repeat(36), input_duration_ms: 20000, output_duration_ms: 15000,
+              pauses_removed: true, original_timeline_available: available } }
+          : source) });
+      }
+      return response;
+    });
+    renderApp();
+    await openProjectsPage();
+    await chooseExistingSource(1, "Лекция 1");
+    await chooseResultFolder(1, "folder-segments");
+    expect(screen.getByText(available ? /Границы фрагментов и таймкоды относятся к исходной записи/ : /Исходная шкала этой версии не сохранена/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("checkbox", { name: /Разделить файл на фрагменты/ }));
+    fireEvent.change(screen.getByLabelText("Начало фрагмента 1 задачи 1"), { target: { value: "0:18" } });
+    const preflight = screen.getByRole("button", { name: "Проверить задачи (1)" });
+    if (available) expect(preflight).toBeEnabled();
+    else expect(preflight).toBeDisabled();
   });
 
   it("creates one internal transcription workspace when no active project exists", async () => {

@@ -83,6 +83,7 @@ import {
   reconcileOptimisticSources,
   preparedAudioContext,
   knownSourceDurationSeconds,
+  sourceFragmentUnavailableReason,
   sourceСтатусLabel,
   type Source,
 } from "./sourceModel";
@@ -2196,7 +2197,7 @@ function PreparationPanel({
       };
     }
     const segmentIssue = row.segmentation_enabled
-      ? composerSegmentPlanIssue(row.segments, knownSourceDurationSeconds(sourceById(row.source_id)))
+      ? sourceFragmentUnavailableReason(sourceById(row.source_id)) ?? composerSegmentPlanIssue(row.segments, knownSourceDurationSeconds(sourceById(row.source_id)))
       : null;
     if (segmentIssue) {
       return {
@@ -5059,7 +5060,9 @@ function PreparationPanel({
                             Выбрана подготовленная версия записи: {formatMediaTimestamp(preparedContext.output_duration_ms / 1000)}
                             (исходники: {formatMediaTimestamp(preparedContext.input_duration_ms / 1000)}).
                             {preparedContext.pauses_removed ? " Длинные паузы сокращены." : " Длительность относится к результату подготовки."}
-                            {" "}Границы фрагментов задаются по этой версии, а не по исходной записи.
+                            {" "}{preparedContext.original_timeline_available === true
+                              ? "Границы фрагментов и таймкоды относятся к исходной записи до обрезки и сокращения пауз."
+                              : "Исходная шкала этой версии не сохранена. Можно обработать файл целиком; для фрагментов выберите исходный файл."}
                           </p>}
                           <span>
                             {selectedSource.source_type === "google_drive"
@@ -5278,7 +5281,7 @@ function PreparationPanel({
                     </label>
                     <ol className="segment-editor-list">
                       {row.segments.map((segment, segmentIndex) => {
-                        const segmentIssue = composerSegmentPlanIssue([segment], knownSourceDurationSeconds(selectedSource))
+                        const segmentIssue = sourceFragmentUnavailableReason(selectedSource) ?? composerSegmentPlanIssue([segment], knownSourceDurationSeconds(selectedSource))
                           ?.replace("фрагмент 1:", `фрагмент ${segmentIndex + 1}:`);
                         const segmentErrorId = `segment-error-${row.id}-${segment.id}`;
                         return (
@@ -5802,6 +5805,8 @@ function PreparationPanel({
                 const segment = row?.segments.find(
                   (candidate) => candidate.id === expandedItem?.segment_id,
                 );
+                const rowSource = row ? sourceById(row.source_id) : null;
+                const preparedInfo = rowSource ? preparedAudioContext(rowSource) : null;
                 const clipLabel = item.media_clip
                   ? `${item.media_clip.start_seconds === 0 ? "Начало" : formatSegmentBoundary(item.media_clip.start_seconds ?? 0)} — ${item.media_clip.end_seconds === null ? "конец" : formatSegmentBoundary(item.media_clip.end_seconds)}`
                   : null;
@@ -5821,11 +5826,14 @@ function PreparationPanel({
                       </span>
                       <span>
                         Размер: {formatBytes(item.source.size_bytes)} ·{" "}
-                        Длительность:{" "}
+                        {preparedInfo ? "Длительность подготовленного файла:" : "Длительность:"}{" "}
                         {item.source.duration_seconds == null
                           ? "будет определена при подготовке"
                           : `${Math.round(item.source.duration_seconds)} сек.`}
                       </span>
+                      {preparedInfo?.original_timeline_available === true && (
+                        <span>Шкала исходной записи: {formatMediaTimestamp(preparedInfo.input_duration_ms / 1000)}. Границы части файла относятся к этой шкале.</span>
+                      )}
                       <span>{matchLabel}</span>
                       {clipLabel && <span>Часть файла: {clipLabel}</span>}
                       {providerAuthorityLabel && (

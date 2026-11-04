@@ -132,3 +132,12 @@ def known_prepared_duration_seconds(source) -> float | None:
     if context is None or context["output_duration_ms"] > 604800000:
         return None
     return context["output_duration_ms"] / 1000
+
+
+def known_original_duration_seconds(source) -> float | None:
+    """Only a recorded root clock can bound a new original-clock fragment."""
+    context = parse_prepared_audio_context(getattr(source, "prepared_audio_context_json", None))
+    if (context is None or context.get("version") != 2 or context["timeline_sha256"] is None
+            or context["input_duration_ms"] > 604800000):
+        return None
+    return context["input_duration_ms"] / 1000

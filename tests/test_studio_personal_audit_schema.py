@@ -23,6 +23,8 @@ def test_source_version_migration_preserves_legacy_identity_and_guards_rollback(
     engine = sa.create_engine("sqlite://")
     with engine.begin() as connection:
         Base.metadata.create_all(connection)
+        connection.execute(sa.text("ALTER TABLE transcription_jobs DROP COLUMN media_timeline_version"))
+        connection.execute(sa.text("ALTER TABLE transcription_job_sources DROP COLUMN transcript_timeline_json"))
         for column in ("drive_revision_id", "drive_md5_checksum"):
             connection.execute(sa.text(f"ALTER TABLE sources DROP COLUMN {column}"))
         for table in ("transcription_jobs", "audio_preparation_jobs"):
@@ -37,6 +39,9 @@ def test_source_version_migration_preserves_legacy_identity_and_guards_rollback(
         revision.module.op = Operations(MigrationContext.configure(connection))
         try:
             revision.module.upgrade()
+            for table, name in (("transcription_jobs", "media_timeline_version"), ("transcription_job_sources", "transcript_timeline_json")):
+                column = next(c for c in sa.inspect(connection).get_columns(table) if c["name"] == name)
+                assert column["nullable"] and column["default"] is None
             audio_columns = {column["name"]: column for column in sa.inspect(connection).get_columns("audio_preparation_jobs")}
             for name in ("output_sha256_checksum", "output_md5_checksum", "output_timeline_json", "recipe_version", "retained_frames_json", "output_drive_receipt_json"):
                 assert audio_columns[name]["nullable"] and audio_columns[name]["default"] is None
@@ -80,6 +85,30 @@ def test_migration_downgrade_cannot_discard_prepared_audio_receipts(field, value
             with pytest.raises(RuntimeError, match="receipts require forward recovery"):
                 revision.module.downgrade()
             assert connection.execute(sa.select(table.c[field])).scalar_one() == value
+        finally:
+            revision.module.op = previous
+    engine.dispose()
+
+
+@pytest.mark.parametrize("record", ["job", "relation"])
+def test_migration_downgrade_cannot_reinterpret_or_discard_recorded_transcript_clocks(record):
+    revision = ScriptDirectory.from_config(Config("apps/studio-api/alembic.ini")).get_revision("0045_personal_audit")
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        Base.metadata.create_all(connection)
+        connection.execute(Base.metadata.tables["users"].insert().values(id="u", email="clock@example.test"))
+        connection.execute(Base.metadata.tables["projects"].insert().values(id="p", owner_user_id="u", title="Synthetic"))
+        connection.execute(Base.metadata.tables["sources"].insert().values(id="s", project_id="p", source_type="local_upload", original_filename="synthetic.wav"))
+        connection.execute(Base.metadata.tables["transcription_jobs"].insert().values(id="j", project_id="p", owner_user_id="u",
+            media_timeline_version=2 if record == "job" else None))
+        connection.execute(Base.metadata.tables["transcription_job_sources"].insert().values(id="r", job_id="j", source_id="s", position=0,
+            transcript_timeline_json='{"version":2,"clock":"prepared_unavailable"}' if record == "relation" else None))
+        previous = revision.module.op
+        revision.module.op = Operations(MigrationContext.configure(connection))
+        try:
+            with pytest.raises(RuntimeError, match="Original transcript clocks require forward recovery"):
+                revision.module.downgrade()
+            assert connection.execute(sa.text("SELECT COUNT(*) FROM transcription_jobs")).scalar_one() == 1
         finally:
             revision.module.op = previous
     engine.dispose()

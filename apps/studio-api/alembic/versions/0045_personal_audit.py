@@ -10,6 +10,10 @@ release_safety = "additive"
 
 
 def upgrade():
+    for table, column in (("transcription_jobs", sa.Column("media_timeline_version", sa.Integer(), nullable=True)),
+                          ("transcription_job_sources", sa.Column("transcript_timeline_json", sa.Text(), nullable=True))):
+        if column.name not in {item["name"] for item in sa.inspect(op.get_bind()).get_columns(table)}:
+            op.add_column(table, column)
     audio_columns = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("audio_preparation_jobs")}
     for column in (sa.Column("output_sha256_checksum", sa.String(64), nullable=True),
                    sa.Column("output_md5_checksum", sa.String(32), nullable=True),
@@ -36,6 +40,10 @@ def upgrade():
 
 
 def downgrade():
+    for table, column in (("transcription_jobs", "media_timeline_version"),
+                          ("transcription_job_sources", "transcript_timeline_json")):
+        if op.get_bind().execute(sa.text(f"SELECT COUNT(*) FROM {table} WHERE {column} IS NOT NULL")).scalar():
+            raise RuntimeError("Original transcript clocks require forward recovery")
     if op.get_bind().execute(sa.text("SELECT COUNT(*) FROM audio_preparation_jobs WHERE "
             "output_sha256_checksum IS NOT NULL OR output_md5_checksum IS NOT NULL OR output_timeline_json IS NOT NULL "
             "OR recipe_version IS NOT NULL OR retained_frames_json IS NOT NULL OR output_drive_receipt_json IS NOT NULL")).scalar():
@@ -60,3 +68,5 @@ def downgrade():
     op.drop_column("realtime_transcript_drafts", "cleared_at")
     for column in ("output_sha256_checksum", "output_md5_checksum", "output_timeline_json", "recipe_version", "retained_frames_json", "output_drive_receipt_json"):
         op.drop_column("audio_preparation_jobs", column)
+    op.drop_column("transcription_job_sources", "transcript_timeline_json")
+    op.drop_column("transcription_jobs", "media_timeline_version")

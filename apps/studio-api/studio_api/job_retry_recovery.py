@@ -30,6 +30,7 @@ AUTOMATIC_RETRY_TRANSIENT_FAILURES = {
     "provider_usage_accounting_unavailable",
 }
 AUTOMATIC_RETRY_BASE_SECONDS = 30
+PRE_PROVIDER_SAFE_FAILURES.add("media_timeline_unavailable")
 AUTOMATIC_RETRY_MAX_SECONDS = 300
 
 class RetryReason(str, Enum):

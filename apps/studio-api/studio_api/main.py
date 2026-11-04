@@ -31,7 +31,7 @@ from .source_storage import (
     source_reference_class,
 )
 from .source_creation import parse_authoritative_source_created_at
-from .media_context import prepared_audio_context_payload, known_prepared_duration_seconds, prepared_audio_source_context
+from .media_context import prepared_audio_context_payload, known_original_duration_seconds, prepared_audio_source_context, load_prepared_audio_timeline
 from .audio_export_receipt import AudioExportReceipt
 from .source_policy import SOURCE_RETENTION_TTL_OPTIONS_SECONDS, UploadedObjectMetadataIssue, browser_source_upload_policy, effective_source_retention_seconds, is_supported_source_mime_type, normalize_source_mime_type, uploaded_object_metadata_issue, validate_source_size
 from .google_connection_access import GoogleConnectionAccessError, GoogleConnectionAccessReason, active_google_connection_for_user, google_maintenance_token_aad, google_token_aad, require_drive_file_scope, require_drive_readonly_scope, require_picker_browser_scope_boundary
@@ -2679,7 +2679,7 @@ def _validate_new_batch_targets(db: Session, user: User, project: Project, *, pr
     if duplicate_pair_found:
         raise HTTPException(422, "Повторяющиеся source/folder пары не допускаются")
     sources=validate_job_sources(db, project.id, source_ids)
-    _require_known_batch_clip_bounds(sources, media_clips)
+    _require_known_batch_clip_bounds(db, user, sources, media_clips)
     from .yandex_disk_routes import verify_yandex_output_folder
     output_providers=output_providers or ["google_drive"] * len(folder_ids)
     access_token=None
@@ -2693,12 +2693,23 @@ def _validate_new_batch_targets(db: Session, user: User, project: Project, *, pr
             verified_by_id[key]=verify_output_folder_selection(access_token,fid)
     return provider_credential_id, sources, verified_by_id, capability, snapshot_dictionary_terms(dictionaries)
 
-def _require_known_batch_clip_bounds(sources, media_clips):
+def _require_known_batch_clip_bounds(db, user, sources, media_clips):
+    from .audio_timeline import AudioTimelineError, NoRetainedAudio
     for source, clip in zip(sources, media_clips, strict=True):
         try:
-            validate_known_clip_duration(clip, known_prepared_duration_seconds(source))
+            validate_known_clip_duration(clip, known_original_duration_seconds(source))
+            if source.prepared_audio_context_json and (clip.start_seconds is not None or clip.end_seconds is not None):
+                timeline = load_prepared_audio_timeline(db, source, owner_user_id=user.id)
+                if timeline is None:
+                    raise AudioTimelineError("prepared_audio_timeline_unavailable")
+                timeline.prepared_interval(clip.start_seconds or 0,
+                    clip.end_seconds if clip.end_seconds is not None else timeline.original_duration_seconds)
         except MediaClipRangeError:
-            raise HTTPException(422, "Границы фрагмента выходят за длительность выбранной подготовленной записи") from None
+            raise HTTPException(422, "Границы фрагмента выходят за длительность исходной записи") from None
+        except NoRetainedAudio:
+            raise HTTPException(422, "В выбранном фрагменте не осталось аудио после подготовки") from None
+        except AudioTimelineError:
+            raise HTTPException(422, "Для этой подготовленной версии нет подтверждённой исходной шкалы. Выберите исходный файл или обработайте запись целиком") from None
 
 def _batch_target_settings(*, provider: str, model: str, language: str, diarization_enabled: bool, media_clip):
     return current_effective_settings(
@@ -2812,7 +2823,7 @@ def create_transcription_jobs_batch(project_id: str, data: TranscriptionJobBatch
         jobs=[]
         _require_catalog_identity_locks(db, user, sources)
         sources=validate_job_sources(db, p.id, source_ids, lock_mode="no_key_update")
-        _require_known_batch_clip_bounds(sources, media_clips)
+        _require_known_batch_clip_bounds(db, user, sources, media_clips)
         existing_result_matches=_load_batch_existing_result_matches(db,user,sources,media_clips,provider=data.provider.value,model=capability.model,language=language,diarization_enabled=data.options.diarize)
         provider_attempt_authorities=_load_batch_provider_attempt_authorities(db,user,sources,media_clips,provider=data.provider.value,model=capability.model,language=language,diarization_enabled=data.options.diarize)
         _require_batch_preflight_decisions(sources,media_clips,existing_result_matches,provider_attempt_authorities,reprocess_existing)
@@ -2824,7 +2835,7 @@ def create_transcription_jobs_batch(project_id: str, data: TranscriptionJobBatch
                 dictionary_terms=dictionary_terms,
                 model=capability.model,
             )
-            job=TranscriptionJob(project_id=p.id, owner_user_id=user.id, trace_id=getattr(request.state,"trace_id",None), status=JobStatus.queued, provider=data.provider.value, operating_mode=data.operating_mode.value, provider_credential_id=provider_credential_id, title=title, language=language, options_json=job_options_json, batch_idempotency_key=key, batch_request_hash=request_hash, batch_position=idx, media_clip_start_seconds=media_clip.start_seconds, media_clip_end_seconds=media_clip.end_seconds)
+            job=TranscriptionJob(project_id=p.id, owner_user_id=user.id, trace_id=getattr(request.state,"trace_id",None), status=JobStatus.queued, provider=data.provider.value, operating_mode=data.operating_mode.value, provider_credential_id=provider_credential_id, title=title, language=language, options_json=job_options_json, batch_idempotency_key=key, batch_request_hash=request_hash, batch_position=idx, media_clip_start_seconds=media_clip.start_seconds, media_clip_end_seconds=media_clip.end_seconds, media_timeline_version=2)
             job.output_provider=getattr(vf,"provider","google_drive")
             if job.output_provider != data.items[idx].output_provider:
                 raise HTTPException(409,detail={"reason":"output_provider_conflict"})
@@ -3743,7 +3754,7 @@ def create_transcription_job(project_id: str, data: TranscriptionJobCreateIn, re
         for source in sources
     ):
         raise HTTPException(409, "Используйте пакетную проверку для явного решения")
-    job=TranscriptionJob(project_id=p.id, owner_user_id=user.id, trace_id=getattr(request.state,"trace_id",None), status=JobStatus.queued, provider_credential_id=provider_credential_id, title=clean_job_title(data.title), language=language, options_json=options_json)
+    job=TranscriptionJob(project_id=p.id, owner_user_id=user.id, trace_id=getattr(request.state,"trace_id",None), status=JobStatus.queued, provider_credential_id=provider_credential_id, title=clean_job_title(data.title), language=language, options_json=options_json, media_timeline_version=2)
     job.output_provider=p.output_provider
     job.apply_output_folder_snapshot(folder_id=output_folder_id, folder_url=p.output_drive_folder_url, folder_name=p.output_drive_folder_name)
     db.add(job); db.flush()

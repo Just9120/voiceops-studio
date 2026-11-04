@@ -232,6 +232,8 @@ export function jobСтатусLabel(status: JobСтатус) {
 }
 
 const JOB_ERROR_LABELS: Record<string, string> = {
+  media_timeline_unavailable:
+    "Не удалось подтвердить исходную шкалу этой версии записи. Выберите исходный файл или проверьте результат подготовки перед новым запуском.",
   malformed_provider_response:
     "Сервис распознавания вернул неполный ответ. Откройте детали задачи и проверьте доступное безопасное продолжение.",
   provider_authentication_failed:
