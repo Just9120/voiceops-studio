@@ -20,7 +20,7 @@ from .security import utcnow
 from .work_progress import report_work
 from .yandex_disk import YandexDiskClient, YandexDiskError
 from .yandex_disk_access import access_token as disk_access_token, verify_selected_resource
-from .source_policy import is_source_expired, is_supported_source_mime_type, normalize_source_mime_type, validate_source_size
+from .source_policy import operation_retains_source, is_source_expired, is_supported_source_mime_type, normalize_source_mime_type, validate_source_size
 from .source_storage import (
     SourceObjectReadError,
     SourceObjectReadReason,
@@ -235,7 +235,7 @@ def _load_selected_snapshot(db, job_id, job_source_id, owner, generation, now, s
     mime = normalize_source_mime_type(src.mime_type)
     if rel.status == JobSourceStatus.skipped or src.project_id != job.project_id or (not allow_retired_source and (src.upload_status != SourceUploadStatus.uploaded or src.deleted_at is not None)):
         raise SourceMaterializationError(SourceMaterializationReason.job_source_not_processable)
-    if not allow_retired_source and is_source_expired(src.expires_at, now):
+    if not allow_retired_source and is_source_expired(src.expires_at, now) and not operation_retains_source(job, src.expires_at, now):
         raise SourceMaterializationError(SourceMaterializationReason.job_source_not_processable)
     if src.source_type not in {SourceType.local_upload, SourceType.google_drive, SourceType.yandex_disk} or not is_supported_source_mime_type(mime):
         raise SourceMaterializationError(SourceMaterializationReason.job_source_not_processable)

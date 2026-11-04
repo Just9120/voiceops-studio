@@ -52,11 +52,12 @@ def begin_job_processing(db: Session, *, job_id: str, lease_owner_id: str, lease
     if job.status != JobStatus.queued:
         raise JobProcessingError(JobProcessingFailureReason.job_not_queued)
     _require_active_owner(job, lease_owner_id, lease_generation, now)
-    if not build_claim_readiness(job)["ready_for_future_claim"]:
+    if not build_claim_readiness(job, now=now)["ready_for_future_claim"]:
         raise JobProcessingError(JobProcessingFailureReason.job_not_ready)
     if job.cancel_requested_at is not None:
         raise JobProcessingError(JobProcessingFailureReason.cancellation_requested)
     job.status = JobStatus.processing
+    job.source_access_started_at = now
     job.attempt_count = (job.attempt_count or 0) + 1
     if job.started_at is None:
         job.started_at = now

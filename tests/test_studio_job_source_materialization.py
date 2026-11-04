@@ -151,6 +151,32 @@ def fake_drive_meta(token, drive_file_id):
     return GoogleDriveMetadata(id=drive_file_id, name="meeting.mp3", mime_type="audio/mpeg", size_bytes=100, web_view_link=None, created_time=None, modified_time=None, is_folder=False)
 
 
+@pytest.mark.parametrize("admission", ["before", "after", "missing"])
+def test_materialization_crosses_source_ttl_only_for_already_admitted_current_operation(sqlite_session, models, admission):
+    from studio_api.job_source_materialization import materialize_processing_job_source, SourceMaterializationError
+    job, source, relation, _, now, _ = make_job(sqlite_session, models,
+        source_kwargs={"expires_at": None})
+    expiry = now + timedelta(seconds=1)
+    source.expires_at = expiry
+    job.source_access_started_at = now if admission == "before" else (expiry if admission == "after" else None)
+    sqlite_session.commit()
+    after = expiry + timedelta(seconds=1)
+    body = FakeBody([b"a" * 50, b"b" * 50])
+    stream = FakeStream(body)
+    context = materialize_processing_job_source(sqlite_session, job_id=job.id, job_source_id=relation.id,
+        lease_owner_id="worker-1", lease_generation=1, settings=SimpleSettings(), now=after, clock=lambda: after,
+        storage_factory=lambda settings: FakeStorage(stream))
+    if admission == "before":
+        with context as result:
+            assert result.stream.read() == b"a" * 50 + b"b" * 50
+        assert body.closed
+    else:
+        with pytest.raises(SourceMaterializationError, match="availability_verification_failed"):
+            with context:
+                pytest.fail("expired source cannot be newly admitted")
+    assert source.expires_at == expiry
+
+
 @pytest.mark.parametrize("replace_same_size", [False, True])
 def test_selected_drive_revision_and_content_checksum_are_enforced_before_stt(sqlite_session, models, replace_same_size):
     import hashlib

@@ -338,6 +338,11 @@ def claim_next_audio_preparation_job(
     if job is None:
         return None
     _recover_legacy_stored_output(db, job, now=now)
+    was_running = job.status in {AudioPreparationStatus.analyzing, AudioPreparationStatus.processing} or (
+        job.status in {AudioPreparationStatus.completed, AudioPreparationStatus.preview_ready}
+        and job.current_stage in {"audio_download_rendering", "google_drive_upload"})
+    if not was_running or job.source_access_started_at is None:
+        job.source_access_started_at = _naive_utc(now)
     job.lease_generation = (job.lease_generation or 0) + 1
     job.lease_owner_id = owner
     job.claimed_at = _naive_utc(now)

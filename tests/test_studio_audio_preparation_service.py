@@ -172,6 +172,7 @@ def test_claim_preview_complete_start_and_processing_claim_are_durable(db):
     )
     assert claimed.id == job.id
     assert claimed.status is AudioPreparationStatus.analyzing
+    assert claimed.source_access_started_at == datetime(2026, 8, 24, 20, 1)
     generation = claimed.lease_generation
     db.commit()
     preview = complete_audio_preview(
@@ -196,6 +197,14 @@ def test_claim_preview_complete_start_and_processing_claim_are_durable(db):
     )
     assert processing.status is AudioPreparationStatus.processing
     assert processing.lease_generation == generation + 1
+    assert processing.source_access_started_at == datetime(2026, 8, 24, 20, 2)
+    db.commit()
+    # Reclaim of the same interrupted work retains admission; a new phase above
+    # got a new timestamp and cannot borrow its idle preview's old authority.
+    recovered = claim_next_audio_preparation_job(db, lease_owner_id="worker-3",
+        now=datetime(2026, 8, 24, 20, 13), lease_ttl=timedelta(minutes=10))
+    assert recovered.id == processing.id and recovered.lease_generation == generation + 2
+    assert recovered.source_access_started_at == datetime(2026, 8, 24, 20, 2)
 
 
 def test_trim_edit_is_owner_scoped_preview_only_and_preserves_source(db):

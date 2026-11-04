@@ -13,7 +13,7 @@ from .models import JobStatus, Project, SourceType, SourceUploadStatus, Transcri
 from .security import utcnow
 from .yandex_disk import YandexDiskError
 from .yandex_disk_access import verify_selected_resource
-from .source_policy import is_source_expired, is_supported_source_mime_type, normalize_source_mime_type, validate_source_size
+from .source_policy import operation_retains_source, is_source_expired, is_supported_source_mime_type, normalize_source_mime_type, validate_source_size
 from .source_storage import (
     get_source_storage,
     reference_storage_bucket,
@@ -130,7 +130,7 @@ def verify_processing_job_sources(
         return _summary(job_id, job.project_id if job else None, now, lease_generation, initial_reasons, [])
 
     boundary_snapshot = _boundary_snapshot(job, project, job_sources)
-    snapshots = [_snapshot(job, js) for js in job_sources]
+    snapshots = [_snapshot(job, js, now=now) for js in job_sources]
     # The immutable snapshot is sufficient for external checks. Do not leave the
     # restricted worker connection idle while R2 or Google Drive responds.
     db.rollback()
@@ -224,7 +224,7 @@ def _job_boundary_reasons(job, owner, generation, now):
     return reasons
 
 
-def _snapshot(job, js):
+def _snapshot(job, js, *, now):
     src = js.source
     reasons = []
     if src is None:
@@ -241,12 +241,12 @@ def _snapshot(job, js):
         reasons.append("unsupported_source_type")
     if not is_supported_source_mime_type(mime):
         reasons.append("unsupported_mime_type")
-    return {"source_id": src.id, "position": js.position, "source_type": source_type, "original_filename": src.original_filename, "mime_type": mime, "size_bytes": src.size_bytes, "project_id": src.project_id, "upload_status": str(src.upload_status.value), "deleted_at": src.deleted_at, "expires_at": src.expires_at, "s3_bucket": src.s3_bucket, "s3_object_key": src.s3_object_key, "reference_class": source_reference_class(src), "drive_file_id": src.drive_file_id, "drive_revision_id": src.drive_revision_id, "drive_md5_checksum": src.drive_md5_checksum, "reasons": reasons}
+    return {"source_id": src.id, "position": js.position, "source_type": source_type, "original_filename": src.original_filename, "mime_type": mime, "size_bytes": src.size_bytes, "project_id": src.project_id, "upload_status": str(src.upload_status.value), "deleted_at": src.deleted_at, "expires_at": src.expires_at, "s3_bucket": src.s3_bucket, "s3_object_key": src.s3_object_key, "reference_class": source_reference_class(src), "drive_file_id": src.drive_file_id, "drive_revision_id": src.drive_revision_id, "drive_md5_checksum": src.drive_md5_checksum, "retention_access_allowed": operation_retains_source(job, src.expires_at, now), "reasons": reasons}
 
 
 def _verify_local(snap, now, settings, storage_factory):
     reasons = []
-    if is_source_expired(snap["expires_at"], now):
+    if is_source_expired(snap["expires_at"], now) and not snap["retention_access_allowed"]:
         reasons.append("source_expired")
     if not snap["s3_bucket"] or not snap["s3_object_key"]:
         reasons.append("source_missing_required_identity")
@@ -374,7 +374,7 @@ def _revalidate(db, snapshot: ProcessingBoundarySnapshot, owner, generation, now
         lifecycle_reasons.append("lease_not_active")
 
     current_relations = tuple(_relation_source_identity(js) for js in sorted(job.sources, key=lambda item: item.position))
-    relation_recheck = _relation_revalidation(snapshot.relations, current_relations, now)
+    relation_recheck = _relation_revalidation(snapshot.relations, current_relations, now, retained=lambda relation: operation_retains_source(job, relation.expires_at, now))
     return RevalidationResult(
         tuple(_dedupe(lifecycle_reasons + relation_recheck["top_level_reasons"])),
         frozenset(relation_recheck["changed_source_ids"]),
@@ -382,7 +382,7 @@ def _revalidate(db, snapshot: ProcessingBoundarySnapshot, owner, generation, now
     )
 
 
-def _relation_revalidation(original: tuple[SourceRelationSnapshot, ...], current: tuple[SourceRelationSnapshot, ...], now: datetime):
+def _relation_revalidation(original: tuple[SourceRelationSnapshot, ...], current: tuple[SourceRelationSnapshot, ...], now: datetime, *, retained=lambda relation: False):
     changed_source_ids: set[str] = set()
     top_level_reasons: list[str] = []
     original_by_relation_id = {item.job_source_id: item for item in original}
@@ -423,7 +423,7 @@ def _relation_revalidation(original: tuple[SourceRelationSnapshot, ...], current
             changed_source_ids.add(original_relation.source_id)
         if current_relation.deleted_at is not None:
             changed_source_ids.add(original_relation.source_id)
-        if is_source_expired(current_relation.expires_at, now):
+        if is_source_expired(current_relation.expires_at, now) and not retained(current_relation):
             changed_source_ids.add(original_relation.source_id)
 
     if _ordered_relation_keys(original) != _ordered_relation_keys(current):

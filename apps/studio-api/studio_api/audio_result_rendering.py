@@ -16,7 +16,7 @@ from .google_drive import fetch_drive_file_content
 from .models import Project, SourceType, SourceUploadStatus
 from .security import utcnow
 from .work_progress import report_work
-from .source_policy import is_source_expired, is_supported_source_mime_type
+from .source_policy import operation_retains_source, is_source_expired, is_supported_source_mime_type
 from .source_storage import SourceObjectReadError, get_source_storage, reference_storage_bucket, reference_storage_isolation_configured, reference_storage_settings, safe_filename, source_reference_class
 
 _COPY_CHUNK_SIZE = 1024 * 1024
@@ -57,7 +57,7 @@ def materialize_audio_inputs(
             or source.project_id != job.project_id
             or source.upload_status is not SourceUploadStatus.uploaded
             or source.deleted_at is not None
-            or is_source_expired(source.expires_at, clock())
+            or (is_source_expired(source.expires_at, clock()) and not operation_retains_source(job, source.expires_at, clock()))
             or not is_supported_source_mime_type(source.mime_type)
         ):
             raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
