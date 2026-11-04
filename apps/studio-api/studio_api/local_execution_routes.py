@@ -46,7 +46,7 @@ class DeviceRevisionIn(BaseModel):
 
 class DeviceHeartbeatIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    runtime_status: Literal["ready", "model_missing", "runtime_missing", "runtime_error"]
+    runtime_status: Literal["loading_model", "ready", "model_missing", "runtime_missing", "runtime_error", "insufficient_memory"]
     runtime_version: str | None = Field(default=None, min_length=1, max_length=80, pattern=r"^[A-Za-z0-9.+_-]+$")
     model: Literal[NEMOTRON_MODEL] | None = None
 
@@ -65,7 +65,7 @@ class LocalJobFailureIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     generation: StrictInt = Field(ge=1, le=2147483647)
     reason: Literal["local_input_unavailable", "local_model_unavailable", "local_runtime_unavailable",
-                    "local_processing_failed", "local_result_invalid"]
+                    "local_processing_failed", "local_worker_interrupted", "local_memory_unavailable", "local_result_invalid"]
 
 
 class LocalInputPrepareIn(BaseModel):

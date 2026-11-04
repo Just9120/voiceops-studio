@@ -32,7 +32,7 @@ AUTOMATIC_RETRY_TRANSIENT_FAILURES = {
 AUTOMATIC_RETRY_BASE_SECONDS = 30
 PRE_PROVIDER_SAFE_FAILURES.add("media_timeline_unavailable")
 PRE_PROVIDER_SAFE_FAILURES.update({"local_input_unavailable", "local_model_unavailable", "local_runtime_unavailable",
-                                 "local_processing_failed", "local_result_invalid", "local_device_offline", "local_device_revoked"})
+                                 "local_processing_failed", "local_worker_interrupted", "local_memory_unavailable", "local_result_invalid", "local_device_offline", "local_device_revoked"})
 AUTOMATIC_RETRY_MAX_SECONDS = 300
 
 class RetryReason(str, Enum):

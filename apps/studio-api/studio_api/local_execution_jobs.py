@@ -17,7 +17,7 @@ from .transcription_metadata import stored_model
 LOCAL_LEASE_TTL = timedelta(seconds=90)
 LOCAL_STAGES = ("source_download", "media_processing", "local_transcription", "local_result_upload")
 LOCAL_FAILURES = frozenset({"local_input_unavailable", "local_model_unavailable", "local_runtime_unavailable",
-                            "local_processing_failed", "local_result_invalid"})
+                            "local_processing_failed", "local_worker_interrupted", "local_memory_unavailable", "local_result_invalid"})
 
 
 def local_job_payload(job):

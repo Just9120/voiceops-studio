@@ -1,5 +1,9 @@
 # Architecture
 
+## Personal local execution
+
+Nemotron companion — отдельный Windows process владельца, не замена VPS worker. Dedicated owner/device token и outbound Studio protocol ограничивают его назначенными local jobs; browser sessions, provider keys, storage credentials и database access не используются как machine credentials. API выдаёт проверенные source bytes/SHA и фиксирует clock receipt, PC выполняет FFmpeg и pinned CPU SALM, API принимает полный encrypted result с generation/idempotency fences, VPS продолжает общий export-only pipeline. Offline/cancel/revoke не вызывают cloud STT. Native model API остаётся loopback-only с отдельным ephemeral key; секретный профиль защищён current-user DPAPI. Устройство, команды и recovery — [local worker runbook](runbooks/local-worker.md), AC/статус — [extensions](spec/extensions.md) и [план](delivery-plan.md).
+
 ## Владение данными и границы scope
 
 PostgreSQL владеет workflow metadata и зашифрованным recovery text. Live text сохраняется до явной очистки; незавершённый batch text — до полного документа, отмены или явного закрытия ошибки. Принятый обычный batch transcript остаётся внешним Google Docs output; отдельный standalone artifact Studio не создаётся. S3/R2 хранит только исходники с назначенным lifecycle, не новые finished audio results. Download/export аудио заново собирается worker из доступных исходников по сохранённым параметрам. Scope и статусы — [project spec](project-spec.md) и [delivery dashboard](delivery-plan.md); карта реализации не доказывает поставку.

@@ -134,6 +134,10 @@ def test_ready_requires_bound_model_identity_and_heartbeat_freshness(local_app):
     assert rejected.status_code == 422 and "wrong-model" not in rejected.text and "private-path" not in rejected.text
     unavailable = client.post(BASE + "/companion/heartbeat", headers=pc_headers(token), json={"runtime_status": "model_missing"})
     assert unavailable.status_code == 200 and not unavailable.json()["device"]["ready"]
+    for state in ("loading_model", "insufficient_memory"):
+        reply = client.post(BASE + "/companion/heartbeat", headers=pc_headers(token), json={"runtime_status": state})
+        assert reply.status_code == 200 and not reply.json()["device"]["ready"]
+        assert reply.json()["device"]["runtime_status"] == state
 
 
 @pytest.mark.parametrize("case", ["browser_origin", "cookie_only", "wrong_token", "no_protocol", "disabled_owner"])

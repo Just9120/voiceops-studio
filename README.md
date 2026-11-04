@@ -69,6 +69,7 @@ Colab batch запускается вручную через `notebooks/elevenla
 | [docs/runbooks/validation.md](docs/runbooks/validation.md) | Repository и component validation commands. |
 | [docs/runbooks/studio-platform-ops.md](docs/runbooks/studio-platform-ops.md) | Studio rollout и production operations. |
 | [docs/runbooks/realtime-colab.md](docs/runbooks/realtime-colab.md) | Realtime Colab prototype, диагностика и ограничения runtime-проверок. |
+| [docs/runbooks/local-worker.md](docs/runbooks/local-worker.md) | Personal Nemotron на компьютере владельца: pairing, запуск, ограничения и recovery. |
 
 ## Historical и supporting evidence
 
