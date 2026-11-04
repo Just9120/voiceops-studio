@@ -71,7 +71,7 @@ def begin_job_processing(db: Session, *, job_id: str, lease_owner_id: str, lease
     return _result(job)
 
 
-def request_job_cancellation(db: Session, *, job_id: str, now: datetime) -> tuple[JobProcessingResult, bool, str | None]:
+def request_job_cancellation(db: Session, *, job_id: str, now: datetime, retire_part_checkpoints: bool = True) -> tuple[JobProcessingResult, bool, str | None]:
     job = _locked_job(db, job_id)
     if job is None:
         raise JobProcessingError(JobProcessingFailureReason.job_not_found)
@@ -94,13 +94,17 @@ def request_job_cancellation(db: Session, *, job_id: str, now: datetime) -> tupl
         event_type = "job.cancel_requested"
     if changed:
         if job.status == JobStatus.cancelled:
-            delete_provider_part_checkpoints(db, job_id=job.id)
+            # API owns the cancel decision, worker owns physical part rows.
+            # Terminal status fences reuse immediately; its existing bounded
+            # cleanup sweep retires those rows when inline deletion is forbidden.
+            if retire_part_checkpoints:
+                delete_provider_part_checkpoints(db, job_id=job.id)
             retire_cached_yandex_result(db, job_id=job.id)
         db.flush()
     return _result(job), changed, event_type
 
 
-def acknowledge_job_cancellation(db: Session, *, job_id: str, lease_owner_id: str, lease_generation: int, now: datetime) -> JobProcessingResult:
+def acknowledge_job_cancellation(db: Session, *, job_id: str, lease_owner_id: str, lease_generation: int, now: datetime, retire_part_checkpoints: bool = True) -> JobProcessingResult:
     job = _processing_job(db, job_id)
     if job.cancel_requested_at is None:
         raise JobProcessingError(JobProcessingFailureReason.cancellation_not_requested)
@@ -109,7 +113,8 @@ def acknowledge_job_cancellation(db: Session, *, job_id: str, lease_owner_id: st
     job.cancelled_at = now
     job.finished_at = now
     job.updated_at = now
-    delete_provider_part_checkpoints(db, job_id=job.id)
+    if retire_part_checkpoints:
+        delete_provider_part_checkpoints(db, job_id=job.id)
     retire_cached_yandex_result(db, job_id=job.id)
     invalidate_job_lease(job)
     finalize_job_provider_accounting(db, job=job, now=now)

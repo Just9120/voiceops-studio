@@ -4113,7 +4113,7 @@ def check_output_reconciliation(job_id: str, request: Request, pair=Depends(requ
 @app.post("/api/jobs/{job_id}/cancel")
 def cancel_transcription_job(job_id: str, request: Request, pair=Depends(require_csrf), db: Session=Depends(get_db)):
     _,user=pair; limiter.check("job:cancel:"+user.id, 120, 3600); job=owned_job_or_404(db,user,job_id)
-    _, changed, event_type = request_job_cancellation(db, job_id=job.id, now=utcnow())
+    _, changed, event_type = request_job_cancellation(db, job_id=job.id, now=utcnow(), retire_part_checkpoints=False)
     if changed and event_type:
         audit(db,event_type,actor_user_id=user.id,subject_user_id=user.id,project_id=job.project_id,job_id=job.id)
         db.commit(); db.refresh(job); event_code="JOB_CANCELLED" if job.status==JobStatus.cancelled else "JOB_CANCEL_REQUESTED"; write_diagnostic_event(owner_user_id=user.id, component="api", event_code=event_code, project_id=job.project_id, job_id=job.id, request_id=getattr(request.state,"request_id",None), correlation_id=getattr(request.state,"correlation_id",None), metadata={"final_job_status": job.status.value})

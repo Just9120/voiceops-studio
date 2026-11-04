@@ -196,6 +196,40 @@ def test_child_environment_has_no_studio_or_provider_credentials(monkeypatch):
     assert value["NEMO_SPEECH_HTTP_API_KEY"] == "own-ephemeral-key"
 
 
+def test_idle_native_exit_withdraws_readiness_before_claiming_another_job(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    state = {"dead": False, "claims": 0, "closed": False, "statuses": []}
+    class Client:
+        def heartbeat(self, status): state["statuses"].append(status)
+        def json(self, path):
+            assert path == "/claim"
+            state["claims"] += 1
+            state["dead"] = True  # Native child exits while the PC is idle.
+            return {"job": None}
+    class Server:
+        def __init__(self, *_): self.process = None
+        def __enter__(self): return self
+        def __exit__(self, *_): state["closed"] = True
+        def start(self, _check):
+            self.process = SimpleNamespace(process=SimpleNamespace(poll=lambda: 1 if state["dead"] else None))
+
+    pulse = SimpleNamespace(status="loading_model", check=lambda: None)
+    monkeypatch.setattr(worker, "StudioClient", lambda *_: Client())
+    monkeypatch.setattr(worker, "DevicePulse", lambda *_: nullcontext(pulse))
+    monkeypatch.setattr(worker, "NativeServer", Server)
+    monkeypatch.setattr(worker, "verify_installation", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker.NativePaths, "from_dict", lambda *_: None)
+    monkeypatch.setattr(worker.time, "sleep", lambda *_: None)
+    with pytest.raises(WorkerError, match="local_runtime_unavailable"):
+        worker.run({"origin": "https://example.invalid", "token": "synthetic", "paths": {}, "verified_files": {}},
+                   root=tmp_path, notice=lambda *_: None)
+    assert state["claims"] == 1 and state["closed"]
+    assert state["statuses"] == ["loading_model", "ready", "runtime_error"]
+    assert pulse.status == "runtime_error"
+
+
 def test_verified_weight_cache_reuses_only_unchanged_identity_and_executable_is_always_hashed(tmp_path, monkeypatch):
     paths = native.NativePaths(*[tmp_path / name for name in ("runtime", "decoder", "encoder", "ffmpeg", "ffprobe")])
     for path in (paths.runtime, paths.decoder, paths.encoder, paths.ffmpeg, paths.ffprobe):

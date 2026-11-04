@@ -67,7 +67,7 @@ def claim_local_job(db, *, device, now):
         active = _scope(db, device=device, job_id=active.id, generation=active.lease_generation, now=now, allow_cancel=True)
         if active.cancel_requested_at is not None:
             acknowledge_job_cancellation(db, job_id=active.id, lease_owner_id="local:" + device.id,
-                lease_generation=active.lease_generation, now=now)
+                lease_generation=active.lease_generation, now=now, retire_part_checkpoints=False)
             return None
         return active
     jobs = db.scalars(select(TranscriptionJob).join(Project, Project.id == TranscriptionJob.project_id).where(
@@ -101,7 +101,7 @@ def heartbeat_local_job(db, *, device, job_id, generation, stage, sequence, comp
     job = _scope(db, device=device, job_id=job_id, generation=generation, now=now, allow_cancel=True)
     if job.cancel_requested_at is not None:
         acknowledge_job_cancellation(db, job_id=job.id, lease_owner_id="local:" + device.id,
-            lease_generation=generation, now=now)
+            lease_generation=generation, now=now, retire_part_checkpoints=False)
         return {"cancelled": True}
     if stage not in LOCAL_STAGES or type(sequence) is not int or not 1 <= sequence <= 2147483647:
         raise HTTPException(422, detail={"reason": "local_progress_invalid"})
@@ -141,7 +141,7 @@ def fail_local_job(db, *, device, job_id, generation, reason, now):
     job = _scope(db, device=device, job_id=job_id, generation=generation, now=now, allow_cancel=True)
     if job.cancel_requested_at is not None:
         acknowledge_job_cancellation(db, job_id=job.id, lease_owner_id="local:" + device.id,
-            lease_generation=generation, now=now)
+            lease_generation=generation, now=now, retire_part_checkpoints=False)
         return {"cancelled": True}
     for relation in job.sources:
         if relation.status != JobSourceStatus.skipped:

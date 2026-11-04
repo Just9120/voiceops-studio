@@ -216,6 +216,10 @@ def run(profile, *, root, notice=print):
         with NativeServer(paths, directory) as server:
             while True:
                 device.check()
+                if server.process is not None and server.process.process.poll() is not None:
+                    device.status = "runtime_error"
+                    client.heartbeat("runtime_error")
+                    raise WorkerError("local_runtime_unavailable")
                 if server.process is None:
                     device.status = "loading_model"
                     client.heartbeat("loading_model")
@@ -223,6 +227,7 @@ def run(profile, *, root, notice=print):
                     try:
                         server.start(device.check)
                     except WorkerError as error:
+                        device.status = "runtime_error"
                         client.heartbeat("runtime_error")
                         raise
                     device.status = "ready"

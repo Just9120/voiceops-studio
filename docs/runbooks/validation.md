@@ -12,7 +12,7 @@ Do not record secrets, provider API keys, OAuth tokens, refresh tokens, document
 
 Рабочий каталог указан отдельно; команды установки выполняй в изолированном environment. Production config/data не использовать. При расхождении сверяй команды с фактическими workflow/package scripts, фиксируя drift.
 
-CI process budget полной Python suite —300s с diagnostic SIGABRT и hard kill через10s; job ограничен15min. Основание06Oct: >2000 cases с повторными PostgreSQL migrations/isolated restore, один полный прогон157.59s и другой cutoff180s до завершения64% suite. Budget не заменяет assertions или успех полного процесса; gates сохраняются. Пять real FFmpeg cases требуют binary: при отсутствии на CI host они SKIP, отдельные synthetic local decoder/processing PASS сохраняются с указанием environment.
+CI process budget полной Python suite —300s с diagnostic SIGABRT и hard kill через10s; job ограничен15min. Budget не заменяет assertions или успех полного процесса; gates сохраняются. Root Linux CI требует FFmpeg/ffprobe через `STUDIO_REQUIRE_FFMPEG=true`: их отсутствие останавливает suite, а не разрешает green через SKIP. Исторические результаты с отсутствующим binary не подтверждают этот действующий gate. Локальный portable профиль допускает явный SKIP real-media tests, если binaries отсутствуют; такой результат не подтверждает обработку медиа.
 
 | Назначение | Каталог и команда | Применимость / условия |
 | --- | --- | --- |
@@ -28,7 +28,7 @@ CI process budget полной Python suite —300s с diagnostic SIGABRT и har
 | Isolated restore | Root: `python scripts/rehearse_studio_restore.py`; regression: `pytest -q tests/test_studio_restore_rehearsal.py tests/test_studio_recovery_quarantine.py` | Docker с cached `postgres:17`; реальный dump/restore synthetic encrypted data в двух owned tmpfs targets. Required Linux CI; local absence — SKIP с ограничением. Production restore не запускается; измерение до quarantine не доказывает full RTO |
 | Compatible release rollback | Root: `python scripts/rehearse_studio_release.py --baseline <40-char-base-SHA> --candidate <40-char-test-merge-SHA>` | Owned tmpfs PostgreSQL/Redis, internal network и exact API/web/worker images; upgrade, drain, schema/credential rollback и readback. REQUIRED affected Linux CI при migrations/runtime-role manifest/drill changes; локально без Docker PENDING. Builds require network; runtime не вызывает providers и не использует production secrets/data. Schema downgrade только synthetic; production recovery определяется operations |
 | Browser layout regression | `apps/studio`: `STUDIO_BROWSER_LAYOUT_ONLY=1 npm run test:e2e` (PowerShell: `$env:STUDIO_BROWSER_LAYOUT_ONLY='1'`) | Только frontend, synthetic API/Google responses, desktop1280×720/mobile390×844, history/CTA/picker/menu/focus/overflow/reset. При занятом порте можно указать STUDIO_BROWSER_PORT (1024..65535); существующий сервер не переиспользуется. Обычный CI E2E включает эти сценарии вместе с API suite; отдельный дублирующий workflow не нужен |
-| Portable Python | Root: `pytest -q --portable` | Ограниченная диагностика; исключает 9 modules по `conftest.py`, оставляет часть shell tests, не гарантирует Windows compatibility |
+| Portable Python | Root: synthetic setup ниже, затем `python -m pytest -q --portable <test-path>` либо без `<test-path>` для всего portable профиля | Ограниченная диагностика; исключает 9 modules по `conftest.py`, оставляет часть shell tests, не гарантирует Windows compatibility |
 | Browser E2E | `apps/studio`: `npm run test:e2e`; inventory — `npm run test:e2e:list` | Playwright Chromium, isolated DB `studio_browser_e2e`, Redis, migrations, seed и fake external services по `studio-ci.yml` |
 | Build | `apps/studio`: `npm run build` | TypeScript + Vite/PWA + `scripts/write-build-meta.mjs`; отдельный Vite run не равен всей команде |
 | Containers / Compose | Команды build и synthetic Compose checks из `.github/workflows/studio-ci.yml` | Docker/Linux; repository build contexts и env из workflow, без production secrets |
@@ -51,10 +51,27 @@ Critical scenarios: owner/CSRF/session/TOTP isolation; source multipart reconcil
 
 Root Linux CI задаёт `STUDIO_REQUIRE_FFMPEG=true`: существующий root job обеспечивает FFmpeg/ffprobe, а pytest preflight завершает suite ошибкой при отсутствии инструментов. Synthetic real-decoder/processing cases выполняются в том же прогоне, без дополнительного workflow или повторного полного CI. Локальный portable профиль допускает отсутствие binaries с явным SKIP; это не подтверждает real-media поведение.
 
-Для ограниченной локальной диагностики без PostgreSQL/Redis используйте:
+Для ограниченной локальной диагностики сначала установите зависимости командой **Install Python** выше в изолированный Python environment. Рабочий каталог — root без production `.env`; production secret files не подключаются. `STUDIO_DATABASE_URL` нужен **до collection**, поскольку импорт API создаёт SQLAlchemy engine. SQLite здесь отключает обращение к deployment password file и служит synthetic import/fixture boundary; он не заменяет PostgreSQL tests.
+
+PowerShell, тот же изолированный Python и root:
+
+```powershell
+$env:STUDIO_ENVIRONMENT = 'test'
+$env:STUDIO_DATABASE_URL = 'sqlite+pysqlite:///:memory:'
+$portableTemp = Join-Path (Get-Location).Path '.tmp/portable-tests'
+New-Item -ItemType Directory -Force -Path $portableTemp | Out-Null
+$env:TEMP = $portableTemp
+$env:TMP = $portableTemp
+$env:PYTHONIOENCODING = 'utf-8'
+python -m pytest -q --portable tests/test_studio_retention_admission.py
+```
+
+Для affected tests замените последний path нужным списком. Не передавайте `PYTHONPATH` от чужого проекта или старого dependency graph; discovery задаётся `pytest.ini`, а service tests подключают свой `apps/studio-api` import path. Для полного portable прогона опустите paths, сохранив тот же synthetic setup. Команда меняет environment только текущего terminal/process и использует project-owned временный каталог.
+
+Bash, root и isolated Python:
 
 ```bash
-pytest -q --portable
+STUDIO_ENVIRONMENT=test STUDIO_DATABASE_URL='sqlite+pysqlite:///:memory:' python -m pytest -q --portable tests/test_studio_retention_admission.py
 ```
 
 Discovery ограничен `tests/`. `--portable` исключает 9 service/shell modules, перечисленных в `conftest.py`, до их импорта. На Windows `conftest.py` выбирает проверенную установку Git Bash и MSYS utilities перед system bash/WSL только для процесса pytest; затронутые shell fixtures передают абсолютный путь executable, поскольку Windows CreateProcess может иначе разрешать bare name. Пользовательский PATH не изменяется. POSIX права/симлинки и PostgreSQL/Redis остаются Linux CI boundary: это ограниченный диагностический профиль, а не обещание full cross-platform suite. Plain `pytest` с PostgreSQL/Redis/bash остаётся полным CI-профилем. Точные команды, environment и применимость — в [команды и условия](#repository-checks); результаты — в [delivery dashboard](../delivery-plan.md).

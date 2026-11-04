@@ -240,6 +240,7 @@ def test_local_result_handoff_uses_api_grants_without_worker_checkpoint_write(mo
                     source_duration_seconds=1, settings=settings, now=now)
                 db.commit()
                 value = {"generation": generation, "source_sha256": digest, "result": {"text": "Synthetic speech.",
+                    "file": "synthetic.wav", "confidence": 0,
                     "duration": 1, "languages": ["en"], "words": [{"word": "Synthetic", "start": 0, "end": .5},
                         {"word": "speech.", "start": .5, "end": 1}]}}
                 envelope, result_digest = decode_local_result(gzip.compress(json.dumps(value).encode()))
@@ -252,6 +253,27 @@ def test_local_result_handoff_uses_api_grants_without_worker_checkpoint_write(mo
                 assert b"Synthetic speech" not in operation.result_ciphertext
                 assert completed_yandex_result(db, db.get(TranscriptionJob, job_id), relation_id).id == operation.id
                 assert db.get(LocalExecutionDevice, device_id).revoked_at is None
+                from studio_api.job_processing_lifecycle import request_job_cancellation
+                from studio_api.local_execution_jobs import heartbeat_local_job
+                # Same API path after accepted handoff: clear operation text,
+                # preserve the worker-only checkpoint privilege boundary.
+                request_job_cancellation(db, job_id=job_id, now=now, retire_part_checkpoints=False)
+                db.commit()
+                assert db.get(TranscriptionJob, job_id).status == JobStatus.cancelled
+                assert operation.result_ciphertext is None and operation.result_hmac is None
+                next_job = TranscriptionJob(owner_user_id=owner.id, project_id=project.id, status=JobStatus.queued,
+                    provider="nemotron", operating_mode="standard", language="en", local_device_id=device.id, media_timeline_version=2,
+                    output_drive_folder_id="synthetic-folder", options_json=json.dumps({"_stt_model": NEMOTRON_MODEL, "diarize": False}))
+                db.add(next_job); db.flush()
+                db.add(TranscriptionJobSource(job_id=next_job.id, source_id=source.id, position=0)); db.commit()
+                assert claim_local_job(db, device=device, now=now).id == next_job.id
+                next_generation = next_job.lease_generation
+                request_job_cancellation(db, job_id=next_job.id, now=now, retire_part_checkpoints=False)
+                db.commit()
+                assert heartbeat_local_job(db, device=device, job_id=next_job.id, generation=next_generation,
+                    stage="local_transcription", sequence=1, completed=None, total=None, unit=None, now=now) == {"cancelled": True}
+                db.commit()
+                assert next_job.status == JobStatus.cancelled
             api_engine.dispose(); api_engine = None
     finally:
         if api_engine is not None:

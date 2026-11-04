@@ -562,7 +562,8 @@ def test_confirmed_first_part_without_checkpoint_requires_explicit_full_restart(
     assert uncertain.reason.value == "provider_outcome_uncertain"
 
 
-def test_retired_checkpoint_cleanup_is_bounded_and_preserves_unfinished_text(sqlite_db):
+@pytest.mark.parametrize("retirement_route", ["terminal_state", "api_queued", "companion_ack"])
+def test_retired_checkpoint_cleanup_is_bounded_and_preserves_unfinished_text(sqlite_db, retirement_route):
     from studio_api.provider_part_checkpoints import (
         cleanup_expired_provider_part_checkpoints,
     )
@@ -601,7 +602,18 @@ def test_retired_checkpoint_cleanup_is_bounded_and_preserves_unfinished_text(sql
 
     assert cleanup_expired_provider_part_checkpoints(sqlite_db, now=now + timedelta(days=90), limit=2) == 0
     assert sqlite_db.query(m.TranscriptionProviderPartCheckpoint).count() == 4
-    job.status = m.JobStatus.cancelled
+    if retirement_route == "terminal_state":
+        job.status = m.JobStatus.cancelled
+    else:
+        from studio_api.job_processing_lifecycle import request_job_cancellation, acknowledge_job_cancellation
+        job.status = m.JobStatus.queued if retirement_route == "api_queued" else m.JobStatus.processing
+        sqlite_db.commit()
+        request_job_cancellation(sqlite_db, job_id=job.id, now=now, retire_part_checkpoints=False)
+        if retirement_route == "companion_ack":
+            acknowledge_job_cancellation(sqlite_db, job_id=job.id, lease_owner_id=job.lease_owner_id,
+                lease_generation=job.lease_generation, now=now, retire_part_checkpoints=False)
+        assert job.status == m.JobStatus.cancelled
+        assert sqlite_db.query(m.TranscriptionProviderPartCheckpoint).count() == 4
     sqlite_db.commit()
     assert cleanup_expired_provider_part_checkpoints(
         sqlite_db,
