@@ -1,5 +1,5 @@
 export type Source = {
-  prepared_audio?: { job_id: string; input_duration_ms: number; output_duration_ms: number; pauses_removed: boolean };
+  prepared_audio?: { job_id: string; input_duration_ms: number; output_duration_ms: number; pauses_removed: boolean; original_timeline_available?: boolean };
   id: string;
   project_id: string;
   source_type: "local_upload" | "google_drive" | "yandex_disk";
@@ -44,9 +44,11 @@ export function parsePreparedAudioContext(candidate: unknown): Source["prepared_
       typeof value.input_duration_ms !== "number" || typeof value.output_duration_ms !== "number" ||
       !Number.isSafeInteger(value.input_duration_ms) || value.input_duration_ms <= 0 ||
       !Number.isSafeInteger(value.output_duration_ms) || value.output_duration_ms <= 0 ||
-      typeof value.pauses_removed !== "boolean") return null;
+      typeof value.pauses_removed !== "boolean" ||
+      (value.original_timeline_available !== undefined && typeof value.original_timeline_available !== "boolean")) return null;
   return { job_id: value.job_id, input_duration_ms: value.input_duration_ms,
-    output_duration_ms: value.output_duration_ms, pauses_removed: value.pauses_removed };
+    output_duration_ms: value.output_duration_ms, pauses_removed: value.pauses_removed,
+    ...(typeof value.original_timeline_available === "boolean" ? { original_timeline_available: value.original_timeline_available } : {}) };
 }
 
 export function reconcileOptimisticSources(

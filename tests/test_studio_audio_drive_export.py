@@ -163,6 +163,18 @@ def test_changed_drive_copy_keeps_download_and_reports_a_specific_safe_recovery(
     assert audio_preparation_payload(job, now=NOW)["output"]["download_ready"] is True
 
 
+def test_verified_export_receipt_is_atomic_with_the_confirmed_file(export_state, tmp_path):
+    from studio_api.audio_export_receipt import AudioExportReceipt
+    db, job, _ = export_state
+    queue(db); claim(db)
+    process(db, job, tmp_path, lambda *a, **k: SimpleNamespace(file_id="file", web_view_url=RESULT.web_view_url,
+        sha256_checksum="a" * 64, size_bytes=5, head_revision_id="revision-one"))
+    db.refresh(job)
+    receipt = AudioExportReceipt.parse(job.output_drive_receipt_json)
+    assert receipt.file_id == job.output_drive_file_id == "file" and receipt.sha256 == "a" * 64
+    assert "output_drive_receipt_json" not in audio_preparation_payload(job, now=NOW)
+
+
 @pytest.mark.parametrize("claimed", [False, True])
 def test_cancel_export_retains_download_and_allows_explicit_retry(export_state, tmp_path, claimed):
     db, job, source = export_state

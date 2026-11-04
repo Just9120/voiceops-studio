@@ -32,6 +32,7 @@ from .work_progress import measured_work, report_work
 from .google_connection_access import refresh_user_google_drive_access_token
 from .google_drive import fetch_drive_file_content
 from .google_drive_upload import upload_file_resumable, GoogleDriveUploadError, GoogleDriveUploadReason
+from .audio_export_receipt import verified_upload_receipt
 from .diagnostics import write_diagnostic_event
 from .models import (
     AudioPreparationJob,
@@ -203,7 +204,8 @@ def process_claimed_audio_preparation_job(
                 token = drive_token_resolver(db, user_id=job.owner_user_id, settings=settings)
                 uploaded = _upload_ready_output(db, job, drive_uploader, token, output_path, output_filename, mime_type, lease_owner_id, lease_generation, start_percent=92)
                 complete_audio_drive_export(db, job_id=job.id, lease_owner_id=lease_owner_id,
-                    lease_generation=lease_generation, file_id=uploaded.file_id, web_view_url=uploaded.web_view_url)
+                    lease_generation=lease_generation, file_id=uploaded.file_id, web_view_url=uploaded.web_view_url,
+                    content_receipt=verified_upload_receipt(uploaded))
                 db.commit()
                 return AudioProcessingResult(job.id, "completed", "completed", True)
             job.status = AudioPreparationStatus.completed
@@ -325,7 +327,8 @@ def _export_existing_output(db, *, job, root, settings, storage_factory, drive_t
         uploaded = _upload_ready_output(db, job, drive_uploader, token, rendered.path,
             rendered.filename, rendered.mime_type, lease_owner_id, lease_generation, start_percent=60)
         complete_audio_drive_export(db, job_id=job.id, lease_owner_id=lease_owner_id,
-            lease_generation=lease_generation, file_id=uploaded.file_id, web_view_url=uploaded.web_view_url)
+            lease_generation=lease_generation, file_id=uploaded.file_id, web_view_url=uploaded.web_view_url,
+            content_receipt=verified_upload_receipt(uploaded))
         db.commit()
         return AudioProcessingResult(job.id, "completed", "completed", False)
     # Legacy stored outputs retain their existing compatibility path.
@@ -361,7 +364,8 @@ def _export_existing_output(db, *, job, root, settings, storage_factory, drive_t
     check_export_lease()
     uploaded = _upload_ready_output(db, job, drive_uploader, token, path, source.original_filename, source.mime_type, lease_owner_id, lease_generation, start_percent=40)
     complete_audio_drive_export(db, job_id=job.id, lease_owner_id=lease_owner_id,
-        lease_generation=lease_generation, file_id=uploaded.file_id, web_view_url=uploaded.web_view_url)
+        lease_generation=lease_generation, file_id=uploaded.file_id, web_view_url=uploaded.web_view_url,
+        content_receipt=verified_upload_receipt(uploaded))
     db.commit()
     return AudioProcessingResult(job.id, "completed", "completed", False)
 

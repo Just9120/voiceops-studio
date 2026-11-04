@@ -244,11 +244,19 @@ def queue_audio_drive_export(db: Session, *, owner_user_id: str, job_id: str, fo
     return job
 
 
-def complete_audio_drive_export(db: Session, *, job_id: str, lease_owner_id: str, lease_generation: int, file_id: str, web_view_url: str) -> AudioPreparationJob:
+def complete_audio_drive_export(db: Session, *, job_id: str, lease_owner_id: str, lease_generation: int, file_id: str, web_view_url: str, content_receipt: str | None = None) -> AudioPreparationJob:
     job = _locked_leased_job(db, job_id, lease_owner_id, lease_generation)
     if job.status is not AudioPreparationStatus.completed or job.current_stage != "google_drive_upload":
         raise AudioPreparationServiceError(AudioPreparationServiceReason.invalid_state)
+    if content_receipt is not None:
+        from .audio_export_receipt import AudioExportReceipt
+        try:
+            if AudioExportReceipt.parse(content_receipt).file_id != file_id:
+                raise ValueError("export_file_changed")
+        except ValueError as exc:
+            raise AudioPreparationServiceError(AudioPreparationServiceReason.invalid_state) from exc
     job.output_drive_file_id = file_id
+    job.output_drive_receipt_json = content_receipt
     job.output_drive_web_view_url = web_view_url
     job.current_stage = "completed"
     job.progress_percent = 100

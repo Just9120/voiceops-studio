@@ -11,7 +11,7 @@ from .google_oauth import GoogleOAuthConfig, TOKEN_URL
 DRIVE_FILES_URL = "https://www.googleapis.com/drive/v3/files"
 DRIVE_SIZE_PATTERN = re.compile(r"^(0|[1-9][0-9]*)$")
 GOOGLE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
-SAFE_DRIVE_METADATA_FIELDS = "id,name,mimeType,size,webViewLink,createdTime,modifiedTime,headRevisionId,md5Checksum"
+SAFE_DRIVE_METADATA_FIELDS = "id,name,mimeType,size,webViewLink,createdTime,modifiedTime,headRevisionId,md5Checksum,sha256Checksum"
 SAFE_DRIVE_CHILDREN_FIELDS = f"nextPageToken,files({SAFE_DRIVE_METADATA_FIELDS})"
 DEFAULT_DRIVE_FOLDER_CHILDREN_PAGE_SIZE = 50
 MAX_DRIVE_FOLDER_CHILDREN_PAGE_SIZE = 100
@@ -29,6 +29,7 @@ class GoogleDriveMetadata:
     is_folder: bool
     head_revision_id: str | None = None
     md5_checksum: str | None = None
+    sha256_checksum: str | None = None
 
 
 class GoogleDriveMetadataReason(str, Enum):
@@ -187,6 +188,7 @@ def normalize_drive_metadata(payload: dict) -> GoogleDriveMetadata:
         is_folder=mime_type == GOOGLE_FOLDER_MIME_TYPE,
         head_revision_id=_optional_revision_id(payload.get("headRevisionId")),
         md5_checksum=_optional_md5(payload.get("md5Checksum")),
+        sha256_checksum=_optional_sha256(payload.get("sha256Checksum")),
     )
 
 
@@ -202,6 +204,14 @@ def _optional_md5(value) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str) or not re.fullmatch(r"[0-9a-fA-F]{32}", value):
+        raise GoogleDriveMetadataError(GoogleDriveMetadataReason.unavailable)
+    return value.lower()
+
+
+def _optional_sha256(value) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", value):
         raise GoogleDriveMetadataError(GoogleDriveMetadataReason.unavailable)
     return value.lower()
 

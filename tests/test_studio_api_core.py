@@ -9350,10 +9350,13 @@ def test_long_recording_confirmation_rejects_stale_quote_and_requires_owner_csrf
     assert queued == [True]
 
 
-def test_audio_reuse_imports_only_verified_drive_copy_and_is_idempotent(monkeypatch):
+@pytest.mark.parametrize("modern", [False, True])
+def test_audio_reuse_imports_only_verified_drive_copy_and_is_idempotent(monkeypatch, modern):
     from types import SimpleNamespace
     from studio_api import main as api_main
     from studio_api.models import AudioPreparationJob, AudioPreparationStatus
+    from studio_api.audio_export_receipt import AudioExportReceipt
+    from studio_api.audio_timeline import AudioTimeline
     email = "audio-reuse-owner@example.com"
     client = TestClient(app)
     csrf = login(client, admin(email), email)
@@ -9366,14 +9369,22 @@ def test_audio_reuse_imports_only_verified_drive_copy_and_is_idempotent(monkeypa
             output_filename="Лекция.flac", output_mime_type="audio/flac", output_size_bytes=14,
             output_drive_file_id="prepared-audio-file", output_drive_web_view_url="https://drive.google.com/file/d/prepared-audio-file/view")
         db.add(job)
+        if modern:
+            job.recipe_version = 2
+            job.total_input_duration_ms = 15000
+            job.output_duration_ms = 10000
+            job.output_timeline_json = AudioTimeline.from_seconds(15, [(0, 5), (10, 15)]).serialize()
+            job.output_drive_receipt_json = AudioExportReceipt("prepared-audio-file", 14, "a" * 64, "revision-one").serialize()
         db.commit()
         job_id = job.id
     calls = []
+    metadata_state = {"sha256_checksum": "a" * 64, "head_revision_id": "revision-one"}
     monkeypatch.setattr(api_main, "refreshed_google_drive_access_token", lambda *args: "synthetic-token")
     def metadata(db, user, file_id, **kwargs):
         assert not db.in_transaction()
         calls.append(file_id)
         return SimpleNamespace(id=file_id, name="Лекция.flac", size_bytes=14, is_folder=False,
+            md5_checksum="c" * 32, **metadata_state,
             created_time="2026-10-05T21:00:00Z", web_view_link="https://drive.google.com/file/d/prepared-audio-file/view"), "audio/flac"
     monkeypatch.setattr(api_main, "_validated_google_drive_source_metadata", metadata)
     route = f"/api/audio-preparations/{job_id}/reuse-source"
@@ -9389,6 +9400,19 @@ def test_audio_reuse_imports_only_verified_drive_copy_and_is_idempotent(monkeypa
         source = db.get(Source, first.json()["id"])
         assert source.s3_object_key is None and source.s3_bucket is None
     assert calls == ["prepared-audio-file", "prepared-audio-file"]
+    if modern:
+        assert first.json()["prepared_audio"]["original_timeline_available"] is True
+        assert "content_sha256" not in first.text and "retained" not in first.text
+        metadata_state.update(sha256_checksum="b" * 64, head_revision_id="revision-two")
+        changed = client.post(route, headers=headers)
+        assert changed.status_code == 409 and changed.json()["detail"]["reason"] == "output_copy_changed"
+        metadata_state.update(sha256_checksum=None, head_revision_id=None)
+        unverified = client.post(route, headers=headers)
+        assert unverified.status_code == 409 and unverified.json()["detail"]["reason"] == "output_copy_unverified"
+        with SessionLocal() as db:
+            assert db.scalar(select(func.count(Source.id)).where(Source.project_id == project_id)) == 1
+    else:
+        assert "prepared_audio" not in first.json()
 
 
 def test_audio_legacy_recovery_api_is_owner_csrf_scoped_and_never_calls_google(monkeypatch):

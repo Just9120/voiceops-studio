@@ -608,6 +608,7 @@ class AudioPreparationJob(Base):
     download_previous_stage: Mapped[str|None]=mapped_column(String(40))
     download_error_code: Mapped[str|None]=mapped_column(String(80))
     output_drive_file_id: Mapped[str|None]=mapped_column(String(256), unique=True)
+    output_drive_receipt_json: Mapped[str|None]=mapped_column(Text)
     output_drive_web_view_url: Mapped[str|None]=mapped_column(Text)
     total_input_duration_ms: Mapped[int|None]=mapped_column(Integer)
     estimated_output_duration_ms: Mapped[int|None]=mapped_column(Integer)

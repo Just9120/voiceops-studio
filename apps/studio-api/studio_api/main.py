@@ -31,7 +31,8 @@ from .source_storage import (
     source_reference_class,
 )
 from .source_creation import parse_authoritative_source_created_at
-from .media_context import prepared_audio_context_payload, known_prepared_duration_seconds
+from .media_context import prepared_audio_context_payload, known_prepared_duration_seconds, prepared_audio_source_context
+from .audio_export_receipt import AudioExportReceipt
 from .source_policy import SOURCE_RETENTION_TTL_OPTIONS_SECONDS, UploadedObjectMetadataIssue, browser_source_upload_policy, effective_source_retention_seconds, is_supported_source_mime_type, normalize_source_mime_type, uploaded_object_metadata_issue, validate_source_size
 from .google_connection_access import GoogleConnectionAccessError, GoogleConnectionAccessReason, active_google_connection_for_user, google_maintenance_token_aad, google_token_aad, require_drive_file_scope, require_drive_readonly_scope, require_picker_browser_scope_boundary
 from .google_scopes import has_maintenance_server_scope_boundary, has_picker_browser_scope_boundary
@@ -3445,6 +3446,17 @@ def reuse_prepared_audio(job_id: str, pair=Depends(require_csrf), db: Session=De
     if job is None or job.status is not AudioPreparationStatus.completed or job.output_drive_file_id != drive_id:
         raise HTTPException(409, detail={"reason": "output_unavailable"})
     owned_project_or_404(db, user, project_id)
+    content_receipt = None
+    if job.output_drive_receipt_json:
+        try:
+            content_receipt = AudioExportReceipt.parse(job.output_drive_receipt_json)
+        except ValueError:
+            raise HTTPException(409, detail={"reason": "output_copy_unverified"}) from None
+        state = content_receipt.metadata_state(meta)
+        if state != "matches":
+            raise HTTPException(409, detail={"reason": "output_copy_changed" if state == "changed" else "output_copy_unverified"})
+    elif job.recipe_version == 2:
+        raise HTTPException(409, detail={"reason": "output_copy_unverified"})
     source = db.execute(select(Source).where(Source.project_id == project_id,
         Source.source_type == SourceType.google_drive, Source.drive_file_id == drive_id,
         Source.drive_revision_id == getattr(meta, "head_revision_id", None),
@@ -3456,13 +3468,10 @@ def reuse_prepared_audio(job_id: str, pair=Depends(require_csrf), db: Session=De
         db.flush()
         audit(db, "audio_preparation.reused", actor_user_id=user.id, subject_user_id=user.id,
               project_id=project_id, source_id=source.id, job_id=job.id)
-    if job.output_size_bytes == meta.size_bytes and job.total_input_duration_ms and job.output_duration_ms:
-        context = {"job_id": job.id, "input_duration_ms": job.total_input_duration_ms,
-            "output_duration_ms": job.output_duration_ms,
-            "pauses_removed": bool(json.loads(job.options_json).get("silence_enabled", False)) and job.output_duration_ms < job.total_input_duration_ms}
-        source.prepared_audio_context_json = json.dumps(context, separators=(",", ":"))
-    else:
-        source.prepared_audio_context_json = None
+    try:
+        source.prepared_audio_context_json = prepared_audio_source_context(job, content_receipt) if content_receipt else None
+    except ValueError:
+        raise HTTPException(409, detail={"reason": "output_copy_unverified"}) from None
     db.commit()
     return source_payload(source)
 

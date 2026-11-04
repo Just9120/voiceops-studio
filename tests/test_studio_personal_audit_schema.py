@@ -28,7 +28,7 @@ def test_source_version_migration_preserves_legacy_identity_and_guards_rollback(
         for table in ("transcription_jobs", "audio_preparation_jobs"):
             connection.execute(sa.text(f"ALTER TABLE {table} DROP COLUMN source_access_started_at"))
         connection.execute(sa.text("ALTER TABLE realtime_transcript_drafts DROP COLUMN cleared_at"))
-        for name in ("output_sha256_checksum", "output_md5_checksum", "output_timeline_json", "recipe_version", "retained_frames_json"):
+        for name in ("output_sha256_checksum", "output_md5_checksum", "output_timeline_json", "recipe_version", "retained_frames_json", "output_drive_receipt_json"):
             connection.execute(sa.text(f"ALTER TABLE audio_preparation_jobs DROP COLUMN {name}"))
         connection.execute(sa.text("""INSERT INTO sources
             (id,project_id,source_type,original_filename,drive_file_id,upload_status,created_at,updated_at)
@@ -38,7 +38,7 @@ def test_source_version_migration_preserves_legacy_identity_and_guards_rollback(
         try:
             revision.module.upgrade()
             audio_columns = {column["name"]: column for column in sa.inspect(connection).get_columns("audio_preparation_jobs")}
-            for name in ("output_sha256_checksum", "output_md5_checksum", "output_timeline_json", "recipe_version", "retained_frames_json"):
+            for name in ("output_sha256_checksum", "output_md5_checksum", "output_timeline_json", "recipe_version", "retained_frames_json", "output_drive_receipt_json"):
                 assert audio_columns[name]["nullable"] and audio_columns[name]["default"] is None
             assert next(c for c in sa.inspect(connection).get_columns("realtime_transcript_drafts") if c["name"] == "cleared_at")["nullable"]
             for table in ("transcription_jobs", "audio_preparation_jobs"):
@@ -62,6 +62,7 @@ def test_source_version_migration_preserves_legacy_identity_and_guards_rollback(
     ("output_sha256_checksum", "a" * 64), ("output_md5_checksum", "b" * 32),
     ("output_timeline_json", '{"version":1,"original_duration_us":1000000,"retained":[[0,1000000]]}'),
     ("recipe_version", 2), ("retained_frames_json", '{"version":1}'),
+    ("output_drive_receipt_json", '{"version":1}'),
 ])
 def test_migration_downgrade_cannot_discard_prepared_audio_receipts(field, value):
     revision = ScriptDirectory.from_config(Config("apps/studio-api/alembic.ini")).get_revision("0045_personal_audit")

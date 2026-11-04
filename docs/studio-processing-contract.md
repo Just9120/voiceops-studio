@@ -204,3 +204,6 @@ Historical null/v1 recipes retain their previous rendering semantics. A legacy s
 
 
 Drive upload reconciliation checks the selected parent and size plus SHA256 of the actual local bytes. If the binary-file checksum is unavailable in Drive metadata, bounded streaming verification reads the captured revision where available; a modified same-size copy is rejected without creating or overwriting a file. The final resumable ACK also requires matching content proof. Cancellation during that final request does not discard a subsequently verified success. A content conflict leaves the completed local result/download available and reports `output_copy_changed` rather than implying that reconnecting Drive repairs the file.
+
+
+A verified audio export stores its file/content/revision receipt atomically with completion. Reuse rechecks current metadata against that receipt before creating a Source; mismatched bytes or insufficient evidence cannot inherit prepared-audio metadata. A legacy export without content proof remains an ordinary source. A version2 Source context is a bounded content-digest/map-digest pointer to the canonical preparation job, not another copy of its interval map. Resolving the map requires matching owner, project, output file, map digest and durations. Public source DTOs expose the availability flag, not the content receipt or full map.

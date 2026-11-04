@@ -38,6 +38,7 @@ class GoogleDriveUploadResult:
     name: str
     sha256_checksum: str | None = None
     head_revision_id: str | None = None
+    size_bytes: int | None = None
 
 
 def upload_file_resumable(
@@ -304,4 +305,4 @@ def _normalize_result(payload, *, expected_parent: str | None = None, expected_s
     ):
         raise GoogleDriveUploadError(GoogleDriveUploadReason.malformed_response)
     return GoogleDriveUploadResult(file_id=file_id, web_view_url=web_view_url, name=name,
-        sha256_checksum=sha256.lower() if sha256 is not None else None, head_revision_id=revision)
+        sha256_checksum=sha256.lower() if sha256 is not None else None, head_revision_id=revision, size_bytes=expected_size)

@@ -1,5 +1,6 @@
 import {
   isUsableJobSource,
+  parsePreparedAudioContext,
   reconcileOptimisticSources,
   sourceСтатусLabel,
   unusableJobSourceReason,
@@ -24,6 +25,12 @@ const uploadedSource: Source = {
 };
 
 describe("source model", () => {
+  it("preserves an explicit original-timeline claim and keeps private receipts out of the projection", () => {
+    const context = { job_id: "a".repeat(36), input_duration_ms: 15000, output_duration_ms: 10000,
+      pauses_removed: true, original_timeline_available: true };
+    expect(parsePreparedAudioContext({ ...context, content_sha256: "private", timeline_sha256: "private" })).toEqual(context);
+    expect(parsePreparedAudioContext({ ...context, original_timeline_available: "true" })).toBeNull();
+  });
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-22T10:00:00Z"));
