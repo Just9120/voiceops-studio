@@ -8,6 +8,7 @@ ENV STUDIO_RUNTIME_RELEASE_VERSION=${STUDIO_RELEASE_VERSION} \
     STUDIO_RUNTIME_BUILD_ID=${STUDIO_COMPONENT}-${STUDIO_COMMIT_SHA}
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY vendor ./vendor
 RUN npm ci
 COPY . .
 RUN npm run build

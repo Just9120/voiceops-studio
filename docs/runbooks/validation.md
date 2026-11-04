@@ -91,6 +91,8 @@ A full local run requires the same isolated database name, test-only environment
 
 ## Reproducible Python dependencies
 
+Studio npm security overrides включают локальный проверяемый fork `deepmerge` в `apps/studio/vendor/deepmerge`; upstream provenance, узкая security delta и лицензия находятся рядом с исходником. Root direct file dependency и `$deepmerge` override дают один и тот же код для npm10/Node22 и `npm ci --ignore-scripts`, без postinstall mutation. Docker build копирует vendor до dependency install. При обновлении upstream сохраняйте behavior regressions `src/deepmergeBoundary.test.ts`, PWA generateSW и full lint/build; vendor не исключён из lint. Все остальные app imports и gates сохраняются. Доступность advisory endpoint и установленный graph проверяются отдельно; отсутствие findings не заменяет behavioral checks и Linux CI.
+
 Repository/CI development installs use the input requirements together with the committed transitive constraints:
 
 ```bash
