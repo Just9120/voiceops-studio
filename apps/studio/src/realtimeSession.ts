@@ -34,6 +34,7 @@ type RealtimeSessionCallbacks = {
   onPartial: (text: string) => void;
   onCommitted: (text: string, metadata?: RealtimeSegmentMetadata) => void;
   onError: (message: string) => void;
+  onClearBoundaryPending?: (pending: boolean) => void;
   onInputLevel?: (level: number) => void;
   onSourceLevel?: (kind: RealtimeSourceKind, level: number) => void;
 };
@@ -81,6 +82,8 @@ type Attempt = {
   lastSentSeconds: number;
   gapStart: number | null;
   gapSequence: number;
+  clearBeforeSeconds: number | null;
+  segmentStream: RealtimeSegmentStream | null;
 };
 
 type RealtimeSessionDependencies = {
@@ -275,6 +278,8 @@ export class RealtimeSessionController {
       lastSentSeconds: 0,
       gapStart: null,
       gapSequence: 0,
+      clearBeforeSeconds: null,
+      segmentStream: null,
     };
     this.current = attempt;
     this.callbacks.onError("");
@@ -325,6 +330,15 @@ export class RealtimeSessionController {
     } catch (error) {
       this.handleStartFailure(attempt, error);
     }
+  }
+
+  clearTranscript() {
+    const attempt = this.current;
+    if (!attempt || attempt.cleanupDone) return;
+    attempt.clearBeforeSeconds = attempt.audioSeconds;
+    attempt.segmentStream?.clearBefore(attempt.clearBeforeSeconds);
+    this.callbacks.onClearBoundaryPending?.(attempt.segmentStream?.clearBoundaryPending ?? false);
+    this.callbacks.onPartial("");
   }
 
   stop() {
@@ -524,6 +538,9 @@ export class RealtimeSessionController {
     attempt.confirmedSeconds = offset;
     attempt.lastSentSeconds = offset;
     const segments = new RealtimeSegmentStream(`${attempt.namespace}.${transport}`, offset, attempt.namespace);
+    if (attempt.clearBeforeSeconds !== null) segments.clearBefore(attempt.clearBeforeSeconds);
+    attempt.segmentStream = segments;
+    this.callbacks.onClearBoundaryPending?.(segments.clearBoundaryPending);
     attempt.sessionReady = false;
     let websocket: WebSocket;
     try {
@@ -578,11 +595,12 @@ export class RealtimeSessionController {
       } else if (event.kind === "partial") {
         this.clearSessionTimer(attempt);
         this.callbacks.onStatus("transcribing");
-        this.callbacks.onPartial(event.text);
+        this.callbacks.onPartial(segments.partial(event));
       } else if (event.kind === "committed") {
         this.clearSessionTimer(attempt);
         this.callbacks.onStatus("transcribing");
         const commit = segments.committed(event);
+        this.callbacks.onClearBoundaryPending?.(segments.clearBoundaryPending);
         if (commit) {
           if (!commit.replaces && !event.timestampUpdate) this.callbacks.onPartial("");
           if (commit.metadata.end_seconds !== undefined) attempt.confirmedSeconds = Math.max(attempt.confirmedSeconds, commit.metadata.end_seconds);
@@ -609,6 +627,7 @@ export class RealtimeSessionController {
   }
 
   private emitGap(attempt: Attempt, start: number, end: number, reason: string, identity?: string) {
+    if (attempt.clearBeforeSeconds !== null) start = Math.max(start, attempt.clearBeforeSeconds);
     if (end <= start) return;
     this.callbacks.onCommitted(`[Разрыв аудио ${start.toFixed(1)}–${end.toFixed(1)} сек: ${reason}]`, {
       id: `${attempt.namespace}.gap.${identity ?? attempt.gapSequence++}`, session_id: attempt.namespace, start_seconds: start, end_seconds: end, gap: true,
@@ -819,6 +838,7 @@ export class RealtimeSessionController {
   ) {
     if (attempt.cleanupDone) return;
     attempt.cleanupDone = true;
+    this.callbacks.onClearBoundaryPending?.(false);
     this.clearReconnectTimer(attempt);
     attempt.replay = [];
     attempt.replayBytes = 0;

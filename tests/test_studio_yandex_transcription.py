@@ -519,6 +519,18 @@ def test_realtime_events_keep_delayed_refinement_identity_and_real_timing():
     assert events.event(final(3, "некорректный таймкод", -1, 20)) == {"message_type": "committed_transcript", "text": "некорректный таймкод", "final_index": 3}
 
 
+@pytest.mark.parametrize("kind", ["partial", "final"])
+def test_realtime_word_boundaries_allow_the_browser_to_clear_only_preceding_audio(kind):
+    from studio_api.yandex_realtime_pb2 import Word
+    alternative = Alternative(text="до после", start_time_ms=100, end_time_ms=2200,
+        words=[Word(text="до",start_time_ms=100,end_time_ms=600),Word(text="после",start_time_ms=1600,end_time_ms=2200)])
+    response = StreamingResponse(**{kind:AlternativeUpdate(alternatives=[alternative])})
+    payload = YandexRealtimeEvents().event(StreamingResponse.FromString(response.SerializeToString()))
+    assert payload["words"] == [{"text":"до","start":0.1,"end":0.6,"type":"word"},
+        {"text":"после","start":1.6,"end":2.2,"type":"word"}]
+    assert payload["text"] == "до после"
+
+
 def test_realtime_finals_without_cursor_do_not_share_an_invented_zero_identity():
     events = YandexRealtimeEvents()
     for text in ("первый фрагмент", "другой фрагмент"):

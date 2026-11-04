@@ -128,6 +128,37 @@ function websocketFixture() {
 }
 
 describe("RealtimeSessionController", () => {
+  it("clears at captured audio time without restarting capture, the socket or a paid capability", async () => {
+    vi.useFakeTimers();
+    const microphone = mediaFixture(), audio = audioFixture(), socket = websocketFixture();
+    const committed = vi.fn(), partial = vi.fn(), pending = vi.fn(), requestCapability = vi.fn().mockResolvedValue(capability);
+    const controller = new RealtimeSessionController({onStatus:vi.fn(),onPartial:partial,onCommitted:committed,onError:vi.fn(),onClearBoundaryPending:pending},
+      {requestCapability,mediaDevices:{getUserMedia:vi.fn().mockResolvedValue(microphone.stream)},
+        createAudioContext:() => audio.context,createWebSocket:() => socket});
+    try {
+      await controller.start({displayAudio:false,microphone:true});
+      (socket as unknown as {readyState:number}).readyState = 1;
+      socket.onopen?.(new Event("open"));
+      const emit = (value:unknown) => socket.onmessage?.(new MessageEvent("message",{data:JSON.stringify(value)}));
+      emit({message_type:"session_started"});
+      audio.processor.onaudioprocess?.({inputBuffer:{getChannelData:() => new Float32Array(48000)}} as unknown as AudioProcessingEvent);
+      emit({message_type:"committed_transcript",text:"до",start_seconds:0,end_seconds:0.5,final_index:0});
+      controller.clearTranscript();
+      expect(pending).toHaveBeenLastCalledWith(true);
+      emit({message_type:"committed_transcript",text:"позднее до",start_seconds:0,end_seconds:0.5,final_index:0});
+      emit({message_type:"partial_transcript",text:"до после"});
+      expect(partial).toHaveBeenLastCalledWith("");
+      emit({message_type:"committed_transcript_with_timestamps",text:"до после",words:[
+        {text:"до",start:0,end:0.5,type:"word"},{text:" ",type:"spacing"},{text:"после",start:1.1,end:1.5,type:"word"}]});
+      expect(committed).toHaveBeenCalledTimes(2);
+      expect(committed.mock.calls[1]).toEqual(["после",expect.objectContaining({start_seconds:1.1,end_seconds:1.5})]);
+      expect(pending).toHaveBeenLastCalledWith(false);
+      expect(requestCapability).toHaveBeenCalledOnce();
+      expect(microphone.stop).not.toHaveBeenCalled();
+      expect(socket.close).not.toHaveBeenCalled();
+      expect(controller.active).toBe(true);
+    } finally { controller.dispose(); vi.useRealTimers(); }
+  });
   beforeEach(() => {
     vi.stubGlobal("WebSocket", { CONNECTING: 0, OPEN: 1 });
   });

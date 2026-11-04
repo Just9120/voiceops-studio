@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, mutateWithCsrfRetry } from "./apiClient";
 import { RealtimeSessionHistory } from "./RealtimeSessionHistory";
+import { ConfirmClearDialog } from "./ConfirmClearDialog";
 import {
   requestCredentialCollection,
   type Credential,
@@ -204,6 +205,11 @@ export function LiveTranscriptionPanel({
   );
   const [historyVersion, setHistoryVersion] = useState(0);
   const [preparingStart, setPreparingStart] = useState(false);
+  const [clearRequested, setClearRequested] = useState(false);
+  const [clearPending, setClearPending] = useState(false);
+  const [clearBoundaryPending, setClearBoundaryPending] = useState(false);
+  const startButtonRef = useRef<HTMLButtonElement>(null);
+  const stopButtonRef = useRef<HTMLButtonElement>(null);
   const startingRef = useRef(false);
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -773,6 +779,7 @@ export function LiveTranscriptionPanel({
       if (!mountedRef.current || !activeRef.current) return;
       resetVisibleDraft();
       const captureEpoch = ++captureEpochRef.current;
+      setClearBoundaryPending(false);
     setError("");
     setExportNotice("");
     sessionStartedAtRef.current = null;
@@ -835,6 +842,7 @@ export function LiveTranscriptionPanel({
           if (update.inserted && !metadata?.gap) deliverCommittedCaption(text);
         },
         onError: (message) => { if (captureEpoch === captureEpochRef.current) setError(message); },
+        onClearBoundaryPending: (pending) => { if (captureEpoch === captureEpochRef.current) setClearBoundaryPending(pending); },
         onInputLevel: (level) => { if (captureEpoch === captureEpochRef.current) setInputLevel(level); },
         onSourceLevel: (kind, level) => {
           if (captureEpoch !== captureEpochRef.current) return;
@@ -1001,7 +1009,7 @@ export function LiveTranscriptionPanel({
     } catch {
       setDraftStatus("degraded");
       setError(
-        "Локальная копия черновика удалена, но Studio не подтвердила удаление второй копии. Повторите действие.",
+        "Очистка всех копий черновика не подтверждена. Текст в этой вкладке сохранён; повторите действие.",
       );
       return false;
     } finally {
@@ -1102,31 +1110,35 @@ export function LiveTranscriptionPanel({
     }
   }
 
-  async function clearTranscript() {
-    if (!actionableDraftText || running) return;
-    if (
-      !window.confirm(
-        "Очистить подтверждённый текст и удалить временный Live-черновик?",
-      )
-    )
-      return;
-    const currentDraft = draftRef.current ?? recoveryCandidate;
-    if (currentDraft && !(await deleteDraft(currentDraft))) return;
-    setRecoveryCandidate(null);
-    segmentsRef.current = [];
-    segmentMetadataRef.current = [];
-    setSegmentMetadata([]);
-    partialRef.current = "";
-    setSegments([]);
-    onSegmentsChange?.([]);
-    setPartial("");
-    setExportNotice("");
+  async function clearTranscript(stopCapture: boolean) {
+    if (!actionableDraftText || clearPending) return;
+    setClearPending(true);
+    if (stopCapture) {
+      captureEpochRef.current += 1;
+      controllerRef.current?.stop();
+      controllerRef.current?.dispose();
+      controllerRef.current = null;
+      setStatus("stopped");
+      setClearBoundaryPending(false);
+    }
+    const currentDraft = draftRef.current;
+    try {
+      if (currentDraft && !(await deleteDraft(currentDraft))) return;
+      const continuing = !stopCapture && controllerRef.current?.active === true;
+      if (!stopCapture) controllerRef.current?.clearTranscript();
+      resetVisibleDraft();
+      setHistoryVersion(value => value + 1);
+      setExportNotice(stopCapture ? "Запись остановлена, текст этой сессии очищен." : continuing
+        ? "Текст очищен. Запись продолжается; новые реплики сохраняются отдельно от очищенного текста."
+        : "Текст этой сессии очищен.");
+      setClearRequested(false);
+    } finally { setClearPending(false); }
   }
 
   const sourceReady =
     (displayAudio && displayAudioSupported) ||
     (microphone && microphoneSupported);
-  const startDisabled = running || preparingStart ||
+  const startDisabled = running || preparingStart || clearPending ||
                 credentialsState !== "ready" ||
                 recoveryState === "loading" ||
                 recoveryCandidate !== null ||
@@ -1454,11 +1466,12 @@ export function LiveTranscriptionPanel({
               className="primary"
               type="button"
               disabled={startDisabled}
+              ref={startButtonRef}
               onClick={() => void start()}
             >
               Начать
             </button>
-            <button type="button" disabled={!running} onClick={stop}>
+            <button ref={stopButtonRef} type="button" disabled={!running || clearPending} onClick={stop}>
               Остановить
             </button>
           </div>
@@ -1539,7 +1552,7 @@ export function LiveTranscriptionPanel({
           дополнительно уменьшают эхо, но не требуются для диагностики.
         </p>
       )}
-      {error && (
+      {error && !clearRequested && (
         <p className="error" role="alert">
           {error}
         </p>
@@ -1563,6 +1576,7 @@ export function LiveTranscriptionPanel({
           скачайте текст при первой возможности.
         </p>
       )}
+      {clearBoundaryPending && <p className="notice" role="status">После очистки ждём разметку текущей реплики от провайдера. Studio покажет слова после границы очистки; для фразы без таймкодов граница не угадывается.</p>}
 
       <section className="live-transcript-card">
         <header className="split">
@@ -1617,10 +1631,10 @@ export function LiveTranscriptionPanel({
               type="button"
               disabled={
                 !actionableDraftText ||
-                running ||
+                preparingStart || clearPending || status === "stopping" ||
                 recoveryState === "loading"
               }
-              onClick={() => void clearTranscript()}
+              onClick={() => {setError(""); setClearRequested(true);}}
             >
               Очистить
             </button>
@@ -1660,6 +1674,13 @@ export function LiveTranscriptionPanel({
           )}
         </div>
       </section>
+      {clearRequested && <ConfirmClearDialog title="Очистить текст Live-сессии?"
+        description={running ? "Очистим накопленный текст в этой вкладке и сохранённых копиях. Можно продолжить запись или остановить её. Другие сессии сохранятся." : "Очистим текст этой сессии в этой вкладке и сохранённых копиях. Другие сессии сохранятся."}
+        pending={clearPending} confirmLabel={running ? "Очистить и продолжить" : "Очистить"} cancelLabel="Отмена"
+        error={error}
+        secondaryConfirm={running ? {label:"Остановить и очистить", onClick:() => void clearTranscript(true)} : undefined}
+        onConfirm={() => void clearTranscript(false)} onCancel={() => setClearRequested(false)}
+        fallbackFocus={() => (controllerRef.current?.active ? stopButtonRef.current : startButtonRef.current)?.focus()} />}
 
       <details className="live-boundaries technical-details">
         <summary>Технические ограничения и восстановление</summary>

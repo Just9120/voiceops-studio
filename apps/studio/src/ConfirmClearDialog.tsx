@@ -6,18 +6,30 @@ export function ConfirmClearDialog({
   pending,
   onConfirm,
   onCancel,
+  confirmLabel = "Да",
+  cancelLabel = "Нет",
+  secondaryConfirm,
+  fallbackFocus,
+  error,
 }: {
   title: string;
   description: string;
   pending: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  secondaryConfirm?: {label: string; onClick: () => void};
+  fallbackFocus?: () => void;
+  error?: string;
 }) {
   const titleId = useId();
   const descriptionId = useId();
   const dialogRef = useRef<HTMLElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  const fallbackFocusRef = useRef(fallbackFocus);
+  fallbackFocusRef.current = fallbackFocus;
 
   useEffect(() => {
     returnFocusRef.current =
@@ -27,7 +39,8 @@ export function ConfirmClearDialog({
     cancelRef.current?.focus();
     return () => {
       const target = returnFocusRef.current;
-      if (target?.isConnected) target.focus();
+      if (target?.isConnected && !target.matches(":disabled")) target.focus();
+      else fallbackFocusRef.current?.();
     };
   }, []);
 
@@ -70,6 +83,7 @@ export function ConfirmClearDialog({
       >
         <h2 id={titleId}>{title}</h2>
         <p id={descriptionId}>{description}</p>
+        {error && <p className="error" role="alert">{error}</p>}
         <div className="actions">
           <button
             type="button"
@@ -78,8 +92,9 @@ export function ConfirmClearDialog({
             aria-busy={pending || undefined}
             onClick={onConfirm}
           >
-            {pending ? "Очищаем…" : "Да"}
+            {pending ? "Очищаем…" : confirmLabel}
           </button>
+          {secondaryConfirm && <button type="button" className="danger" disabled={pending} onClick={secondaryConfirm.onClick}>{secondaryConfirm.label}</button>}
           <button
             ref={cancelRef}
             type="button"
@@ -87,7 +102,7 @@ export function ConfirmClearDialog({
             disabled={pending}
             onClick={onCancel}
           >
-            Нет
+            {cancelLabel}
           </button>
         </div>
       </section>

@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import type { RealtimeSegmentMetadata } from "./realtimeTranscript";
@@ -20,6 +20,7 @@ const controllerState = vi.hoisted(() => ({
     start: ReturnType<typeof vi.fn>;
     stop: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
+    clearTranscript: ReturnType<typeof vi.fn>;
   }>,
 }));
 
@@ -40,6 +41,7 @@ vi.mock("./realtimeSession", () => ({
       this.callbacks.onStatus("stopped");
     });
     dispose = vi.fn();
+    clearTranscript = vi.fn();
     constructor(
       callbacks: MockCallbacks,
       dependencies: { requestCapability: () => Promise<unknown> },
@@ -68,7 +70,55 @@ const response = (body: unknown, ok = true, status = 200) =>
     clone: () => ({ json: () => Promise.resolve(body) }),
   } as Response);
 
+async function confirmStoppedClear() {
+  await userEvent.click(screen.getByRole("button", { name: "Очистить" }));
+  await userEvent.click(within(screen.getByRole("dialog",{name:"Очистить текст Live-сессии?"})).getByRole("button",{name:"Очистить",exact:true}));
+}
+
 describe("LiveTranscriptionPanel", () => {
+  it("uses one three-action dialog to clear an active capture, continue and stop without another paid start", async () => {
+    const confirm = vi.spyOn(window,"confirm").mockReturnValue(true);
+    confirm.mockClear();
+    render(<LiveTranscriptionPanel projectId="project-safe" csrf="csrf" onCsrf={vi.fn()} active />);
+    const start = await screen.findByRole("button",{name:"Начать"});
+    await waitFor(() => expect(start).toBeEnabled());
+    await userEvent.click(start);
+    const controller = controllerState.instances[0];
+    act(() => controller.callbacks.onCommitted("до очистки"));
+    const clear = screen.getByRole("button",{name:"Очистить",exact:true});
+    expect(clear).toBeEnabled();
+    await userEvent.click(clear);
+    const dialog = screen.getByRole("dialog",{name:"Очистить текст Live-сессии?"});
+    expect(within(dialog).getAllByRole("button")).toHaveLength(3);
+    expect(within(dialog).getByRole("button",{name:"Отмена"})).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(clear).toHaveFocus();
+    expect(controller.clearTranscript).not.toHaveBeenCalled();
+    await userEvent.click(clear);
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button",{name:"Очистить и продолжить"}));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(controller.clearTranscript).toHaveBeenCalledOnce();
+    expect(controller.stop).not.toHaveBeenCalled();
+    expect(controller.start).toHaveBeenCalledOnce();
+    expect(screen.queryByText("до очистки")).not.toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"Остановить",exact:true})).toHaveFocus();
+    act(() => controller.callbacks.onCommitted("после очистки"));
+    await waitFor(() => {
+      const writes = vi.mocked(fetch).mock.calls.filter(([url,init]) => String(url).includes("/realtime/drafts/") && init?.method === "PUT");
+      expect(new Set(writes.map(([url]) => String(url).split("/").at(-1))).size).toBe(2);
+    });
+    await userEvent.click(screen.getByRole("button",{name:"Очистить",exact:true}));
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button",{name:"Остановить и очистить"}));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(controller.stop).toHaveBeenCalledOnce();
+    expect(controller.dispose).toHaveBeenCalledOnce();
+    expect(start).toHaveFocus();
+    act(() => controller.callbacks.onCommitted("поздний текст остановленной записи"));
+    expect(screen.queryByText("поздний текст остановленной записи")).not.toBeInTheDocument();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(controllerState.instances).toHaveLength(1);
+  });
   it("does not announce readiness when no audio source is selected", async () => {
     render(<LiveTranscriptionPanel projectId="project" csrf="csrf" onCsrf={vi.fn()} active />);
     await waitFor(() => expect(screen.getByRole("button",{name:"Начать",exact:true})).toBeEnabled());
@@ -955,7 +1005,7 @@ describe("LiveTranscriptionPanel", () => {
       "[Неподтверждённый фрагмент]\nтолько неподтверждённый текст",
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "Очистить" }));
+    await confirmStoppedClear();
     await waitFor(() =>
       expect(
         vi.mocked(fetch).mock.calls.some(
@@ -970,7 +1020,7 @@ describe("LiveTranscriptionPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("clears an unresolved recovery draft together with retained text", async () => {
+  it("clears visible text without deleting a different unresolved saved session", async () => {
     const defaultFetch = vi.mocked(fetch).getMockImplementation();
     vi.mocked(fetch).mockImplementation((url: string, init?: RequestInit) => {
       if (url.endsWith("/realtime/drafts/latest") && !init?.method) {
@@ -1003,17 +1053,10 @@ describe("LiveTranscriptionPanel", () => {
     expect(
       await screen.findByRole("region", { name: "Восстановление Live-черновика" }),
     ).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Очистить" }));
+    await confirmStoppedClear();
 
-    await waitFor(() =>
-      expect(
-        vi.mocked(fetch).mock.calls.some(
-          ([url, init]) =>
-            String(url).includes("/realtime/drafts/session_unresolved_clear") &&
-            init?.method === "DELETE",
-        ),
-      ).toBe(true),
-    );
+    expect(vi.mocked(fetch).mock.calls.some(([url, init]) =>
+      String(url).includes("/realtime/drafts/session_unresolved_clear") && init?.method === "DELETE")).toBe(false);
     expect(
       screen.queryByRole("region", { name: "Восстановление Live-черновика" }),
     ).not.toBeInTheDocument();
@@ -1060,7 +1103,7 @@ describe("LiveTranscriptionPanel", () => {
     });
     await waitFor(() => expect(resolveFirstPut).toBeDefined());
     await userEvent.click(screen.getByRole("button", { name: "Остановить" }));
-    await userEvent.click(screen.getByRole("button", { name: "Очистить" }));
+    await confirmStoppedClear();
     expect(order).toEqual(["PUT:1"]);
 
     await act(async () => {
@@ -1111,7 +1154,7 @@ describe("LiveTranscriptionPanel", () => {
     });
     await waitFor(() => expect(resolveLocalSave).toBeDefined());
     await userEvent.click(screen.getByRole("button", { name: "Остановить" }));
-    await userEvent.click(screen.getByRole("button", { name: "Очистить" }));
+    await confirmStoppedClear();
     expect(order).toEqual(["LOCAL_SAVE"]);
 
     act(() => resolveLocalSave?.());
