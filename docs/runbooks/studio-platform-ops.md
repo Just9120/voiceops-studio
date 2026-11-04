@@ -595,7 +595,7 @@ nonce verification; performs a real custom-format PostgreSQL dump and restore
 of current-model synthetic data with encrypted Live drafts; and removes only
 its verified containers. Its report includes snapshot age at the synthetic incident, one measured post-snapshot metadata loss, and elapsed time
 to a quarantined restored state. The Linux suite requires this rehearsal;
-unavailable local Docker remains an explicit local limitation, not PASS. The default synthetic comparison retains the historical12h/4h reference solely as a regression fixture; it is not the current Cloudkeep RPO or production recovery Evidence. Current Cloudkeep RPO is UNSET and RTO4h. An explicit diagnostic override must supply both `--rpo-seconds` and `--rto-seconds`. Invalid or one-sided targets fail before container creation. The loss window is measured at the incident, excluding subsequent restore time; an exceeded RPO or already-over-budget quarantine fails. An in-budget quarantine reports full RTO as PENDING, never PASS, because service reactivation is outside that measurement.
+unavailable local Docker remains an explicit local limitation, not PASS. The default synthetic comparison retains the historical12h/4h reference solely as a regression fixture; it is not the current Cloudkeep RPO or production recovery Evidence. Current CloudKeep RPO is four days and RTO4h, as decided by the owner04Nov2026. An explicit diagnostic override must supply both `--rpo-seconds` and `--rto-seconds`. Invalid or one-sided targets fail before container creation. The loss window is measured at the incident, excluding subsequent restore time; an exceeded RPO or already-over-budget quarantine fails. An in-budget quarantine reports full RTO as PENDING, never PASS, because service reactivation is outside that measurement.
 
 The Linux integration test also checks authenticated application access on the
 restored synthetic target. The Linux host accesses the owned internal bridge
@@ -611,7 +611,7 @@ production restore, provider, Google or notification operation is performed.
 The quarantine statements in
 [recovery_quarantine.py](../../apps/studio-api/studio_api/recovery_quarantine.py)
 disable restored users, archive workspaces, revoke sessions/trusted devices/
-Google grants/provider credentials, suppress unsent notifications, and stop
+Google primary/maintenance and Yandex Disk grants/provider credentials, revoke Web Push subscriptions, disable restored notification preferences, suppress unsent notifications, and stop
 restored work and download slots with fenced leases. Text is retained encrypted
 for reconciliation. Apply them in one transaction **on the isolated restored
 copy before starting any runtime or allowing access**. The module is not an

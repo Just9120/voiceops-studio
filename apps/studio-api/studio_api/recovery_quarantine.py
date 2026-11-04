@@ -4,13 +4,14 @@ Restored content is retained for reconciliation, but cannot silently become
 active. Re-enabling identities/workspaces requires a separately approved
 recovery with current deletion evidence; this module has no release shortcut.
 """
-from sqlalchemy import update
+from sqlalchemy import and_, or_, update
 
 from .models import (
     AudioPreparationJob, AudioPreparationStatus, CredentialStatus,
     GoogleConnection, GoogleConnectionStatus, GoogleOAuthState, JobStatus, JobNotificationDelivery, OperationalAlertDelivery,
     Project, ProviderCredential, Session, TranscriptMaintenanceRun, SecurityEmailDelivery, PasswordResetChallenge,
-    TranscriptMaintenanceRunStatus, TranscriptionJob, TrustedDevice, User, UserStatus,
+    TranscriptMaintenanceRunStatus, TranscriptionJob, TrustedDevice, User, UserStatus, YandexDiskConnection,
+    UserNotificationPreference, WebPushSubscription,
 )
 
 
@@ -28,8 +29,22 @@ def quarantine_statements(now):
         state="cancelled", payload_ciphertext=None, payload_nonce=None, claim_token=None, claim_expires_at=None,
         next_attempt_at=None, finished_at=now)
     yield update(ProviderCredential).where(ProviderCredential.status == CredentialStatus.active).values(status=CredentialStatus.revoked, updated_at=now)
-    yield update(GoogleConnection).where(GoogleConnection.status == GoogleConnectionStatus.active).values(
+    # Maintenance consent is independent of the primary connection status.
+    # A revoked/error primary grant can still carry an active maintenance grant.
+    yield update(GoogleConnection).where(or_(
+        GoogleConnection.status != GoogleConnectionStatus.revoked,
+        and_(GoogleConnection.maintenance_refresh_token_ciphertext.is_not(None),
+             GoogleConnection.maintenance_revoked_at.is_(None)),
+    )).values(
         status=GoogleConnectionStatus.revoked, revoked_at=now, maintenance_revoked_at=now, updated_at=now)
+    yield update(YandexDiskConnection).where(YandexDiskConnection.status != "revoked").values(
+        status="revoked", revoked_at=now, updated_at=now,
+        credential_revision=YandexDiskConnection.credential_revision + 1)
+    yield update(WebPushSubscription).where(WebPushSubscription.revoked_at.is_(None)).values(revoked_at=now, updated_at=now)
+    yield update(UserNotificationPreference).where(or_(
+        UserNotificationPreference.web_push_enabled.is_(True), UserNotificationPreference.email_enabled.is_(True),
+        UserNotificationPreference.telegram_enabled.is_(True),
+    )).values(web_push_enabled=False, email_enabled=False, telegram_enabled=False, updated_at=now)
     for model in (JobNotificationDelivery, OperationalAlertDelivery):
         yield update(model).where(model.state.in_(("pending", "claimed", "failed"))).values(
             state="suppressed", claim_token=None, claim_expires_at=None, next_attempt_at=None, updated_at=now)
