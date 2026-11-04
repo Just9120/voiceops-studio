@@ -66,6 +66,10 @@ def acquire_next_ready_job_lease(
     while True:
         filters = [
             TranscriptionJob.status == JobStatus.queued,
+            # The PC performs local inference. VPS can only export its accepted
+            # encrypted result; it must never seize a pending local execution.
+            or_(TranscriptionJob.provider.is_(None), TranscriptionJob.provider != "nemotron",
+                TranscriptionJob.local_result_ready_at.is_not(None)),
             or_(
                 TranscriptionJob.retry_not_before_at.is_(None),
                 TranscriptionJob.retry_not_before_at <= now,
@@ -104,6 +108,7 @@ def acquire_job_lease(
     lease_owner_id: str,
     now: datetime,
     lease_ttl: timedelta,
+    local_device_id: str | None = None,
 ) -> JobLeaseHandle:
     owner = _validated_owner(lease_owner_id)
     expires_at = now + _validated_ttl(lease_ttl)
@@ -112,6 +117,11 @@ def acquire_job_lease(
         raise JobLeaseError(JobLeaseFailureReason.job_not_found)
     if job.status != JobStatus.queued:
         raise JobLeaseError(JobLeaseFailureReason.job_not_queued)
+    if job.provider == "nemotron" and job.local_result_ready_at is None:
+        if local_device_id is None or job.local_device_id != local_device_id or owner != "local:" + local_device_id:
+            raise JobLeaseError(JobLeaseFailureReason.job_not_ready)
+    elif local_device_id is not None:
+        raise JobLeaseError(JobLeaseFailureReason.job_not_ready)
     if job.retry_not_before_at is not None and _as_utc_aware(job.retry_not_before_at) > _as_utc_aware(now):
         raise JobLeaseError(JobLeaseFailureReason.job_not_ready)
     if not build_claim_readiness(job, now=now)["ready_for_future_claim"]:

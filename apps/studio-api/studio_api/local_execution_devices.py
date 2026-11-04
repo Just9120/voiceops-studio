@@ -32,8 +32,8 @@ def device_payload(row, *, now):
     return {"id": row.id, "label": row.label, "credential_revision": row.credential_revision,
             "online": online, "ready": bool(online and row.runtime_status == "ready" and row.model == NEMOTRON_MODEL),
             "runtime_status": row.runtime_status, "runtime_version": row.runtime_version, "model": row.model,
-            "last_seen_at": row.last_seen_at.isoformat() if row.last_seen_at else None,
-            "revoked_at": row.revoked_at.isoformat() if row.revoked_at else None}
+            "last_seen_at": _utc(row.last_seen_at).isoformat() if row.last_seen_at else None,
+            "revoked_at": _utc(row.revoked_at).isoformat() if row.revoked_at else None}
 
 
 def pair_device(db, *, owner_user_id, label, creation_key, now):

@@ -152,6 +152,16 @@ def recover_expired_processing_job(db: Session, *, job_id: str, now: datetime) -
         job.finished_at = now
         delete_provider_part_checkpoints(db, job_id=job.id)
         retire_cached_yandex_result(db, job_id=job.id)
+    elif job.provider == "nemotron" and job.local_result_ready_at is None:
+        # A sleeping/offline PC is a visible recoverable failure, never an
+        # automatic paid dispatch or an indefinitely processing card.
+        from .job_retry_recovery import classify_source_attempt_failure
+        for relation in job.sources:
+            if relation.status != JobSourceStatus.skipped:
+                classify_source_attempt_failure(db, job_source_id=relation.id, failure_code="local_device_offline", now=now)
+        job.status = JobStatus.failed
+        job.finished_at = now
+        job.error_code = job.error_message = "local_device_offline"
     else:
         rel_ids=[r.id for r in db.execute(select(TranscriptionJobSource).where(TranscriptionJobSource.job_id==job.id, TranscriptionJobSource.status!=JobSourceStatus.skipped)).scalars().all()]
         output_count = db.execute(select(func.count(TranscriptionJobOutput.id)).where(TranscriptionJobOutput.job_id==job.id, TranscriptionJobOutput.job_source_id.in_(rel_ids or ["__none__"]))).scalar_one()

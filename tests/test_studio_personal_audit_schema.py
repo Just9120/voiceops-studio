@@ -23,6 +23,10 @@ def test_source_version_migration_preserves_legacy_identity_and_guards_rollback(
     engine = sa.create_engine("sqlite://")
     with engine.begin() as connection:
         Base.metadata.create_all(connection)
+        with Operations(MigrationContext.configure(connection)).batch_alter_table("transcription_jobs") as batch:
+            batch.drop_constraint("fk_transcription_jobs_local_device", type_="foreignkey")
+            for column in ("local_device_id", "local_input_receipt_json", "local_result_ready_at", "local_result_digest", "local_result_generation"):
+                batch.drop_column(column)
         connection.execute(sa.text("DROP TABLE local_execution_devices"))
         connection.execute(sa.text("ALTER TABLE transcription_jobs DROP COLUMN media_timeline_version"))
         connection.execute(sa.text("ALTER TABLE transcription_job_sources DROP COLUMN transcript_timeline_json"))
@@ -41,6 +45,10 @@ def test_source_version_migration_preserves_legacy_identity_and_guards_rollback(
         try:
             revision.module.upgrade()
             assert "local_execution_devices" in sa.inspect(connection).get_table_names()
+            job_columns = {column["name"]: column for column in sa.inspect(connection).get_columns("transcription_jobs")}
+            for name in ("local_device_id", "local_input_receipt_json", "local_result_ready_at", "local_result_digest", "local_result_generation"):
+                assert job_columns[name]["nullable"] and job_columns[name]["default"] is None
+            assert any(fk["referred_table"] == "local_execution_devices" for fk in sa.inspect(connection).get_foreign_keys("transcription_jobs"))
             for table, name in (("transcription_jobs", "media_timeline_version"), ("transcription_job_sources", "transcript_timeline_json")):
                 column = next(c for c in sa.inspect(connection).get_columns(table) if c["name"] == name)
                 assert column["nullable"] and column["default"] is None

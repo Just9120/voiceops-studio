@@ -3,7 +3,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, field_validator
 from sqlalchemy import select
 
 from .audit import audit
@@ -15,6 +15,7 @@ from .local_execution_devices import (
 from .models import LocalExecutionDevice
 from .nemotron_local_result import NEMOTRON_MODEL
 from .security import utcnow
+from .local_execution_jobs import claim_local_job, fail_local_job, fence_device_jobs, heartbeat_local_job, local_job_payload
 
 NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
 
@@ -43,6 +44,23 @@ class DeviceHeartbeatIn(BaseModel):
     runtime_status: Literal["ready", "model_missing", "runtime_missing", "runtime_error"]
     runtime_version: str | None = Field(default=None, min_length=1, max_length=80, pattern=r"^[A-Za-z0-9.+_-]+$")
     model: Literal[NEMOTRON_MODEL] | None = None
+
+
+class LocalJobHeartbeatIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    generation: StrictInt = Field(ge=1, le=2147483647)
+    sequence: StrictInt = Field(ge=1, le=2147483647)
+    stage: Literal["source_download", "media_processing", "local_transcription", "local_result_upload"]
+    completed: StrictFloat | StrictInt | None = None
+    total: StrictFloat | StrictInt | None = None
+    unit: Literal["bytes", "seconds"] | None = None
+
+
+class LocalJobFailureIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    generation: StrictInt = Field(ge=1, le=2147483647)
+    reason: Literal["local_input_unavailable", "local_model_unavailable", "local_runtime_unavailable",
+                    "local_processing_failed", "local_result_invalid"]
 
 
 def companion_device(request: Request, db=Depends(get_db)):
@@ -93,6 +111,7 @@ def build_router(*, recent_auth, limiter):
         limiter.check("local-device:rotate:" + user.id, 10, 3600)
         row = owned_device(db, owner_user_id=user.id, device_id=str(device_id), lock=True)
         secret = rotate_device(row, expected_revision=data.expected_revision, now=utcnow())
+        fence_device_jobs(db, device_id=row.id, owner_user_id=user.id, now=utcnow())
         audit(db, "local_device.rotated", actor_user_id=user.id, subject_user_id=user.id, device_id=row.id)
         db.commit()
         response.headers.update(NO_STORE)
@@ -105,6 +124,7 @@ def build_router(*, recent_auth, limiter):
         limiter.check("local-device:revoke:" + user.id, 10, 3600)
         row = owned_device(db, owner_user_id=user.id, device_id=str(device_id), lock=True)
         if revoke_device(row, expected_revision=data.expected_revision, now=utcnow()):
+            fence_device_jobs(db, device_id=row.id, owner_user_id=user.id, now=utcnow())
             audit(db, "local_device.revoked", actor_user_id=user.id, subject_user_id=user.id, device_id=row.id)
         db.commit()
         response.headers.update(NO_STORE)
@@ -121,5 +141,34 @@ def build_router(*, recent_auth, limiter):
         db.commit()
         response.headers.update(NO_STORE)
         return {"device": device_payload(device, now=utcnow()), "protocol": 1}
+
+    @router.post("/api/local-execution/companion/claim")
+    def claim(response: Response, device=Depends(companion_device), db=Depends(get_db)):
+        limiter.check("local-device:claim:" + device.id, 30, 60)
+        job = claim_local_job(db, device=device, now=utcnow())
+        payload = local_job_payload(job) if job is not None else None
+        db.commit()
+        response.headers.update(NO_STORE)
+        return {"job": payload}
+
+    @router.post("/api/local-execution/companion/jobs/{job_id}/heartbeat")
+    def job_heartbeat(job_id: UUID, data: LocalJobHeartbeatIn, response: Response,
+                      device=Depends(companion_device), db=Depends(get_db)):
+        limiter.check("local-device:job-heartbeat:" + device.id, 120, 60)
+        result = heartbeat_local_job(db, device=device, job_id=str(job_id), generation=data.generation,
+            stage=data.stage, sequence=data.sequence, completed=data.completed, total=data.total, unit=data.unit, now=utcnow())
+        db.commit()
+        response.headers.update(NO_STORE)
+        return result
+
+    @router.post("/api/local-execution/companion/jobs/{job_id}/failure")
+    def job_failure(job_id: UUID, data: LocalJobFailureIn, response: Response,
+                    device=Depends(companion_device), db=Depends(get_db)):
+        limiter.check("local-device:failure:" + device.id, 30, 60)
+        result = fail_local_job(db, device=device, job_id=str(job_id), generation=data.generation,
+            reason=data.reason, now=utcnow())
+        db.commit()
+        response.headers.update(NO_STORE)
+        return result
 
     return router

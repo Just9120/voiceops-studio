@@ -31,6 +31,17 @@ def upgrade():
             sa.CheckConstraint("length(trim(label)) > 0", name="ck_local_execution_device_label"),
         )
         op.create_index("ix_local_execution_devices_owner_user_id", "local_execution_devices", ["owner_user_id"])
+    job_columns = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("transcription_jobs")}
+    if "local_device_id" not in job_columns:
+        with op.batch_alter_table("transcription_jobs") as batch:
+            batch.add_column(sa.Column("local_device_id", sa.String(36), nullable=True))
+            batch.create_foreign_key("fk_transcription_jobs_local_device", "local_execution_devices", ["local_device_id"], ["id"])
+    for column in (sa.Column("local_input_receipt_json", sa.Text(), nullable=True),
+                   sa.Column("local_result_ready_at", sa.DateTime(timezone=True), nullable=True),
+                   sa.Column("local_result_digest", sa.String(64), nullable=True),
+                   sa.Column("local_result_generation", sa.Integer(), nullable=True)):
+        if column.name not in job_columns:
+            op.add_column("transcription_jobs", column)
     for table, column in (("transcription_jobs", sa.Column("media_timeline_version", sa.Integer(), nullable=True)),
                           ("transcription_job_sources", sa.Column("transcript_timeline_json", sa.Text(), nullable=True))):
         if column.name not in {item["name"] for item in sa.inspect(op.get_bind()).get_columns(table)}:
@@ -64,6 +75,10 @@ def upgrade():
 def downgrade():
     if op.get_bind().execute(sa.text("SELECT COUNT(*) FROM local_execution_devices")).scalar():
         raise RuntimeError("Local execution capabilities require forward recovery")
+    if op.get_bind().execute(sa.text("SELECT COUNT(*) FROM transcription_jobs WHERE local_device_id IS NOT NULL "
+            "OR local_input_receipt_json IS NOT NULL OR local_result_ready_at IS NOT NULL "
+            "OR local_result_digest IS NOT NULL OR local_result_generation IS NOT NULL")).scalar():
+        raise RuntimeError("Local transcription execution requires forward recovery")
     for table, column in (("transcription_jobs", "media_timeline_version"),
                           ("transcription_job_sources", "transcript_timeline_json")):
         if op.get_bind().execute(sa.text(f"SELECT COUNT(*) FROM {table} WHERE {column} IS NOT NULL")).scalar():
@@ -95,4 +110,8 @@ def downgrade():
         op.drop_column("audio_preparation_jobs", column)
     op.drop_column("transcription_job_sources", "transcript_timeline_json")
     op.drop_column("transcription_jobs", "media_timeline_version")
+    with op.batch_alter_table("transcription_jobs") as batch:
+        batch.drop_constraint("fk_transcription_jobs_local_device", type_="foreignkey")
+        for column in ("local_device_id", "local_input_receipt_json", "local_result_ready_at", "local_result_digest", "local_result_generation"):
+            batch.drop_column(column)
     op.drop_table("local_execution_devices")
