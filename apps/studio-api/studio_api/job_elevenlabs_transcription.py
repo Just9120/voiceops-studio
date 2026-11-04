@@ -213,7 +213,8 @@ def transcribe_processing_job_source_with_elevenlabs(
                     media_clip = initial_job_snapshot["catalog_settings"]
                     clock_selection = select_transcript_clock(db.get(TranscriptionJob, job_id), source)
                     from .long_media_preflight import confirmed_source_duration
-                    confirmed_duration = confirmed_source_duration(db.get(TranscriptionJob, job_id), job_source_id)
+                    confirmed_duration = confirmed_source_duration(db.get(TranscriptionJob, job_id), job_source_id,
+                        clock_selection=clock_selection)
                     # Preserve an existing multipart checkpoint/usage plan on recovery.
                     prior_part_count = db.scalar(
                         select(TranscriptionJobSourceAttempt.provider_total_parts)
@@ -279,7 +280,7 @@ def transcribe_processing_job_source_with_elevenlabs(
                         from .long_media_preflight import record_long_media_preflight
                         record_long_media_preflight(db, job_id=job_id, relation_id=job_source_id,
                             duration=exc.duration_seconds, settings=settings, owner=lease_owner_id,
-                            generation=lease_generation, now=clock())
+                            generation=lease_generation, now=clock(), clock_selection=clock_selection)
                     mapped = _map_media_preparation_reason(exc.reason)
                     _best_effort_classify(db, job_id, job_source_id, lease_owner_id, lease_generation, mapped.value, clock)
                     raise JobElevenLabsTranscriptionError(mapped) from exc

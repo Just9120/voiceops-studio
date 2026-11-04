@@ -15,11 +15,11 @@ from decimal import Decimal, ROUND_HALF_UP
 from sqlalchemy import select
 
 from .job_claim_lease import is_lease_active
-from .models import JobStatus, TranscriptionJob, TranscriptionJobSource
+from .models import JobStatus, Source, TranscriptionJob, TranscriptionJobSource
 from .provider_usage_accounting import ProviderUsageAccountingError, preserve_pricing_snapshot
 
 
-def record_long_media_preflight(db, *, job_id, relation_id, duration, settings, owner, generation, now):
+def record_long_media_preflight(db, *, job_id, relation_id, duration, settings, owner, generation, now, clock_selection=None):
     if not isinstance(duration, (int, float)) or not math.isfinite(duration) or duration <= 0:
         return
     job = db.execute(select(TranscriptionJob).where(TranscriptionJob.id == job_id)
@@ -29,13 +29,32 @@ def record_long_media_preflight(db, *, job_id, relation_id, duration, settings, 
         or job.lease_owner_id != owner or job.lease_generation != generation or not is_lease_active(job, now)
         or job.cancel_requested_at is not None):
         raise RuntimeError("long_media_preflight_context_invalid")
-    # Quote the final requested recording before provider splitting. The original
-    # measurement and unchanged interval still bind confirmation to this source.
+    # Consent retains the owner's original coordinates. Cost uses the actual
+    # prepared interval sent to STT; the two clocks differ after audio edits.
     from .media_clip import normalize_media_clip_range
     clip = normalize_media_clip_range(job.media_clip_start_seconds, job.media_clip_end_seconds)
-    start = clip.start_seconds or 0
-    end = min(duration, clip.end_seconds) if clip.end_seconds is not None else duration
-    selected_duration = max(0.0, end - start)
+    clock_digest = None
+    if clock_selection is not None:
+        current_context = db.execute(select(Source.prepared_audio_context_json).where(
+            Source.id == relation.source_id, Source.project_id == job.project_id)).one_or_none()
+        if (clock_selection.version != job.media_timeline_version
+            or (clock_selection.original_start, clock_selection.original_end) != (clip.start_seconds, clip.end_seconds)
+            or current_context is None or current_context[0] != clock_selection.prepared_context):
+            raise RuntimeError("long_media_preflight_context_invalid")
+        start = clock_selection.prepared_start or 0
+        end = clock_selection.prepared_end if clock_selection.prepared_end is not None else duration
+        record = clock_selection.record(duration)
+        if record is not None:
+            clock_digest = hashlib.sha256(record.encode()).hexdigest()
+    else:
+        if job.media_timeline_version == 2:
+            raise RuntimeError("long_media_preflight_clock_required")
+        start = clip.start_seconds or 0
+        end = min(duration, clip.end_seconds) if clip.end_seconds is not None else duration
+    if (type(start) not in (int, float) or type(end) not in (int, float)
+        or not math.isfinite(start) or not math.isfinite(end) or not 0 <= start < end <= duration):
+        raise RuntimeError("long_media_preflight_context_invalid")
+    selected_duration = end - start
     rate = currency = effective = source = amount = None
     if job.provider in {"elevenlabs", "yandex"}:
         try:
@@ -54,12 +73,15 @@ def record_long_media_preflight(db, *, job_id, relation_id, duration, settings, 
         "additional_source_count": max(0, len(job.sources) - 1),
         "maximum_seconds_per_source": settings.media_max_duration_seconds,
         "basis": "measured_duration_x_immutable_public_tariff", "invoice_debit": False}
+    if clock_digest is not None:
+        payload["clock_digest"] = clock_digest  # Internal binding, excluded from the browser DTO.
+        payload["clock_source_duration_seconds"] = duration  # Preserve sub-millisecond map identity.
     job.long_duration_preflight_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     job.long_duration_cost_confirmed = False
     db.flush()
 
 
-def confirmed_source_duration(job, relation_id):
+def confirmed_source_duration(job, relation_id, *, clock_selection=None):
     """Consent covers only the measured source and unchanged requested interval."""
     if not getattr(job, "long_duration_cost_confirmed", False) or long_media_preflight_payload(job) is None:
         return None
@@ -68,6 +90,19 @@ def confirmed_source_duration(job, relation_id):
         or payload.get("clip_start_seconds") != job.media_clip_start_seconds
         or payload.get("clip_end_seconds") != job.media_clip_end_seconds):
         return None
+    if job.media_timeline_version == 2:
+        if (clock_selection is None or clock_selection.version != 2
+            or (clock_selection.original_start, clock_selection.original_end) != (job.media_clip_start_seconds, job.media_clip_end_seconds)):
+            return None
+        try:
+            measured = payload.get("clock_source_duration_seconds")
+            if type(measured) not in (int, float) or not math.isfinite(measured) or measured <= 0:
+                return None
+            record = clock_selection.record(measured)
+        except ValueError:
+            return None
+        if record is None or payload.get("clock_digest") != hashlib.sha256(record.encode()).hexdigest():
+            return None
     return payload["source_duration_seconds"]
 
 

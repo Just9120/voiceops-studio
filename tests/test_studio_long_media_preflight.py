@@ -90,3 +90,42 @@ def test_consent_is_bound_to_source_and_clip_and_new_quote_revokes_it(db):
         settings=settings, owner="worker", generation=7, now=now)
     assert confirmed_source_duration(job, relation.id) is None
     assert job.long_duration_cost_confirmed is False
+
+
+def test_edited_recording_quote_uses_prepared_duration_and_fences_the_original_clock(db):
+    from studio_api.audio_timeline import AudioTimeline
+    from studio_api.transcript_timeline import select_transcript_clock
+    from studio_api.long_media_preflight import confirmed_source_duration
+    import json
+
+    job, relation, now, settings = record(db)
+    job.media_timeline_version = 2
+    job.media_clip_start_seconds, job.media_clip_end_seconds = 15 * 3600, 21 * 3600
+    relation.source.prepared_audio_context_json = "recorded-parent-context"
+    db.flush()
+    original_duration = 24 * 3600 + .000125
+    parent = AudioTimeline.from_seconds(original_duration, [(14 * 3600, original_duration)])
+    source = SimpleNamespace(prepared_audio_context_json=relation.source.prepared_audio_context_json, original_timeline=parent)
+    selection = select_transcript_clock(job, source)
+    record_long_media_preflight(db, job_id=job.id, relation_id=relation.id, duration=parent.output_duration_seconds,
+        settings=settings, owner="worker", generation=7, now=now, clock_selection=selection)
+    quote = long_media_preflight_payload(job)
+    assert quote["selected_duration_seconds"] == 6 * 3600 and quote["nominal_cost"] == "1.32000000"
+    assert "clock_digest" not in quote and "clock_source_duration_seconds" not in quote
+    assert json.loads(job.long_duration_preflight_json)["clip_start_seconds"] == 15 * 3600
+    job.long_duration_cost_confirmed = True
+    assert confirmed_source_duration(job, relation.id, clock_selection=selection) == round(parent.output_duration_seconds, 3)
+    assert confirmed_source_duration(job, relation.id) is None  # Missing clock cannot reuse v2 consent.
+
+    changed_parent = AudioTimeline.from_seconds(original_duration, [(13 * 3600, 17 * 3600), (18 * 3600, original_duration)])
+    changed_selection = select_transcript_clock(job, SimpleNamespace(
+        prepared_audio_context_json=source.prepared_audio_context_json, original_timeline=changed_parent))
+    assert changed_parent.output_duration_seconds == parent.output_duration_seconds
+    assert confirmed_source_duration(job, relation.id, clock_selection=changed_selection) is None
+    previous = job.long_duration_preflight_json
+    relation.source.prepared_audio_context_json = "changed-parent-context"
+    db.flush()
+    with pytest.raises(RuntimeError, match="context_invalid"):
+        record_long_media_preflight(db, job_id=job.id, relation_id=relation.id, duration=parent.output_duration_seconds,
+            settings=settings, owner="worker", generation=7, now=now, clock_selection=selection)
+    assert job.long_duration_preflight_json == previous

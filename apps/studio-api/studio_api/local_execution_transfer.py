@@ -151,15 +151,12 @@ def prepare_local_input(db, *, device, job_id, generation, source_sha256, source
     if measured is not None and abs(measured - source_duration_seconds) > .000001:
         raise _error("local_input_duration_changed")
     from .long_media_preflight import confirmed_source_duration, record_long_media_preflight
-    confirmed = confirmed_source_duration(job, relation.id)
+    confirmed = confirmed_source_duration(job, relation.id, clock_selection=selection)
     if duration > settings.media_duration_warning_seconds and (confirmed is None or abs(confirmed - source_duration_seconds) > .5):
         # Retain the existing measured-duration/retry confirmation contract. This
         # creates no cost estimate for local compute and makes no cloud request.
         record_long_media_preflight(db, job_id=job.id, relation_id=relation.id, duration=source_duration_seconds,
-            settings=settings, owner="local:" + device.id, generation=generation, now=now)
-        quote = json.loads(job.long_duration_preflight_json)
-        quote["selected_duration_seconds"] = round(duration, 3)
-        job.long_duration_preflight_json = json.dumps(quote, sort_keys=True, separators=(",", ":"))
+            settings=settings, owner="local:" + device.id, generation=generation, now=now, clock_selection=selection)
         classify_source_attempt_failure(db, job_source_id=relation.id, failure_code="media_duration_confirmation_required",
             now=now, job_id=job.id, lease_owner_id="local:" + device.id, lease_generation=generation)
         fail_job_processing(db, job_id=job.id, lease_owner_id="local:" + device.id, lease_generation=generation,

@@ -503,6 +503,44 @@ def test_successful_single_source_flow_lifetime_and_one_call(db, models):
     assert transport.calls[0]["filename"] == "secret meeting.mp3"
 
 
+def test_edited_long_recording_warning_quotes_the_actual_prepared_fragment_without_stt(db, models):
+    from studio_api.audio_timeline import AudioTimeline
+    from studio_api.job_elevenlabs_transcription import transcribe_processing_job_source_with_elevenlabs, JobElevenLabsTranscriptionError
+    from studio_api.long_media_preflight import long_media_preflight_payload
+    from studio_api.media_preparation import MediaPreparationError, MediaPreparationReason
+    _, _, _, _, source, job, rel, now = make_job(db, models)
+    job.media_timeline_version = 2
+    job.media_clip_start_seconds, job.media_clip_end_seconds = 15 * 3600, 21 * 3600
+    source.prepared_audio_context_json = json.dumps(dict(job_id=str(uuid.uuid4()), input_duration_ms=86400000,
+        output_duration_ms=36000000, pauses_removed=False))
+    db.commit()
+    timeline = AudioTimeline.from_seconds(24 * 3600, [(14 * 3600, 24 * 3600)])
+    @contextmanager
+    def materialize(*args, **kwargs):
+        with fake_source(*args, **kwargs) as handle:
+            handle.prepared_audio_context_json = source.prepared_audio_context_json
+            handle.original_timeline = timeline
+            yield handle
+    @contextmanager
+    def prepare(**kwargs):
+        assert (kwargs["media_clip_start_seconds"], kwargs["media_clip_end_seconds"]) == (3600, 7 * 3600)
+        raise MediaPreparationError(MediaPreparationReason.media_duration_confirmation_required, duration_seconds=10 * 3600)
+        yield  # Context manager; no audio preparation or provider request is made.
+    class Provider:
+        def transcribe(self, **kwargs):
+            pytest.fail("Cost confirmation must precede STT")
+    with pytest.raises(JobElevenLabsTranscriptionError) as failure:
+        with transcribe_processing_job_source_with_elevenlabs(db, job_id=job.id, job_source_id=rel.id,
+                lease_owner_id="worker", lease_generation=7, settings=Settings(), now=now, clock=lambda: now,
+                prerequisites_opener=fake_prereq, source_materializer=materialize, media_preparer=prepare,
+                elevenlabs_transport=Provider(), models=models):
+            pytest.fail("Unconfirmed recording cannot complete")
+    assert failure.value.reason.value == "media_duration_confirmation_required"
+    quote = long_media_preflight_payload(job)
+    assert quote["selected_duration_seconds"] == 6 * 3600
+    assert quote["nominal_cost"] == "1.32000000" and job.long_duration_cost_confirmed is False
+
+
 def test_original_clock_survives_provider_checkpoint_and_source_retirement_without_double_mapping(monkeypatch, db, models):
     from studio_api.audio_timeline import AudioTimeline
     from studio_api.job_elevenlabs_transcription import transcribe_processing_job_source_with_elevenlabs
