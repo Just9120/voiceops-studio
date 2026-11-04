@@ -19,7 +19,7 @@ from .transcript_timeline import original_clock_transcript
 def fully_cached_relation(db, job, relation_id, now):
     if job.provider in {"yandex", "gemini"}:
         return completed_yandex_result(db, job, relation_id) is not None
-    if job.provider not in {"elevenlabs", "mistral", "tbank"}:
+    if job.provider not in {"elevenlabs", "mistral", "tbank", "nemotron"}:
         return False
     attempt = complete_provider_attempt(db, job_id=job.id, job_source_id=relation_id)
     return attempt is not None and checkpoint_resume_count(

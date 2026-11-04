@@ -11,7 +11,7 @@
 | `NEM-03` | Локальный результат проходит общие owner-scoped правила истории, оформления, original timeline, хранения и экспорта документов; успех подтверждается полным результатом, recovery не требует повторного cloud STT. Проверка: интеграционные fixtures, format/export/history и idempotency/partial-result regressions. |
 | `NEM-04` | При offline компьютере, отсутствующей модели или неготовом runtime Studio показывает понятное unavailable/recovery состояние; платный provider используется только после явного нового выбора владельца. Проверка: no-dispatch/offline/reconnect и отрицательные API/UI cases. |
 
-Границы: personal компьютер владельца; массовая установка моделей и проверка компьютеров commercial пользователей не входят. Связи: AQP/MC/PS original clock и preparation contracts, owner/credential isolation и source lifecycle. Статусы и Evidence — в [реестре](../delivery/extensions.md).
+Границы: personal компьютер владельца; массовая установка моделей и проверка компьютеров commercial пользователей не входят. Используемый NeMo-Speech.cpp0.2.0+nightly.66d50d9 SALM runtime документирует полную запись до60минут на запрос, word timestamps/diarization и language hint; автоматическое определение языка и Live SALM не поддерживаются. Эти ограничения отражаются в capabilities и до запуска, без скрытой нарезки со сбросом спикеров или cloud fallback. Longer original file допускает выбранный допустимый fragment. Связи: AQP/MC/PS original clock и preparation contracts, owner/credential isolation и source lifecycle. Статусы и Evidence — в [реестре](../delivery/extensions.md).
 
 ### Эпик `AUDIO-QUALITY-PROGRESS-TRIM-01` — провайдеры, прогресс и обрезка
 

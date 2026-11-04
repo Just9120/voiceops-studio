@@ -39,11 +39,11 @@ def local_job_payload(job):
 def _scope(db, *, device, job_id, generation, now, allow_cancel=False):
     job = db.scalar(select(TranscriptionJob).where(TranscriptionJob.id == job_id,
         TranscriptionJob.owner_user_id == device.owner_user_id, TranscriptionJob.local_device_id == device.id
-    ).with_for_update())
+    ).with_for_update().execution_options(populate_existing=True))
     project = db.get(Project, job.project_id) if job is not None else None
     if job is None or project is None or project.owner_user_id != device.owner_user_id or project.archived_at is not None:
         raise HTTPException(404, detail={"reason": "local_job_unavailable"})
-    if (job.provider != "nemotron" or stored_model(job.options_json) != NEMOTRON_MODEL
+    if (job.provider != "nemotron" or stored_model(job.options_json) != NEMOTRON_MODEL or job.media_timeline_version != 2
             or job.status != JobStatus.processing or job.local_result_ready_at is not None
             or job.lease_owner_id != "local:" + device.id or job.lease_generation != generation
             or not is_lease_active(job, now)):
@@ -79,7 +79,8 @@ def claim_local_job(db, *, device, now):
         or_(TranscriptionJob.retry_not_before_at.is_(None), TranscriptionJob.retry_not_before_at <= now),
     ).order_by(TranscriptionJob.created_at, TranscriptionJob.id).limit(50).with_for_update(skip_locked=True)).all()
     for job in jobs:
-        if stored_model(job.options_json) != NEMOTRON_MODEL or not build_claim_readiness(job, now=now)["ready_for_future_claim"]:
+        if (stored_model(job.options_json) != NEMOTRON_MODEL or job.media_timeline_version != 2
+                or not build_claim_readiness(job, now=now)["ready_for_future_claim"]):
             continue
         relations = [relation for relation in job.sources if relation.status != JobSourceStatus.skipped]
         if len(relations) != 1:

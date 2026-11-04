@@ -1,13 +1,17 @@
 """Pairing is session/CSRF/step-up protected; companion routes accept only its token."""
 from typing import Literal
 from uuid import UUID
+from contextlib import ExitStack
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, field_validator
 from sqlalchemy import select
 
 from .audit import audit
 from .db import get_db
+from .config import get_settings
 from .deps import current_session, require_csrf
 from .local_execution_devices import (
     authenticate_device, device_payload, owned_device, pair_device, revoke_device, rotate_device,
@@ -16,6 +20,7 @@ from .models import LocalExecutionDevice
 from .nemotron_local_result import NEMOTRON_MODEL
 from .security import utcnow
 from .local_execution_jobs import claim_local_job, fail_local_job, fence_device_jobs, heartbeat_local_job, local_job_payload
+from .local_execution_transfer import accept_local_result, decode_local_result, open_local_input, prepare_local_input
 
 NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
 
@@ -61,6 +66,26 @@ class LocalJobFailureIn(BaseModel):
     generation: StrictInt = Field(ge=1, le=2147483647)
     reason: Literal["local_input_unavailable", "local_model_unavailable", "local_runtime_unavailable",
                     "local_processing_failed", "local_result_invalid"]
+
+
+class LocalInputPrepareIn(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    generation: StrictInt = Field(ge=1, le=2147483647)
+    source_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    source_duration_seconds: StrictFloat | StrictInt = Field(gt=0, le=604800)
+
+
+class LocalInputResponse(StreamingResponse):
+    def __init__(self, stream, *, cleanup, headers):
+        super().__init__(stream, media_type="application/octet-stream", headers=headers)
+        self.cleanup = cleanup
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            # Runs also when the client disconnects before the first byte.
+            await run_in_threadpool(self.cleanup)
 
 
 def companion_device(request: Request, db=Depends(get_db)):
@@ -167,6 +192,48 @@ def build_router(*, recent_auth, limiter):
         limiter.check("local-device:failure:" + device.id, 30, 60)
         result = fail_local_job(db, device=device, job_id=str(job_id), generation=data.generation,
             reason=data.reason, now=utcnow())
+        db.commit()
+        response.headers.update(NO_STORE)
+        return result
+
+    @router.get("/api/local-execution/companion/jobs/{job_id}/source")
+    def source(job_id: UUID, generation: int, request: Request,
+               device=Depends(companion_device), db=Depends(get_db), settings=Depends(get_settings)):
+        limiter.check("local-device:source:" + device.id, 10, 60)
+        if not 1 <= generation <= 2147483647:
+            raise HTTPException(422, detail={"reason": "local_generation_invalid"}, headers=NO_STORE)
+        stack = ExitStack()
+        try:
+            chunks, receipt = stack.enter_context(open_local_input(db, device=device,
+                raw_token=request.headers["authorization"][7:], job_id=str(job_id), generation=generation, settings=settings))
+            return LocalInputResponse(chunks, cleanup=stack.close, headers={**NO_STORE,
+                "Content-Length": str(receipt["byte_count"]), "X-VoiceOps-Input-SHA256": receipt["source_sha256"],
+                "Content-Disposition": 'attachment; filename="input.media"'})
+        except Exception:
+            stack.close()
+            raise
+
+    @router.post("/api/local-execution/companion/jobs/{job_id}/prepare")
+    def prepare(job_id: UUID, data: LocalInputPrepareIn, response: Response,
+                device=Depends(companion_device), db=Depends(get_db), settings=Depends(get_settings)):
+        limiter.check("local-device:prepare:" + device.id, 30, 60)
+        result = prepare_local_input(db, device=device, job_id=str(job_id), generation=data.generation,
+            source_sha256=data.source_sha256, source_duration_seconds=data.source_duration_seconds, settings=settings, now=utcnow())
+        db.commit()
+        response.headers.update(NO_STORE)
+        return result
+
+    @router.post("/api/local-execution/companion/jobs/{job_id}/result")
+    def result(job_id: UUID, request: Request, response: Response, body: bytes=Body(media_type="application/gzip"),
+               device=Depends(companion_device), db=Depends(get_db), settings=Depends(get_settings)):
+        limiter.check("local-device:result:" + device.id, 10, 60)
+        if request.headers.get("content-type", "").split(";", 1)[0] != "application/gzip":
+            raise HTTPException(415, detail={"reason": "local_result_encoding_required"}, headers=NO_STORE)
+        # Compressed transfer preserves the general 4MiB pre-auth body limit;
+        # only this authenticated boundary expands to a bounded full JSON result.
+        envelope, digest = decode_local_result(body)
+        result = accept_local_result(db, device=device, job_id=str(job_id), envelope=envelope,
+            digest=digest, settings=settings, now=utcnow())
         db.commit()
         response.headers.update(NO_STORE)
         return result

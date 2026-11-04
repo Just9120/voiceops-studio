@@ -65,13 +65,16 @@ def transcribe_processing_job_source(
                     now=clock()) as restored:
                 yield restored
             return
-    if provider in {"elevenlabs", "mistral", "tbank"}:
+    if provider in {"elevenlabs", "mistral", "tbank", "nemotron"}:
         from .job_cached_transcript import fully_cached_relation, restore_cached_transcript
         if fully_cached_relation(db, job, job_source_id, clock()):
             with restore_cached_transcript(db, job_id=job_id, job_source_id=job_source_id,
                     lease_owner_id=lease_owner_id, lease_generation=lease_generation, settings=settings, now=clock()) as restored:
                 yield restored
             return
+    if provider == "nemotron":
+        # A lost/expired checkpoint cannot turn local selection into paid STT.
+        raise JobElevenLabsTranscriptionError(JobElevenLabsTranscriptionReason.prerequisites_unavailable)
     mode = (job.operating_mode or "standard").strip().lower()
     try:
         capability = resolve_capability(settings, provider, mode)

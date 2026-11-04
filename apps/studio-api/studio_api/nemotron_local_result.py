@@ -7,6 +7,7 @@ from .batch_stt_transport import MAX_RESPONSE_BYTES, malformed
 from .elevenlabs_transcription import normalize_elevenlabs_transcript_response
 
 NEMOTRON_MODEL = "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B"
+NEMOTRON_MAX_DURATION_SECONDS = 3600  # Pinned NeMo-Speech.cpp SALM complete-recording limit.
 NATIVE_RESULT_FIELDS = frozenset({"file", "text", "confidence", "duration", "languages", "words"})
 
 
@@ -57,8 +58,8 @@ def normalize_nemotron_local_result(payload, *, expected_duration_seconds, diari
 
 
 def _time(value):
-    return type(value) in (int, float) and 0 <= value <= 43200.5 and math.isfinite(value)
+    return type(value) in (int, float) and 0 <= value <= NEMOTRON_MAX_DURATION_SECONDS + .5 and math.isfinite(value)
 
 
 def _duration(value):
-    return _time(value) and 0 < value <= 43200
+    return _time(value) and 0 < value <= NEMOTRON_MAX_DURATION_SECONDS

@@ -57,3 +57,13 @@ def test_missing_timing_preserves_full_text_without_fabricated_coordinates():
     assert result.text == value["text"] and result.detected_language_code is None
     assert all(w.start is None and w.end is None for w in result.words)
     result.revoke()
+
+
+def test_complete_native_request_respects_pinned_one_hour_runtime_limit():
+    value = payload()
+    value["duration"] = 3600
+    result = normalize_nemotron_local_result(value, expected_duration_seconds=3600)
+    result.revoke()
+    value["duration"] = 3600.001
+    with pytest.raises(ElevenLabsTranscriptionError):
+        normalize_nemotron_local_result(value, expected_duration_seconds=3600.001)

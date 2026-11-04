@@ -27,6 +27,8 @@ def local_app(monkeypatch):
     from studio_api.config import Settings, get_settings
     from studio_api.db import get_db
     settings = Settings(database_url="sqlite+pysqlite:///:memory:", app_origin="https://studio.test", cookie_secure=False)
+    import base64
+    monkeypatch.setattr(Settings, "master_key_b64", lambda _self: base64.b64encode(b"s" * 32).decode())
     monkeypatch.setattr(main, "settings", settings)
     naive_now = lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     monkeypatch.setattr(main, "utcnow", naive_now)
@@ -215,6 +217,7 @@ def seed_local_jobs(maker, owner_id, device_id, count=1, **overrides):
             db.add(source); db.flush()
             fields = {"project_id": project.id, "owner_user_id": owner_id, "provider": "nemotron",
                 "local_device_id": device_id, "status": JobStatus.queued, "output_drive_folder_id": "synthetic-folder",
+                "media_timeline_version": 2,
                 "options_json": json.dumps({"_stt_model": NEMOTRON_MODEL, "diarize": False}), **overrides}
             job = TranscriptionJob(**fields)
             db.add(job); db.flush()
@@ -363,3 +366,198 @@ def test_missing_runtime_and_archived_or_foreign_project_are_not_dispatched(loca
     client.post(BASE + "/companion/heartbeat", headers=headers, json={"runtime_status": "runtime_missing"})
     unavailable = client.post(BASE + "/companion/claim", headers=headers)
     assert unavailable.status_code == 409 and unavailable.json()["detail"]["reason"] == "local_device_not_ready"
+
+
+def input_fixture(monkeypatch):
+    from contextlib import contextmanager
+    import io
+    import wave
+    from studio_api import local_execution_transfer as transfer
+    from studio_api.job_source_materialization import MaterializedJobSource, MaterializedSourceIdentity
+    from studio_api.models import TranscriptionJobSource
+    audio = io.BytesIO()
+    with wave.open(audio, "wb") as writer:
+        writer.setnchannels(1); writer.setsampwidth(2); writer.setframerate(16000)
+        writer.writeframes(b"\0\0" * 16000)
+    raw = audio.getvalue()
+    closed = []
+    @contextmanager
+    def materialize(db, *, job_id, job_source_id, **kwargs):
+        relation = db.get(TranscriptionJobSource, job_source_id)
+        stream = io.BytesIO(raw)
+        try:
+            yield MaterializedJobSource(identity=MaterializedSourceIdentity(job_id, job_source_id, relation.source_id),
+                position=0, original_filename="synthetic.wav", mime_type="audio/wav", byte_count=len(raw), stream=stream)
+        finally:
+            stream.close(); closed.append(True)
+    monkeypatch.setattr(transfer, "materialize_processing_job_source", materialize)
+    return raw, closed
+
+
+def stage_local_input(client, maker, owner_id, monkeypatch):
+    import hashlib
+    raw, closed = input_fixture(monkeypatch)
+    device_id, headers = prepare_pc(client)
+    job_id = seed_local_jobs(maker, owner_id, device_id)[0]
+    claimed = client.post(BASE + "/companion/claim", headers=headers).json()["job"]
+    generation = claimed["lease_generation"]
+    source = client.get(f"{BASE}/companion/jobs/{job_id}/source", params={"generation": generation}, headers=headers)
+    assert source.status_code == 200, source.text
+    assert source.content == raw and len(closed) == 1
+    sha = hashlib.sha256(raw).hexdigest()
+    assert source.headers["x-voiceops-input-sha256"] == sha
+    prepared = client.post(f"{BASE}/companion/jobs/{job_id}/prepare", headers=headers,
+        json={"generation": generation, "source_sha256": sha, "source_duration_seconds": 1.0})
+    assert prepared.status_code == 200, prepared.text
+    assert prepared.json()["prepared_duration_seconds"] == 1
+    return device_id, headers, job_id, generation, sha
+
+
+def native_envelope(generation, sha):
+    return {"generation": generation, "source_sha256": sha, "result": {"file": "C:/synthetic-private-path/input.wav",
+        "text": "Synthetic transcript.", "confidence": 0, "duration": 1.0, "languages": ["en"],
+        "words": [{"word": "Synthetic", "start": 0.0, "end": .4, "confidence": 0},
+                  {"word": "transcript.", "start": .4, "end": 1.0, "confidence": 0}]}}
+
+
+def post_native(client, headers, job_id, envelope):
+    import gzip
+    import json
+    return client.post(f"{BASE}/companion/jobs/{job_id}/result",
+        headers={**headers, "content-type": "application/gzip"}, content=gzip.compress(json.dumps(envelope).encode()))
+
+
+def test_complete_local_result_is_encrypted_idempotent_and_exported_without_inputs_or_cloud(local_app, monkeypatch):
+    from studio_api.job_claim_lease import acquire_next_ready_job_lease
+    from studio_api.job_processing_lifecycle import begin_job_processing
+    from studio_api.job_retry_recovery import prepare_current_attempt_sources
+    from studio_api.job_stt_transcription import transcribe_processing_job_source
+    from studio_api.models import JobStatus, SourceUploadStatus, TranscriptionJob, TranscriptionProviderPartCheckpoint
+    from studio_api import job_stt_transcription as dispatch
+    client, maker, settings, (owner_id, _) = local_app
+    _, headers, job_id, generation, sha = stage_local_input(client, maker, owner_id, monkeypatch)
+    envelope = native_envelope(generation, sha)
+    accepted = post_native(client, headers, job_id, envelope)
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json() == {"accepted": True, "already_accepted": False}
+    assert "Synthetic transcript" not in accepted.text and "private-path" not in accepted.text
+    def forbid_cloud(*args, **kwargs):
+        pytest.fail("Local export must not resolve a cloud capability or transport")
+    monkeypatch.setattr(dispatch, "resolve_capability", forbid_cloud)
+    with maker() as db:
+        job = db.get(TranscriptionJob, job_id)
+        assert job.status == JobStatus.queued and job.lease_owner_id is None and job.local_result_generation == generation
+        checkpoints = db.scalars(select(TranscriptionProviderPartCheckpoint)).all()
+        assert len(checkpoints) == 1 and b"Synthetic transcript" not in checkpoints[0].ciphertext
+        # No source bytes/key are needed to export the complete accepted text.
+        source = job.sources[0].source
+        source.upload_status = SourceUploadStatus.expired
+        source.expires_at = datetime.now(timezone.utc) - timedelta(days=2)
+        source.s3_object_key = source.s3_bucket = None
+        db.commit()
+        now = datetime.now(timezone.utc)
+        lease = acquire_next_ready_job_lease(db, lease_owner_id="vps-export-worker", now=now, lease_ttl=timedelta(minutes=2))
+        assert lease is not None and lease.job_id == job_id
+        begin_job_processing(db, job_id=job_id, lease_owner_id=lease.lease_owner_id, lease_generation=lease.lease_generation, now=now)
+        prepare_current_attempt_sources(db, job_id=job_id, lease_owner_id=lease.lease_owner_id, lease_generation=lease.lease_generation, now=now)
+        db.commit()
+        with transcribe_processing_job_source(db, job_id=job_id, job_source_id=job.sources[0].id,
+            lease_owner_id=lease.lease_owner_id, lease_generation=lease.lease_generation, settings=settings, clock=lambda: now) as result:
+            assert result.text == "Synthetic transcript." and result.words[1].start == .4
+        assert job.attempt_count == 2 and job.provider_credential_id is None
+    replay = post_native(client, headers, job_id, envelope)
+    assert replay.status_code == 200 and replay.json()["already_accepted"]
+    changed = native_envelope(generation, sha)
+    changed["result"]["text"] = "Different result"
+    assert post_native(client, headers, job_id, changed).status_code == 409
+    with maker() as db:
+        assert len(db.scalars(select(TranscriptionProviderPartCheckpoint)).all()) == 1
+
+
+@pytest.mark.parametrize("failure", ["wrong_sha", "stale_generation", "cancelled", "changed_source", "partial_result", "wrong_duration"])
+def test_local_result_rejects_stale_partial_or_changed_input_without_checkpoint(local_app, monkeypatch, failure):
+    from studio_api.models import TranscriptionJob, TranscriptionProviderPartCheckpoint, SourceAttemptStage
+    from studio_api.job_processing_lifecycle import request_job_cancellation
+    client, maker, _, (owner_id, _) = local_app
+    _, headers, job_id, generation, sha = stage_local_input(client, maker, owner_id, monkeypatch)
+    envelope = native_envelope(generation, sha)
+    if failure == "wrong_sha":
+        envelope["source_sha256"] = "f" * 64
+    elif failure == "stale_generation":
+        envelope["generation"] += 1
+    elif failure == "partial_result":
+        envelope["result"]["truncated"] = True
+    elif failure == "wrong_duration":
+        envelope["result"]["duration"] = 10
+    else:
+        with maker() as db:
+            if failure == "cancelled":
+                request_job_cancellation(db, job_id=job_id, now=datetime.now(timezone.utc))
+            else:
+                db.get(TranscriptionJob, job_id).sources[0].source.drive_sha256_checksum = "a" * 64
+            db.commit()
+    response = post_native(client, headers, job_id, envelope)
+    assert response.status_code in {409, 422}
+    assert "private-path" not in response.text and "Synthetic transcript" not in response.text
+    with maker() as db:
+        assert db.scalar(select(TranscriptionProviderPartCheckpoint)) is None
+        assert db.get(TranscriptionJob, job_id).local_result_ready_at is None
+
+
+def test_local_result_gzip_is_bounded_and_rejects_duplicate_keys_and_unparseable_data():
+    import gzip
+    from studio_api.local_execution_transfer import decode_local_result, MAX_ENVELOPE_BYTES
+    for raw in (b"not-gzip", gzip.compress(b'{"generation":1,"generation":2}'),
+                gzip.compress(b"{"), gzip.compress(b"x" * (MAX_ENVELOPE_BYTES + 1))):
+        with pytest.raises(HTTPException) as error:
+            decode_local_result(raw)
+        assert error.value.status_code == 422 and error.value.detail == {"reason": "local_result_invalid"}
+
+
+def test_result_persistence_failure_rolls_back_and_same_full_payload_can_be_retried(local_app, monkeypatch):
+    from studio_api import local_execution_transfer as transfer
+    from studio_api.models import JobStatus, TranscriptionJob, TranscriptionJobSourceAttempt, TranscriptionProviderPartCheckpoint, SourceAttemptStage
+    client, maker, _, (owner_id, _) = local_app
+    _, headers, job_id, generation, sha = stage_local_input(client, maker, owner_id, monkeypatch)
+    envelope = native_envelope(generation, sha)
+    save = transfer.save_provider_part_checkpoint
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("synthetic private persistence diagnostic")
+    monkeypatch.setattr(transfer, "save_provider_part_checkpoint", unavailable)
+    failed = post_native(client, headers, job_id, envelope)
+    assert failed.status_code == 503 and failed.json()["detail"]["reason"] == "local_result_persistence_unavailable"
+    assert "private" not in failed.text
+    with maker() as db:
+        job = db.get(TranscriptionJob, job_id)
+        assert job.status == JobStatus.processing and job.local_result_ready_at is None
+        assert db.scalar(select(TranscriptionProviderPartCheckpoint)) is None
+        assert db.scalar(select(TranscriptionJobSourceAttempt)).stage == SourceAttemptStage.prepared
+    monkeypatch.setattr(transfer, "save_provider_part_checkpoint", save)
+    assert post_native(client, headers, job_id, envelope).status_code == 200
+
+
+def test_missing_accepted_local_checkpoint_never_dispatches_a_cloud_provider(local_app, monkeypatch):
+    from studio_api.job_claim_lease import acquire_next_ready_job_lease
+    from studio_api.job_processing_lifecycle import begin_job_processing
+    from studio_api.job_stt_transcription import transcribe_processing_job_source
+    from studio_api.job_elevenlabs_transcription import JobElevenLabsTranscriptionError
+    from studio_api.models import TranscriptionJob
+    from studio_api import job_stt_transcription as dispatch
+    client, maker, settings, (owner_id, _) = local_app
+    device_id, _ = prepare_pc(client)
+    job_id = seed_local_jobs(maker, owner_id, device_id)[0]
+    with maker() as db:
+        job = db.get(TranscriptionJob, job_id)
+        job.local_result_ready_at = datetime.now(timezone.utc)  # A corrupt/missing text checkpoint.
+        db.commit()
+        now = datetime.now(timezone.utc)
+        lease = acquire_next_ready_job_lease(db, lease_owner_id="vps-export-worker", now=now, lease_ttl=timedelta(minutes=2))
+        begin_job_processing(db, job_id=job_id, lease_owner_id=lease.lease_owner_id, lease_generation=lease.lease_generation, now=now)
+        def forbid_cloud(*args, **kwargs):
+            pytest.fail("Missing local text cannot authorize a cloud request")
+        monkeypatch.setattr(dispatch, "resolve_capability", forbid_cloud)
+        with pytest.raises(JobElevenLabsTranscriptionError) as failure:
+            with transcribe_processing_job_source(db, job_id=job_id, job_source_id=job.sources[0].id,
+                lease_owner_id=lease.lease_owner_id, lease_generation=lease.lease_generation, settings=settings, clock=lambda: now):
+                pytest.fail("Missing local text cannot be returned as a successful transcript")
+        assert failure.value.reason.value == "prerequisites_unavailable"

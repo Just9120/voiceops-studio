@@ -104,7 +104,8 @@ def authenticate_device(db, raw):
         except ValueError:
             device_id = ""
         if device_id == match[1]:
-            row = db.scalar(select(LocalExecutionDevice).where(LocalExecutionDevice.id == device_id).with_for_update())
+            row = db.scalar(select(LocalExecutionDevice).where(LocalExecutionDevice.id == device_id)
+                            .with_for_update().execution_options(populate_existing=True))
     supplied = hashlib.sha256(raw.encode("utf-8")).hexdigest() if isinstance(raw, str) and len(raw) <= 256 else ""
     valid = hmac.compare_digest(row.token_hash if row else "0" * 64, supplied)
     owner = db.get(User, row.owner_user_id) if row is not None and valid else None
