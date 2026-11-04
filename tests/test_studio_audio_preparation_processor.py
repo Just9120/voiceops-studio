@@ -124,6 +124,11 @@ def test_preview_processing_storage_and_selected_source_retention_are_durable(tm
         assert persisted.output_filename == f"{result_title}.flac"
         assert persisted.output_mime_type == "audio/flac"
         assert persisted.output_size_bytes == len(b"processed-audio")
+        import hashlib
+        from studio_api.audio_timeline import AudioTimeline
+        assert persisted.output_sha256_checksum == hashlib.sha256(b"processed-audio").hexdigest()
+        assert persisted.output_md5_checksum == hashlib.md5(b"processed-audio", usedforsecurity=False).hexdigest()
+        assert AudioTimeline.parse(persisted.output_timeline_json) == AudioTimeline.identity(60)
         assert persisted.title == result_title
         assert db.query(Source).count() == 1
         db.refresh(source)

@@ -92,8 +92,11 @@ def test_export_preserves_ready_output_and_is_idempotent(export_state, tmp_path)
     assert job.status is AudioPreparationStatus.completed
     assert job.current_stage == "google_drive_export_queued"
     assert audio_preparation_payload(job, now=NOW)["output"]["download_ready"] is True
-    assert deletion_readiness(db, source, now=NOW).value == "audio_preparation_uses_source"
+    # Waiting without a lease cannot retain a source indefinitely. Protection
+    # starts when a worker actually claims the export and lasts through I/O.
+    assert deletion_readiness(db, source, now=NOW).value == "available"
     claimed = claim(db)
+    assert deletion_readiness(db, source, now=NOW).value == "audio_preparation_uses_source"
     assert claim(db, "second-worker") is None
     seen = []
     def uploader(token, **kwargs):

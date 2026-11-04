@@ -9,7 +9,8 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .audio_preparation import AudioOutputFormat, AudioPreparationError, AudioPreparationReason, build_ffmpeg_command, probe_media, render_output_filename, run_processing
+from .audio_preparation import AudioOutputFormat, AudioPreparationError, AudioPreparationReason, build_ffmpeg_command, probe_media, render_output_filename, run_processing, trim_range
+from .audio_timeline import AudioTimeline
 from .audio_preparation_service import AudioPreparationServiceError, AudioPreparationServiceReason, deserialize_options
 from .google_connection_access import refresh_user_google_drive_access_token
 from .google_drive import fetch_drive_file_content
@@ -151,6 +152,9 @@ class RenderedAudio:
     mime_type: str
     size_bytes: int
     duration_ms: int
+    sha256_checksum: str | None = None
+    md5_checksum: str | None = None
+    timeline_json: str | None = None
 
 
 def render_audio_result(db, *, job, root, settings, output_root=None, paths=None, probes=None,
@@ -260,8 +264,29 @@ def render_audio_result(db, *, job, root, settings, output_root=None, paths=None
     if options.output_format is AudioOutputFormat.copy:
         output_filename = f"{Path(output_filename).stem}.{extension}"
     mime_type = _output_mime(options, job)
+    sha256_checksum, md5_checksum, timeline_json = None, None, None
+    if not preview:
+        sha256 = hashlib.sha256()
+        md5 = hashlib.md5(usedforsecurity=False)
+        with output_path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(_COPY_CHUNK_SIZE), b""):
+                check()
+                sha256.update(chunk)
+                md5.update(chunk)
+        sha256_checksum, md5_checksum = sha256.hexdigest(), md5.hexdigest()
+        # This first receipt covers plain/trimmed output only. Neither a flag
+        # nor preview silence bins establish the nonlinear silence-removal map.
+        # Nested prepared sources require their recorded parent map as well.
+        if not options.silence_enabled and not any(
+            item.source and item.source.prepared_audio_context_json for item in job.inputs
+        ):
+            total = sum(probe.duration_seconds for probe in probes)
+            start, end = trim_range(options, total)
+            if abs(output_probe.duration_seconds - (end - start)) <= 0.005:
+                timeline_json = AudioTimeline.from_seconds(total, [(start, end)]).serialize()
     return RenderedAudio(output_path, "Фрагмент.wav" if preview else job.output_filename or output_filename,
-        "audio/wav" if preview else job.output_mime_type or mime_type, output_size, round(output_probe.duration_seconds * 1000))
+        "audio/wav" if preview else job.output_mime_type or mime_type, output_size, round(output_probe.duration_seconds * 1000),
+        sha256_checksum, md5_checksum, timeline_json)
 
 def _earliest_creation_time(job) -> datetime | None:
     values = [item.source.source_created_at for item in job.inputs if item.source and item.source.source_created_at]
