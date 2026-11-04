@@ -47,6 +47,7 @@ class AudioPreparationServiceReason(str, Enum):
     invalid_sources = "invalid_sources"
     input_too_large = "input_too_large"
     source_unavailable = "source_unavailable"
+    source_version_unavailable = "source_version_unavailable"
     invalid_state = "invalid_state"
     invalid_destination = "invalid_destination"
     lease_unavailable = "lease_unavailable"
@@ -639,6 +640,7 @@ def audio_result_sources_available(job: AudioPreparationJob, *, now: datetime) -
         return bool(source and _source_available(source, project_id=job.project_id, now=now))
     return bool(job.output_filename and job.inputs and all(
         item.source and _source_available(item.source, project_id=job.project_id, now=now)
+        and _source_version_recorded(item.source)
         for item in job.inputs
     ))
 
@@ -654,6 +656,12 @@ def require_audio_result_sources(db: Session, job: AudioPreparationJob, *, now: 
         _source_available(source, project_id=job.project_id, now=now) for source in sources
     ):
         raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
+    if not job.output_source_id and not all(_source_version_recorded(source) for source in sources):
+        raise AudioPreparationServiceError(AudioPreparationServiceReason.source_version_unavailable)
+
+
+def _source_version_recorded(source: Source) -> bool:
+    return source.source_type is not SourceType.google_drive or bool(source.drive_revision_id or source.drive_md5_checksum)
 
 
 def _destination_snapshot(destination: str, folder: object | None) -> tuple[str, tuple[str | None, str | None, str | None]]:

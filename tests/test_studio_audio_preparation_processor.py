@@ -299,7 +299,8 @@ def test_materialization_bounds_actual_aggregate_and_closes_streams(tmp_path, kn
     inputs = [SimpleNamespace(position=i, source=SimpleNamespace(
         project_id="project", upload_status=SourceUploadStatus.uploaded, deleted_at=None,
         expires_at=None, mime_type="audio/flac", original_filename="input.flac",
-        source_type=SourceType.google_drive, drive_file_id=str(i), size_bytes=8 if known_sizes else None)) for i in range(3)]
+        source_type=SourceType.google_drive, drive_file_id=str(i), drive_revision_id=None,
+        drive_md5_checksum=None, size_bytes=8 if known_sizes else None)) for i in range(3)]
     job = SimpleNamespace(project_id="project", owner_user_id="owner", inputs=inputs)
     db = SimpleNamespace(get=lambda *a: SimpleNamespace(owner_user_id="owner", archived_at=None))
     settings = SimpleNamespace(source_max_upload_bytes=10, audio_preparation_max_input_bytes=20)

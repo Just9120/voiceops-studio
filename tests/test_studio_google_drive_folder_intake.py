@@ -59,6 +59,15 @@ def inspect(children, *, max_upload_bytes=100):
     )
 
 
+def test_preview_confirmation_is_invalidated_by_same_size_content_revision_change():
+    from dataclasses import replace
+    first = replace(metadata("audio", "call.mp3", "audio/mpeg"), head_revision_id="v1", md5_checksum="a"*32)
+    changed = replace(first, head_revision_id="v2", md5_checksum="b"*32)
+    previews = [inspect({("root", None): GoogleDriveFolderChildren("root", [item], None)}) for item in (first, changed)]
+    tokens = [drive_folder_preview_token(preview, owner_user_id="owner", project_id="project") for preview in previews]
+    assert tokens[0] != tokens[1]
+
+
 def test_recursive_preview_is_deterministic_and_classifies_skips():
     nested = metadata("nested", "Nested", GOOGLE_FOLDER_MIME_TYPE, size=None)
     children = {

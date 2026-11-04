@@ -4,6 +4,7 @@ from __future__ import annotations
 import shutil
 import json
 import math
+import hashlib
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -109,10 +110,13 @@ def materialize_audio_inputs(
         elif source.source_type is SourceType.google_drive and source.drive_file_id:
             if "token" not in token_cache:
                 token_cache["token"] = drive_token_resolver(db, user_id=job.owner_user_id, settings=settings)
-            stream = drive_content_fetcher(token_cache["token"], source.drive_file_id)
+            stream = drive_content_fetcher(token_cache["token"], source.drive_file_id, **(
+                {"revision_id": source.drive_revision_id} if source.drive_revision_id else {}
+            ))
         else:
             raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
         copied = 0
+        checksum = hashlib.md5(usedforsecurity=False) if source.drive_md5_checksum else None
         try:
             with path.open("wb") as target:
                 for chunk in stream.iter_chunks(_COPY_CHUNK_SIZE):
@@ -126,10 +130,14 @@ def materialize_audio_inputs(
                     if copied > settings.source_max_upload_bytes:
                         raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
                     target.write(chunk)
+                    if checksum is not None:
+                        checksum.update(chunk)
                     report_work("source_download", total_copied, total_bytes or None, "bytes")
         finally:
             stream.close()
         if copied <= 0 or (source.size_bytes is not None and copied != source.size_bytes):
+            raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
+        if checksum is not None and checksum.hexdigest() != source.drive_md5_checksum:
             raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
         paths.append(path)
     return paths

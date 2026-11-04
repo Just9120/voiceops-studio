@@ -7,6 +7,7 @@ from enum import Enum
 from tempfile import SpooledTemporaryFile
 from typing import BinaryIO, Callable, Iterator
 from time import monotonic
+import hashlib
 
 from sqlalchemy.orm import Session, selectinload
 
@@ -115,6 +116,8 @@ class _SourceSnapshot:
     job_owner_user_id: str
     job_project_id: str
     original_filename: str
+    drive_revision_id: str | None = None
+    drive_md5_checksum: str | None = None
 
 
 @contextmanager
@@ -238,7 +241,7 @@ def _load_selected_snapshot(db, job_id, job_source_id, owner, generation, now, s
         raise SourceMaterializationError(SourceMaterializationReason.job_source_not_processable)
     if not validate_source_size(src.size_bytes, settings.source_max_upload_bytes):
         raise SourceMaterializationError(SourceMaterializationReason.source_too_large)
-    return _SourceSnapshot(job.id, rel.id, src.id, rel.position, _value(rel.status), _value(src.source_type), src.project_id, src.drive_file_id, src.s3_bucket, src.s3_object_key, source_reference_class(src), mime, src.size_bytes, _value(src.upload_status), src.deleted_at, src.expires_at, src.source_created_at, src.source_created_at_provenance, job.lease_owner_id, job.lease_generation, job.cancel_requested_at, _value(job.status), project.archived_at, project.owner_user_id, job.owner_user_id, job.project_id, src.original_filename)
+    return _SourceSnapshot(job.id, rel.id, src.id, rel.position, _value(rel.status), _value(src.source_type), src.project_id, src.drive_file_id, src.s3_bucket, src.s3_object_key, source_reference_class(src), mime, src.size_bytes, _value(src.upload_status), src.deleted_at, src.expires_at, src.source_created_at, src.source_created_at_provenance, job.lease_owner_id, job.lease_generation, job.cancel_requested_at, _value(job.status), project.archived_at, project.owner_user_id, job.owner_user_id, job.project_id, src.original_filename, src.drive_revision_id, src.drive_md5_checksum)
 
 
 def processing_source_control(db, *, job_id, job_source_id, lease_owner_id, lease_generation, clock, settings, expected=None):
@@ -302,13 +305,16 @@ def _copy_source_bytes(snap, temp, settings, storage_factory, drive_token_resolv
         try:
             token = drive_token_resolver(db, user_id=snap.job_owner_user_id, settings=settings)
             db.rollback()
-            stream = drive_content_fetcher(token, snap.drive_file_id)
+            stream = drive_content_fetcher(token, snap.drive_file_id, **(
+                {"revision_id": snap.drive_revision_id} if snap.drive_revision_id else {}
+            ))
         except GoogleConnectionAccessError as exc:
             raise SourceMaterializationError(SourceMaterializationReason.external_source_unavailable) from exc
         except GoogleDriveContentError as exc:
             raise SourceMaterializationError(SourceMaterializationReason.source_object_missing if exc.reason == GoogleDriveContentReason.not_found else SourceMaterializationReason.external_source_unavailable) from exc
     try:
         count = 0
+        checksum = hashlib.md5(usedforsecurity=False) if snap.drive_md5_checksum else None
         report_work("source_download", 0, snap.size_bytes, "bytes")
         for chunk in stream.iter_chunks(_CHUNK_SIZE):
             check()
@@ -318,7 +324,11 @@ def _copy_source_bytes(snap, temp, settings, storage_factory, drive_token_resolv
             if count > settings.source_max_upload_bytes:
                 raise SourceMaterializationError(SourceMaterializationReason.source_too_large)
             temp.write(chunk)
+            if checksum is not None:
+                checksum.update(chunk)
             report_work("source_download", count, snap.size_bytes, "bytes")
+        if checksum is not None and checksum.hexdigest() != snap.drive_md5_checksum:
+            raise SourceMaterializationError(SourceMaterializationReason.selected_source_changed)
         return count, stream.content_type, stream.content_length
     except SourceMaterializationError:
         raise

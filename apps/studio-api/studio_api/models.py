@@ -353,6 +353,8 @@ class Source(Base):
     prepared_audio_context_json: Mapped[str|None]=mapped_column(Text)
     size_bytes: Mapped[int|None]=mapped_column(Integer)
     drive_file_id: Mapped[str|None]=mapped_column(String(256))
+    drive_revision_id: Mapped[str|None]=mapped_column(String(256))
+    drive_md5_checksum: Mapped[str|None]=mapped_column(String(32))
     drive_file_url: Mapped[str|None]=mapped_column(Text)
     s3_bucket: Mapped[str|None]=mapped_column(String(255))
     s3_object_key: Mapped[str|None]=mapped_column(Text)
@@ -502,7 +504,7 @@ class TranscriptCatalogEntry(Base):
     language_mode: Mapped[str|None]=mapped_column(String(40))
     diarization_enabled: Mapped[bool|None]=mapped_column(Boolean)
     source_identity_kind: Mapped[TranscriptCatalogSourceIdentityKind|None]=mapped_column(Enum(TranscriptCatalogSourceIdentityKind))
-    source_identity_value: Mapped[str|None]=mapped_column(String(256))
+    source_identity_value: Mapped[str|None]=mapped_column(String(1024))
     imported_at: Mapped[datetime]=mapped_column(DateTime(timezone=True), default=now, nullable=False)
     updated_at: Mapped[datetime]=mapped_column(DateTime(timezone=True), default=now, onupdate=now, nullable=False)
     __table_args__=(

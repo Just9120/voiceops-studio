@@ -165,7 +165,7 @@ def catalog_source_identity(source: Any) -> CatalogSourceIdentity | None:
     if source_type == "google_drive" and drive_file_id:
         return CatalogSourceIdentity(
             kind=CatalogSourceIdentityKind.google_drive_file,
-            value=drive_file_id,
+            value=_versioned_drive_identity(source, drive_file_id),
         )
     if source_id:
         return CatalogSourceIdentity(
@@ -173,6 +173,27 @@ def catalog_source_identity(source: Any) -> CatalogSourceIdentity | None:
             value=source_id,
         )
     return None
+
+
+def _versioned_drive_identity(source, file_id: str) -> str:
+    revision = _clean_private_identity(getattr(source, "drive_revision_id", None))
+    checksum = _clean_private_identity(getattr(source, "drive_md5_checksum", None))
+    if revision:
+        return f"{file_id}#revision={revision}"
+    if checksum:
+        return f"{file_id}#md5={checksum}"
+    return file_id  # Historical catalog authority is preserved, never backfilled.
+
+
+def _drive_identity_sql(source):
+    from sqlalchemy import case, literal_column
+    # Stable literals keep SELECT/GROUP BY expressions identical on PostgreSQL;
+    # independently allocated bind parameters are not equivalent grouping keys.
+    return case(
+        (source.drive_revision_id.is_not(None), source.drive_file_id + literal_column("'#revision='") + source.drive_revision_id),
+        (source.drive_md5_checksum.is_not(None), source.drive_file_id + literal_column("'#md5='") + source.drive_md5_checksum),
+        else_=source.drive_file_id,
+    )
 
 
 def effective_settings_from_persisted_job(
@@ -459,7 +480,7 @@ def load_existing_result_matches(
         identity_filters.append(
             and_(
                 Source.source_type == SourceType.google_drive,
-                Source.drive_file_id.in_(drive_file_ids),
+                _drive_identity_sql(Source).in_(drive_file_ids),
             )
         )
     if not identity_filters:
@@ -473,7 +494,7 @@ def load_existing_result_matches(
         db.query(
             Source.id,
             Source.source_type,
-            Source.drive_file_id,
+            _drive_identity_sql(Source),
             TranscriptionJob.provider,
             ProviderCredential.provider,
             TranscriptionJob.operating_mode,
@@ -518,7 +539,7 @@ def load_existing_result_matches(
     output_query = output_query.group_by(
         Source.id,
         Source.source_type,
-        Source.drive_file_id,
+        _drive_identity_sql(Source),
         TranscriptionJob.provider,
         ProviderCredential.provider,
         TranscriptionJob.operating_mode,
@@ -695,7 +716,7 @@ def load_provider_attempt_authorities(
         identity_filters.append(
             and_(
                 Source.source_type == SourceType.google_drive,
-                Source.drive_file_id.in_(drive_file_ids),
+                _drive_identity_sql(Source).in_(drive_file_ids),
             )
         )
     if not identity_filters:
@@ -709,7 +730,7 @@ def load_provider_attempt_authorities(
         db.query(
             Source.id,
             Source.source_type,
-            Source.drive_file_id,
+            _drive_identity_sql(Source),
             TranscriptionJob.id,
             TranscriptionJob.provider,
             ProviderCredential.provider,
@@ -778,7 +799,7 @@ def load_provider_attempt_authorities(
     query = query.group_by(
         Source.id,
         Source.source_type,
-        Source.drive_file_id,
+        _drive_identity_sql(Source),
         TranscriptionJob.id,
         TranscriptionJob.provider,
         ProviderCredential.provider,
@@ -1008,7 +1029,7 @@ def lock_catalog_source_identities(
         identity_filters.append(
             and_(
                 Source.source_type == SourceType.google_drive,
-                Source.drive_file_id.in_(drive_file_ids),
+                _drive_identity_sql(Source).in_(drive_file_ids),
             )
         )
     if not identity_filters:

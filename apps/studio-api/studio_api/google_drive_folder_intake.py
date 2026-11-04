@@ -263,6 +263,8 @@ def drive_folder_preview_token(
                 "mime_type": item.mime_type,
                 "size_bytes": item.metadata.size_bytes,
                 "created_time": item.metadata.created_time,
+                "revision_id": getattr(item.metadata, "head_revision_id", None),
+                "md5_checksum": getattr(item.metadata, "md5_checksum", None),
                 "relative_path": item.relative_path,
             }
             for item in preview.accepted

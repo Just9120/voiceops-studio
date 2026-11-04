@@ -151,6 +151,38 @@ def fake_drive_meta(token, drive_file_id):
     return GoogleDriveMetadata(id=drive_file_id, name="meeting.mp3", mime_type="audio/mpeg", size_bytes=100, web_view_link=None, created_time=None, modified_time=None, is_folder=False)
 
 
+@pytest.mark.parametrize("replace_same_size", [False, True])
+def test_selected_drive_revision_and_content_checksum_are_enforced_before_stt(sqlite_session, models, replace_same_size):
+    import hashlib
+    from dataclasses import replace
+    from studio_api.job_source_materialization import SourceMaterializationError
+    digest = hashlib.md5(b"a" * 100, usedforsecurity=False).hexdigest()
+    job, _, rel, _, now, _ = make_job(sqlite_session, models,
+        source_type=models.SourceType.google_drive,
+        source_kwargs={"drive_revision_id": "selected-v1", "drive_md5_checksum": digest})
+    metadata_calls, content_calls = [], []
+    body = FakeBody([b"b" * 100 if replace_same_size else b"a" * 100])
+
+    def metadata(token, file_id, *, revision_id):
+        metadata_calls.append(revision_id)
+        return replace(fake_drive_meta(token, file_id), head_revision_id=revision_id, md5_checksum=digest)
+
+    def content(token, file_id, *, revision_id):
+        content_calls.append(revision_id)
+        return FakeStream(body)
+
+    context = materialize(sqlite_session, job, rel, drive_fetcher=content, drive_meta=metadata, now=now)
+    if replace_same_size:
+        with pytest.raises(SourceMaterializationError, match="selected_source_changed"):
+            with context:
+                pytest.fail("wrong bytes must never reach STT")
+    else:
+        with context as selected:
+            assert selected.stream.read() == b"a" * 100
+    assert metadata_calls == content_calls == ["selected-v1"]
+    assert body.closed
+
+
 @pytest.mark.parametrize("failure", [None, "changed", "cancelled"])
 def test_yandex_source_is_revalidated_streamed_and_controlled(sqlite_session, models, monkeypatch, failure):
     from studio_api import job_source_materialization as materialization

@@ -83,6 +83,8 @@ class SourceRelationSnapshot:
     upload_status: str | None
     deleted_at: datetime | None
     expires_at: datetime | None
+    drive_revision_id: str | None = None
+    drive_md5_checksum: str | None = None
 
 
 @dataclass(frozen=True)
@@ -239,7 +241,7 @@ def _snapshot(job, js):
         reasons.append("unsupported_source_type")
     if not is_supported_source_mime_type(mime):
         reasons.append("unsupported_mime_type")
-    return {"source_id": src.id, "position": js.position, "source_type": source_type, "original_filename": src.original_filename, "mime_type": mime, "size_bytes": src.size_bytes, "project_id": src.project_id, "upload_status": str(src.upload_status.value), "deleted_at": src.deleted_at, "expires_at": src.expires_at, "s3_bucket": src.s3_bucket, "s3_object_key": src.s3_object_key, "reference_class": source_reference_class(src), "drive_file_id": src.drive_file_id, "reasons": reasons}
+    return {"source_id": src.id, "position": js.position, "source_type": source_type, "original_filename": src.original_filename, "mime_type": mime, "size_bytes": src.size_bytes, "project_id": src.project_id, "upload_status": str(src.upload_status.value), "deleted_at": src.deleted_at, "expires_at": src.expires_at, "s3_bucket": src.s3_bucket, "s3_object_key": src.s3_object_key, "reference_class": source_reference_class(src), "drive_file_id": src.drive_file_id, "drive_revision_id": src.drive_revision_id, "drive_md5_checksum": src.drive_md5_checksum, "reasons": reasons}
 
 
 def _verify_local(snap, now, settings, storage_factory):
@@ -281,7 +283,9 @@ def _verify_drive(snap, token, settings, fetcher):
     if not snap["drive_file_id"]:
         return None, None, ["source_missing_required_identity"]
     try:
-        meta = fetcher(token, snap["drive_file_id"])
+        meta = fetcher(token, snap["drive_file_id"], **(
+            {"revision_id": snap["drive_revision_id"]} if snap["drive_revision_id"] else {}
+        ))
     except GoogleDriveMetadataError as exc:
         if exc.reason == GoogleDriveMetadataReason.not_found:
             return None, None, ["drive_file_missing"]
@@ -294,6 +298,9 @@ def _verify_drive(snap, token, settings, fetcher):
     mime = normalize_source_mime_type(meta.mime_type)
     if meta.id != snap["drive_file_id"]:
         reasons.append("drive_file_identity_mismatch")
+    if (snap["drive_revision_id"] and getattr(meta, "head_revision_id", None) != snap["drive_revision_id"]
+        or snap["drive_md5_checksum"] and getattr(meta, "md5_checksum", None) != snap["drive_md5_checksum"]):
+        reasons.append("source_state_changed")
     if getattr(meta, "is_folder", False) or mime == GOOGLE_FOLDER_MIME_TYPE:
         reasons.append("drive_file_is_folder")
     if not is_supported_source_mime_type(mime):
@@ -335,6 +342,8 @@ def _relation_source_identity(job_source) -> SourceRelationSnapshot:
         source_type=_enum_value(src.source_type) if src else None,
         project_id=src.project_id if src else None,
         drive_file_id=src.drive_file_id if src else None,
+        drive_revision_id=src.drive_revision_id if src else None,
+        drive_md5_checksum=src.drive_md5_checksum if src else None,
         s3_bucket=src.s3_bucket if src else None,
         s3_object_key=src.s3_object_key if src else None,
         reference_class=source_reference_class(src) if src else None,

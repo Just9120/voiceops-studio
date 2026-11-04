@@ -119,7 +119,7 @@ def test_realtime_draft_schema_is_encrypted_scoped_bounded_and_additive():
     script = ScriptDirectory.from_config(Config("apps/studio-api/alembic.ini"))
     revision = script.get_revision("0023_realtime_drafts")
     assert revision.down_revision == "0022_account_operability"
-    assert script.get_heads() == ["0044_quality_progress"]
+    assert script.get_heads() == ["0045_personal_audit"]
     migration = (
         ROOT
         / "apps/studio-api/alembic/versions/0023_realtime_transcript_drafts.py"

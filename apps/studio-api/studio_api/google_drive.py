@@ -3,7 +3,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from .google_oauth import GoogleOAuthConfig, TOKEN_URL
@@ -11,7 +11,7 @@ from .google_oauth import GoogleOAuthConfig, TOKEN_URL
 DRIVE_FILES_URL = "https://www.googleapis.com/drive/v3/files"
 DRIVE_SIZE_PATTERN = re.compile(r"^(0|[1-9][0-9]*)$")
 GOOGLE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
-SAFE_DRIVE_METADATA_FIELDS = "id,name,mimeType,size,webViewLink,createdTime,modifiedTime"
+SAFE_DRIVE_METADATA_FIELDS = "id,name,mimeType,size,webViewLink,createdTime,modifiedTime,headRevisionId,md5Checksum"
 SAFE_DRIVE_CHILDREN_FIELDS = f"nextPageToken,files({SAFE_DRIVE_METADATA_FIELDS})"
 DEFAULT_DRIVE_FOLDER_CHILDREN_PAGE_SIZE = 50
 MAX_DRIVE_FOLDER_CHILDREN_PAGE_SIZE = 100
@@ -27,6 +27,8 @@ class GoogleDriveMetadata:
     created_time: str | None
     modified_time: str | None
     is_folder: bool
+    head_revision_id: str | None = None
+    md5_checksum: str | None = None
 
 
 class GoogleDriveMetadataReason(str, Enum):
@@ -89,10 +91,15 @@ def refresh_access_token(config: GoogleOAuthConfig, refresh_token: str) -> str:
     return access_token
 
 
-def fetch_drive_file_metadata(access_token: str, drive_file_id: str) -> GoogleDriveMetadata:
-    params = urlencode({"fields": SAFE_DRIVE_METADATA_FIELDS, "supportsAllDrives": "true"})
+def fetch_drive_file_metadata(access_token: str, drive_file_id: str, *, revision_id: str | None = None) -> GoogleDriveMetadata:
+    path = quote(drive_file_id, safe="")
+    parameters = {"fields": SAFE_DRIVE_METADATA_FIELDS, "supportsAllDrives": "true"}
+    if revision_id is not None:
+        path += f"/revisions/{quote(revision_id, safe='')}"
+        parameters = {"fields": "id,mimeType,size,md5Checksum,modifiedTime"}
+    params = urlencode(parameters)
     req = Request(
-        f"{DRIVE_FILES_URL}/{drive_file_id}?{params}",
+        f"{DRIVE_FILES_URL}/{path}?{params}",
         headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
     )
     try:
@@ -106,6 +113,10 @@ def fetch_drive_file_metadata(access_token: str, drive_file_id: str) -> GoogleDr
         raise GoogleDriveMetadataError(GoogleDriveMetadataReason.unavailable) from exc
     if not isinstance(payload, dict):
         raise GoogleDriveMetadataError(GoogleDriveMetadataReason.unavailable)
+    if revision_id is not None:
+        if payload.get("id") != revision_id:
+            raise GoogleDriveMetadataError(GoogleDriveMetadataReason.unavailable)
+        payload = {**payload, "id": drive_file_id, "headRevisionId": revision_id}
     return normalize_drive_file_metadata(payload)
 
 
@@ -174,7 +185,25 @@ def normalize_drive_metadata(payload: dict) -> GoogleDriveMetadata:
         created_time=payload.get("createdTime") if isinstance(payload.get("createdTime"), str) else None,
         modified_time=payload.get("modifiedTime") if isinstance(payload.get("modifiedTime"), str) else None,
         is_folder=mime_type == GOOGLE_FOLDER_MIME_TYPE,
+        head_revision_id=_optional_revision_id(payload.get("headRevisionId")),
+        md5_checksum=_optional_md5(payload.get("md5Checksum")),
     )
+
+
+def _optional_revision_id(value) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", value):
+        raise GoogleDriveMetadataError(GoogleDriveMetadataReason.unavailable)
+    return value
+
+
+def _optional_md5(value) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-fA-F]{32}", value):
+        raise GoogleDriveMetadataError(GoogleDriveMetadataReason.unavailable)
+    return value.lower()
 
 
 def normalize_drive_file_metadata(payload: dict) -> GoogleDriveMetadata:
@@ -232,10 +261,17 @@ class GoogleDriveContentStream:
             close()
 
 
-def fetch_drive_file_content(access_token: str, drive_file_id: str) -> GoogleDriveContentStream:
-    params = urlencode({"alt": "media", "supportsAllDrives": "true"})
+def fetch_drive_file_content(access_token: str, drive_file_id: str, *, revision_id: str | None = None) -> GoogleDriveContentStream:
+    # A missing/expired historical revision must not fall back to today's bytes.
+    path = quote(drive_file_id, safe="")
+    parameters = {"alt": "media"}
+    if revision_id is not None:
+        path += f"/revisions/{quote(revision_id, safe='')}"
+    else:
+        parameters["supportsAllDrives"] = "true"
+    params = urlencode(parameters)
     req = Request(
-        f"{DRIVE_FILES_URL}/{drive_file_id}?{params}",
+        f"{DRIVE_FILES_URL}/{path}?{params}",
         headers={"Authorization": f"Bearer {access_token}", "Accept": "*/*"},
     )
     try:
