@@ -111,6 +111,7 @@ def create_audio_preparation_job(
         status=AudioPreparationStatus.preview_queued,
         title=clean_title,
         options_json=serialize_options(options),
+        recipe_version=2,
         output_destination=destination,
         output_drive_folder_id=folder_snapshot[0],
         output_drive_folder_url=folder_snapshot[1],

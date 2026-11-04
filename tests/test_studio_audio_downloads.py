@@ -52,6 +52,9 @@ def state(tmp_path, monkeypatch):
             options_payload={"preset": "processing_only", "output_format": "flac"},
             output_destination="download", output_folder=None, now=NOW)
         job.status = AudioPreparationStatus.completed
+        # A pre-existing completed result without a recorded recipe models the
+        # historical regeneration path; newly processed v2 results keep one.
+        job.recipe_version = None
         job.current_stage = "completed"
         job.progress_percent = 100
         job.output_filename = "Лекция 1. Предмет.flac"

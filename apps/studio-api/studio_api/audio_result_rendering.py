@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .audio_preparation import AudioOutputFormat, AudioPreparationError, AudioPreparationReason, build_ffmpeg_command, probe_media, render_output_filename, run_processing, trim_range
 from .audio_timeline import AudioTimeline
-from .audio_preparation_service import AudioPreparationServiceError, AudioPreparationServiceReason, deserialize_options
+from .audio_preparation_service import AudioPreparationServiceError, AudioPreparationServiceReason, deserialize_options, serialize_options
 from .google_connection_access import refresh_user_google_drive_access_token
 from .google_drive import fetch_drive_file_content
 from .models import Project, SourceType, SourceUploadStatus
@@ -155,6 +155,7 @@ class RenderedAudio:
     sha256_checksum: str | None = None
     md5_checksum: str | None = None
     timeline_json: str | None = None
+    recipe_json: str | None = None
 
 
 def render_audio_result(db, *, job, root, settings, output_root=None, paths=None, probes=None,
@@ -176,6 +177,9 @@ def render_audio_result(db, *, job, root, settings, output_root=None, paths=None
     # All originals remain in scratch even when the sample selects one input.
     input_bytes = sum(path.stat().st_size for path in paths)
     options = deserialize_options(job)
+    version = getattr(job, "recipe_version", None)
+    if version not in (None, 1, 2):
+        raise AudioPreparationError(AudioPreparationReason.timeline_unavailable)
     preview_start = 0.0
     if preview:
         options = replace(options, output_format=AudioOutputFormat.wav)
@@ -192,6 +196,29 @@ def render_audio_result(db, *, job, root, settings, output_root=None, paths=None
             or not math.isfinite(preview_start) or preview_start >= probes[position].duration_seconds):
             raise AudioPreparationServiceError(AudioPreparationServiceReason.invalid_state)
         paths, probes = [paths[position]], [probes[position]]
+    recipe = None
+    if version == 2 and options.output_format is not AudioOutputFormat.copy:
+        from .audio_retained_frames import RetainedRecipe, build_retained_recipe
+        if preview:
+            # The preview is a bounded excerpt of the selected original clock.
+            start = options.trim_start_seconds or preview_start
+            end = min(options.trim_end_seconds or sum(p.duration_seconds for p in probes), start + 60)
+            options = replace(options, trim_start_seconds=start, trim_end_seconds=end)
+        options_json = serialize_options(options)
+        try:
+            stored = getattr(job, "retained_frames_json", None) if not preview else None
+            if stored:
+                recipe = RetainedRecipe.parse(stored)
+                recipe.validate_inputs(probes, options_json)
+            else:
+                if not preview and job.status.value == "completed":
+                    raise ValueError("audio_edit_recipe_missing")
+                recipe = build_retained_recipe(paths, probes, options, options_json,
+                    runner=runner, check=check,
+                    progress=lambda seconds: report_work("media_analysis", seconds,
+                        (options.trim_end_seconds or sum(p.duration_seconds for p in probes)) - options.trim_start_seconds, "seconds"))
+        except ValueError as exc:
+            raise AudioPreparationError(AudioPreparationReason.timeline_unavailable) from exc
     creation_time = _earliest_creation_time(job)
     extension = _output_extension(job, options, paths)
     output_root = output_root or root
@@ -210,6 +237,8 @@ def render_audio_result(db, *, job, root, settings, output_root=None, paths=None
         probes,
         concat_list_path=concat_path,
         creation_time=creation_time,
+        retained_recipe=recipe,
+        filter_script_path=root / "retained-frames.ffgraph" if recipe else None,
     )
     output_budget = min(
         getattr(settings, "audio_preparation_max_output_bytes", settings.source_max_upload_bytes),
@@ -221,7 +250,7 @@ def render_audio_result(db, *, job, root, settings, output_root=None, paths=None
     # FFmpeg limits the file while writing, rather than after exhausting tmpfs.
     command[1:1] = ["-filter_threads", "2", "-filter_complex_threads", "2"]
     command[-1:-1] = ["-threads", "2", "-fs", str(output_budget)]
-    if preview and options.trim_start_seconds == 0 and options.trim_end_seconds is None:
+    if preview and recipe is None and options.trim_start_seconds == 0 and options.trim_end_seconds is None:
         command[command.index("-i"):command.index("-i")] = ["-ss", str(preview_start), "-t", "60"]
     if preview:
         command[-1:-1] = ["-t", "30"]
@@ -231,6 +260,8 @@ def render_audio_result(db, *, job, root, settings, output_root=None, paths=None
     )
     if preview:
         expected_duration_seconds = min(30.0, expected_duration_seconds)
+    elif recipe:
+        expected_duration_seconds = recipe.timeline().output_duration_seconds
     if runner:
         run_processing(command, runner=runner)
     else:
@@ -274,19 +305,25 @@ def render_audio_result(db, *, job, root, settings, output_root=None, paths=None
                 sha256.update(chunk)
                 md5.update(chunk)
         sha256_checksum, md5_checksum = sha256.hexdigest(), md5.hexdigest()
-        # This first receipt covers plain/trimmed output only. Neither a flag
-        # nor preview silence bins establish the nonlinear silence-removal map.
-        # Nested prepared sources require their recorded parent map as well.
-        if not options.silence_enabled and not any(
+        nested = any(
             item.source and item.source.prepared_audio_context_json for item in job.inputs
-        ):
+        )
+        if recipe:
+            timeline = recipe.timeline()
+            if abs(output_probe.duration_seconds - timeline.output_duration_seconds) > 0.005:
+                raise AudioPreparationError(AudioPreparationReason.timeline_unavailable)
+            if not nested:
+                timeline_json = timeline.serialize()
+        # Legacy silence flags do not establish removed ranges. Nested sources
+        # still require composition with their recorded parent map.
+        elif not options.silence_enabled and not nested:
             total = sum(probe.duration_seconds for probe in probes)
             start, end = trim_range(options, total)
             if abs(output_probe.duration_seconds - (end - start)) <= 0.005:
                 timeline_json = AudioTimeline.from_seconds(total, [(start, end)]).serialize()
     return RenderedAudio(output_path, "Фрагмент.wav" if preview else job.output_filename or output_filename,
         "audio/wav" if preview else job.output_mime_type or mime_type, output_size, round(output_probe.duration_seconds * 1000),
-        sha256_checksum, md5_checksum, timeline_json)
+        sha256_checksum, md5_checksum, timeline_json, recipe.serialize() if recipe and not preview else None)
 
 def _earliest_creation_time(job) -> datetime | None:
     values = [item.source.source_created_at for item in job.inputs if item.source and item.source.source_created_at]

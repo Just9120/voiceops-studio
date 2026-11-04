@@ -191,6 +191,7 @@ def process_claimed_audio_preparation_job(
             job.output_sha256_checksum = rendered.sha256_checksum
             job.output_md5_checksum = rendered.md5_checksum
             job.output_timeline_json = rendered.timeline_json
+            job.retained_frames_json = rendered.recipe_json
             job.output_duration_ms = rendered.duration_ms
             job.status = AudioPreparationStatus.completed
             job.current_stage = "google_drive_upload" if job.output_destination == "google_drive" else "completed"

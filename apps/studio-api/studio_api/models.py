@@ -597,6 +597,8 @@ class AudioPreparationJob(Base):
     output_sha256_checksum: Mapped[str|None]=mapped_column(String(64))
     output_md5_checksum: Mapped[str|None]=mapped_column(String(32))
     output_timeline_json: Mapped[str|None]=mapped_column(Text)
+    recipe_version: Mapped[int|None]=mapped_column(Integer)
+    retained_frames_json: Mapped[str|None]=mapped_column(Text)
     visual_analysis_json: Mapped[str|None]=mapped_column(Text)
     download_slot: Mapped[int|None]=mapped_column(Integer)
     download_preview: Mapped[bool]=mapped_column(Boolean, default=False, server_default=text("false"))

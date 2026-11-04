@@ -13,7 +13,9 @@ def upgrade():
     audio_columns = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("audio_preparation_jobs")}
     for column in (sa.Column("output_sha256_checksum", sa.String(64), nullable=True),
                    sa.Column("output_md5_checksum", sa.String(32), nullable=True),
-                   sa.Column("output_timeline_json", sa.Text(), nullable=True)):
+                   sa.Column("output_timeline_json", sa.Text(), nullable=True),
+                   sa.Column("recipe_version", sa.Integer(), nullable=True),
+                   sa.Column("retained_frames_json", sa.Text(), nullable=True)):
         if column.name not in audio_columns:
             op.add_column("audio_preparation_jobs", column)
     if "cleared_at" not in {column["name"] for column in sa.inspect(op.get_bind()).get_columns("realtime_transcript_drafts")}:
@@ -34,7 +36,8 @@ def upgrade():
 
 def downgrade():
     if op.get_bind().execute(sa.text("SELECT COUNT(*) FROM audio_preparation_jobs WHERE "
-            "output_sha256_checksum IS NOT NULL OR output_md5_checksum IS NOT NULL OR output_timeline_json IS NOT NULL")).scalar():
+            "output_sha256_checksum IS NOT NULL OR output_md5_checksum IS NOT NULL OR output_timeline_json IS NOT NULL "
+            "OR recipe_version IS NOT NULL OR retained_frames_json IS NOT NULL")).scalar():
         raise RuntimeError("Prepared audio timeline/content receipts require forward recovery")
     if op.get_bind().execute(sa.text("SELECT COUNT(*) FROM realtime_transcript_drafts WHERE cleared_at IS NOT NULL")).scalar():
         raise RuntimeError("Cleared Live session fences require forward recovery")
@@ -54,5 +57,5 @@ def downgrade():
     for table in ("transcription_jobs", "audio_preparation_jobs"):
         op.drop_column(table, "source_access_started_at")
     op.drop_column("realtime_transcript_drafts", "cleared_at")
-    for column in ("output_sha256_checksum", "output_md5_checksum", "output_timeline_json"):
+    for column in ("output_sha256_checksum", "output_md5_checksum", "output_timeline_json", "recipe_version", "retained_frames_json"):
         op.drop_column("audio_preparation_jobs", column)

@@ -64,6 +64,10 @@ def runner(command, **_kwargs):
     if command[0] == "ffprobe":
         payload = {"streams": [{"codec_type": "audio", "duration": "60", "codec_name": "flac", "sample_rate": "48000", "channels": 2, "channel_layout": "stereo"}], "format": {"duration": "60", "format_name": "flac"}}
         return SimpleNamespace(stdout=json.dumps(payload), stderr="")
+    if command[-1] == "pipe:1" and "-progress" in command:
+        # Versioned edits require an observed decoded clock, not only ffprobe.
+        duration = float(command[command.index("-t") + 1])
+        return SimpleNamespace(stdout=f"out_time_us={round(duration * 1_000_000)}\nprogress=end\n", stderr="")
     if command[-1] != "-":
         Path(command[-1]).write_bytes(b"processed-audio")
     return SimpleNamespace(stdout="", stderr="")
@@ -129,6 +133,7 @@ def test_preview_processing_storage_and_selected_source_retention_are_durable(tm
         assert persisted.output_sha256_checksum == hashlib.sha256(b"processed-audio").hexdigest()
         assert persisted.output_md5_checksum == hashlib.md5(b"processed-audio", usedforsecurity=False).hexdigest()
         assert AudioTimeline.parse(persisted.output_timeline_json) == AudioTimeline.identity(60)
+        assert persisted.recipe_version == 2 and persisted.retained_frames_json is not None
         assert persisted.title == result_title
         assert db.query(Source).count() == 1
         db.refresh(source)
