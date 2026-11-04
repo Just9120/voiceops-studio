@@ -627,6 +627,48 @@ is unavailable, retain quarantine and stop. The measured time is restoration
 **to quarantine**, not proof of full service recovery, production RPO/RTO,
 R2 snapshot validity, Alembic role/grant compatibility or restored source bytes.
 
+### Qualified personal recovery boundary
+
+The04Nov2026 isolated qualification used the actual CloudKeep-created Studio
+custom dump SHA256`442bd085ef5e104402fa7ead254996b13de2e377787bfade471a5873f793c179`
+(snapshot07:24:42Z), not the synthetic fixture. Cached PostgreSQL17/API/Redis
+images, a private internal network, tmpfs databases and fresh candidate source
+were used without published ports or attaching production volumes. The copy
+upgraded0044→0045 and decrypted provider, Google primary/maintenance, Disk and
+TOTP records. The one-shot API probe had the candidate working directory so
+readiness compared the restored schema with the candidate Alembic head.
+
+Before isolated application access, a separately read, repeatable-read/read-only
+inventory from the still-running authoritative database supplied current user
+status, project ownership/archive/history cutoffs, source deletion/expiry,
+Live content HMAC/clear state, provider-cache HMACs and dismissed job controls.
+Source ownership was established through Project. The inventory contained no
+names, transcript text, URLs or credential values and stayed in private staging.
+It was read again immediately before the probe. Restored source deletion and
+expiry were reconciled conservatively; unavailable or changed cached content
+could not be reactivated. A synthetic stale Live draft, absent from this
+inventory, became an empty clear fence rather than accessible restored text.
+Original sessions, trusted devices, integrations, notifications and work remained
+quarantined. Only an in-process fresh session for the independently confirmed
+owner exercised project/source/Live reads; no listener or worker was started.
+
+Database/Redis health and authenticated application reads passed. Restore,
+migration, reconciliation and API verification took34.296s; the recorded
+download→transfer→application verification→cleanup interval was124.186s,
+below4h. The selected retained copy was42020.742s old at the simulated incident,
+below4days; it was not claimed to be the newest copy. All owned containers,
+network, remote staging and local dump/transfer archives were removed, with
+unchanged healthy production confirmed. Primary qualification run identity is
+recorded in the [delivery plan](../delivery-plan.md).
+
+This proves that isolated application boundary with the selected available
+backup, decryption key and current inventory. It does not prove recovery after
+loss of all current deletion evidence, re-enable original external grants, test
+real paid processing or perform production failover. If trusted deletion
+evidence is unavailable in a real incident, retain quarantine and escalate;
+the time target does not authorize restoring cleared data. Required current
+Linux role/release checks and exact-revision production delivery remain separate.
+
 ## Reference storage isolation
 
 Studio persists every local reference with an exact class: `transcription` or `audio_processing`. Existing rows and objects remain `transcription`; migration `0029_source_reference_class` adds the class with that safe default and does not move or delete objects. New transcription uploads use the transcription-reference boundary. New Audio uploads and reusable Audio outputs use the audio-reference boundary. Transcript outputs remain in Google Drive/Docs, not in either reference bucket.
