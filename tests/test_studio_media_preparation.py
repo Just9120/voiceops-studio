@@ -311,7 +311,7 @@ def test_diarized_recording_avoids_size_and_duration_fragmentation(tmp_path, mon
     def runner(command, **kwargs):
         commands.append(command)
         if command[0] == "ffprobe":
-            duration = 1880 if Path(command[-1]).name == "manual-clip.m4a" else 4000
+            duration = 1880 if clip and Path(command[-1]).name in {"manual-clip.m4a", "prepared-source.m4a"} else 4000
             return subprocess.CompletedProcess(command, 0, stdout=str(duration))
         assert command[0] == "ffmpeg"
         assert not Path(command[-1]).name.startswith("part-")
@@ -401,7 +401,7 @@ def test_video_extraction_flows_into_probe_and_single_prepared_part(tmp_path):
         runner=runner,
         temporary_directory=str(tmp_path),
     ) as batch:
-        assert [command[0] for command in commands] == ["ffmpeg", "ffprobe"]
+        assert [command[0] for command in commands] == ["ffprobe", "ffmpeg", "ffprobe"]
         assert len(batch.parts) == 1
         assert batch.parts[0].audio_extracted is True
         assert batch.parts[0].filename == "private.m4a"
@@ -638,25 +638,39 @@ def test_hard_duration_limit_stops_before_part_creation_even_if_confirmed(tmp_pa
 
 
 @pytest.mark.parametrize("provider", ["elevenlabs", "yandex"])
-@pytest.mark.parametrize("duration,confirmed,reason", [
-    (43201, True, "media_duration_too_long"),
-    (14401, False, "media_duration_confirmation_required"),
-])
-def test_short_clip_cannot_bypass_whole_source_policy(tmp_path, provider, duration, confirmed, reason):
-    from studio_api.media_preparation import prepare_elevenlabs_media_parts, prepare_yandex_media_file, MediaPreparationError
+@pytest.mark.parametrize("duration", [43201, 14401])
+def test_short_final_clip_is_admitted_from_a_long_source_without_long_cost_consent(tmp_path, provider, duration):
+    from studio_api.media_preparation import prepare_elevenlabs_media_parts, prepare_yandex_media_file
     calls = []
     def runner(command, **kwargs):
         calls.append(command)
-        assert command[0] == "ffprobe", "No clip, conversion or provider part may be created before admission"
-        return subprocess.CompletedProcess(command, 0, stdout=str(duration))
+        if command[0] == "ffprobe":
+            measured = 30 if Path(command[-1]).name == "manual-clip.m4a" else duration
+            return subprocess.CompletedProcess(command, 0, stdout=str(measured))
+        Path(command[-1]).write_bytes(b"selected-short-recording")
+        return subprocess.CompletedProcess(command, 0)
     preparer = prepare_elevenlabs_media_parts if provider == "elevenlabs" else prepare_yandex_media_file
-    with pytest.raises(MediaPreparationError, match=reason):
-        with preparer(stream=BytesIO(b"audio"), original_filename="synthetic.mp3", mime_type="audio/mpeg", byte_count=5,
-                      max_output_bytes=100, media_clip_start_seconds=0, media_clip_end_seconds=30,
-                      long_duration_confirmed=confirmed, runner=runner, temporary_directory=str(tmp_path)):
-            pass
-    assert len(calls) == 1
+    with preparer(stream=BytesIO(b"audio"), original_filename="synthetic.mp3", mime_type="audio/mpeg", byte_count=5,
+                  max_output_bytes=100, media_clip_start_seconds=0, media_clip_end_seconds=30,
+                  runner=runner, temporary_directory=str(tmp_path)) as result:
+        assert result.duration_seconds == 30
+        assert len(result.parts) == 1
+    assert any(call[0] == "ffmpeg" for call in calls)
     assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("provider", ["elevenlabs", "yandex"])
+def test_above_four_hours_still_needs_consent_with_a_higher_configured_warning(tmp_path, provider):
+    from studio_api.media_preparation import prepare_elevenlabs_media_parts, prepare_yandex_media_file, MediaPreparationError
+    preparer = prepare_elevenlabs_media_parts if provider == "elevenlabs" else prepare_yandex_media_file
+    def runner(command, **kwargs):
+        assert command[0] == "ffprobe", "No conversion or dispatch before consent"
+        return subprocess.CompletedProcess(command, 0, stdout="50000")
+    with pytest.raises(MediaPreparationError, match="media_duration_confirmation_required"):
+        with preparer(stream=BytesIO(b"audio"), original_filename="synthetic.mp3", mime_type="audio/mpeg", byte_count=5,
+            max_output_bytes=100, max_duration_seconds=86400, duration_warning_seconds=60000,
+            media_clip_start_seconds=100, media_clip_end_seconds=18100, runner=runner, temporary_directory=str(tmp_path)):
+            pytest.fail("Final five-hour recording needs consent even when max exceeds twelve hours")
 
 
 @pytest.mark.parametrize("provider", ["elevenlabs", "yandex"])
@@ -776,3 +790,38 @@ def test_split_parts_are_bounded_in_aggregate(tmp_path):
             temporary_directory=str(tmp_path),
         ):
             pass
+
+
+def test_long_video_encodes_only_the_admitted_final_interval(tmp_path):
+    from studio_api.media_preparation import prepare_elevenlabs_media_parts
+    commands = []
+    def runner(command, **kwargs):
+        commands.append(command)
+        if command[0] == "ffprobe":
+            duration = "46800" if Path(command[-1]).name == "source.mp4" else "30"
+            return subprocess.CompletedProcess(command, 0, stdout=duration)
+        assert command[0] == "ffmpeg"
+        assert command[command.index("-ss") + 1] == "3600.000"
+        assert command[command.index("-t") + 1] == "30.000"
+        Path(command[-1]).write_bytes(b"clip")
+        return subprocess.CompletedProcess(command, 0)
+    with prepare_elevenlabs_media_parts(stream=BytesIO(b"video"), original_filename="long.mp4", mime_type="video/mp4",
+        byte_count=5,max_output_bytes=10,media_clip_start_seconds=3600,media_clip_end_seconds=3630,
+        runner=runner,temporary_directory=str(tmp_path)) as batch:
+        assert batch.duration_seconds == 30 and batch.parts[0].stream.read() == b"clip"
+    assert len([command for command in commands if command[0] == "ffmpeg"]) == 1
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_unselected_over_limit_video_is_rejected_before_audio_extraction(tmp_path):
+    from studio_api.media_preparation import MediaPreparationError, prepare_elevenlabs_media_parts
+    commands = []
+    def runner(command, **kwargs):
+        commands.append(command)
+        assert command[0] == "ffprobe", "inadmissible full video must not start encoding"
+        return subprocess.CompletedProcess(command,0,stdout="46800")
+    with pytest.raises(MediaPreparationError, match="media_duration_too_long"):
+        with prepare_elevenlabs_media_parts(stream=BytesIO(b"video"),original_filename="long.mp4",mime_type="video/mp4",
+            byte_count=5,max_output_bytes=10,runner=runner,temporary_directory=str(tmp_path)):
+            pytest.fail("over-limit final recording cannot reach provider preparation")
+    assert len(commands) == 1 and list(tmp_path.iterdir()) == []

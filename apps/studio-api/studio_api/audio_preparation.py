@@ -47,6 +47,9 @@ class AudioPreparationReason(str, Enum):
     processing_failed = "processing_failed"
     processing_timeout = "processing_timeout"
     output_too_large = "output_too_large"
+    timeline_unavailable = "timeline_unavailable"
+    no_retained_audio = "no_retained_audio"
+    output_copy_changed = "output_copy_changed"
 
 
 class AudioPreparationError(RuntimeError):
@@ -381,6 +384,8 @@ def build_ffmpeg_command(
     *,
     concat_list_path: Path | None = None,
     creation_time: datetime | None = None,
+    retained_recipe=None,
+    filter_script_path: Path | None = None,
 ) -> list[str]:
     preview = build_preview(probes, (), options)
     if len(input_paths) != len(probes) or not input_paths:
@@ -409,7 +414,12 @@ def build_ffmpeg_command(
         command.extend(["-y", str(output_path)])
         return command
     command = ["ffmpeg", "-v", "error", "-xerror"]
-    for path in input_paths:
+    tracks = {track.position: track for track in retained_recipe.tracks} if retained_recipe else {}
+    for index, path in enumerate(input_paths):
+        if index in tracks:
+            track = tracks[index]
+            command.extend(["-ss", format(track.seek_sample / track.sample_rate, ".12f"),
+                            "-t", format(track.decoded_samples / track.sample_rate, ".12f")])
         command.extend(["-i", str(path)])
     filters = []
     labels = []
@@ -420,6 +430,14 @@ def build_ffmpeg_command(
         local_end = min(probes[index].duration_seconds, end - offset)
         offset += probes[index].duration_seconds
         if local_end <= local_start:
+            continue
+        if retained_recipe:
+            track = tracks.get(index)
+            if track is None or not track.kept:
+                continue
+            label = f"a{index}"
+            filters.append(f"[{index}:a:0]{','.join(track.filter_chain(options.mono_mode))}[{label}]")
+            labels.append(f"[{label}]")
             continue
         chain = []
         if local_start > 0 or local_end < probes[index].duration_seconds:
@@ -446,7 +464,15 @@ def build_ffmpeg_command(
         output_label = "[outa]"
     else:
         output_label = labels[0]
-    command.extend(["-filter_complex", ";".join(filters), "-map", output_label])
+    if retained_recipe:
+        if filter_script_path is None:
+            raise AudioPreparationError(AudioPreparationReason.invalid_input)
+        # Keep the graph out of platform-specific argv length limits. It only
+        # contains validated numeric sample ranges and fixed filter names.
+        filter_script_path.write_text(";".join(filters), encoding="utf-8")
+        command.extend(["-filter_complex_script", str(filter_script_path), "-map", output_label])
+    else:
+        command.extend(["-filter_complex", ";".join(filters), "-map", output_label])
     if options.output_format is AudioOutputFormat.wav:
         command.extend(["-c:a", "pcm_s16le", "-f", "wav"])
     else:

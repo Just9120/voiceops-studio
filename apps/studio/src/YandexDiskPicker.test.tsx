@@ -39,6 +39,8 @@ describe("Disk picker", () => {
     const choose = screen.getByRole("button", { name: "Выбрать эту папку" });
     await waitFor(() => expect(choose).toBeEnabled());
     fireEvent.click(choose);
+    expect(selected).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "Подтвердить выбор (0)" }));
     await waitFor(() => expect(selected).toHaveBeenCalledWith({ resources: [], folder: expect.objectContaining({ is_folder: true }) }));
   });
 
@@ -58,6 +60,8 @@ describe("Disk picker", () => {
     const choose = screen.getByRole("button", { name: "Выбрать эту папку" });
     await waitFor(() => expect(choose).toBeEnabled());
     fireEvent.click(choose);
+    expect(selected).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "Подтвердить выбор (2)" }));
     await waitFor(() => expect(selected).toHaveBeenCalled());
     expect(selected.mock.calls[0][0].resources.map((item: { name: string }) => item.name)).toEqual(["one.flac", "two.flac"]);
     expect(seen).toEqual(["disk:/", "disk:/one.flac", "disk:/two.flac"]);

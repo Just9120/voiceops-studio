@@ -5,6 +5,7 @@ import json
 
 MODEL_OPTION = "_stt_model"
 SUPPORTED_MODELS = {
+    ("nemotron", "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B"): "nemotron_35_transcribe_local",
     ("mistral", "voxtral-small-transcribe-3"): "mistral_voxtral_small_transcribe_3",
     ("gemini", "gemini-3.5-transcribe"): "gemini_35_transcribe",
     ("tbank", "default"): "tbank_default",
@@ -18,7 +19,7 @@ def selected_provider(explicit, credential=None) -> str:
     # The job is the durable selection; mutable/deleted credentials are fallback
     # only for legacy jobs that predate explicit provider selection.
     value = str(explicit or credential or "").strip().lower()
-    return value if value in {"elevenlabs", "yandex", "mistral", "gemini", "tbank"} else "unknown"
+    return value if value in {"elevenlabs", "yandex", "mistral", "gemini", "tbank", "nemotron"} else "unknown"
 
 
 def stored_model(options_json: str | None) -> str | None:
@@ -55,24 +56,55 @@ def source_provenance(db, snapshot):
     and the preparation recipe supply provenance even after their bytes expire.
     No filename matching or foreign-owner inference is permitted.
     """
-    from sqlalchemy import or_, select
-    from .models import AudioPreparationJob, Project
+    from sqlalchemy import and_, or_, select
+    from .models import AudioPreparationJob, AudioPreparationStatus, Project
+    from .audio_export_receipt import AudioExportReceipt
+    from .media_context import parse_prepared_audio_context
+    from .transcript_timeline import recorded_transcript_clock
 
+    context = parse_prepared_audio_context(getattr(snapshot, "prepared_audio_context_json", None))
     filters = [AudioPreparationJob.output_source_id == snapshot.source_id]
     if snapshot.drive_file_id:
-        filters.append(AudioPreparationJob.output_drive_file_id == snapshot.drive_file_id)
-    prepared = db.execute(select(AudioPreparationJob).where(
+        drive_filter = AudioPreparationJob.output_drive_file_id == snapshot.drive_file_id
+        filters.append(and_(drive_filter, AudioPreparationJob.id == context["job_id"])
+            if context and context.get("version") == 2 else drive_filter)
+    candidates = db.execute(select(AudioPreparationJob).where(
         AudioPreparationJob.owner_user_id == snapshot.job_owner_user_id,
         AudioPreparationJob.project_id == snapshot.source_project_id,
         or_(*filters),
     ).order_by(AudioPreparationJob.id).limit(2)).scalars().all()
     lines = [f"Source: {snapshot.source_id} · {_line(snapshot.original_filename)}"]
+    clock, _, clock_digest = recorded_transcript_clock(db, job_id=snapshot.job_id, job_source_id=snapshot.job_source_id)
+    if clock_digest:
+        # Compared before/after external output, stripped by compact_provenance.
+        lines.append(f"Source clock receipt: {clock_digest}")
+        lines.append("Timeline: original recording" if clock == "original" else "Timeline: prepared audio; original clock unavailable")
+    prepared = []
+    for candidate in candidates:
+        # A retired local output Source has an exact database relationship.
+        if candidate.output_source_id == snapshot.source_id:
+            prepared.append(candidate)
+        elif context and context.get("version") == 2 and candidate.id == context["job_id"]:
+            receipt = AudioExportReceipt.parse(candidate.output_drive_receipt_json)
+            if (candidate.status is not AudioPreparationStatus.completed
+                    or receipt.file_id != snapshot.drive_file_id or receipt.size_bytes != snapshot.size_bytes
+                    or receipt.sha256 != context["content_sha256"]):
+                raise ValueError("prepared source content changed")
+            prepared.append(candidate)
+    if context and context.get("version") == 2 and not prepared:
+        raise ValueError("prepared source provenance unavailable")
     if not prepared:
+        if candidates:
+            # The same external ID alone proves neither bytes nor a recipe.
+            # In particular, an export's createdTime is not a recording date.
+            return tuple(lines), None, None
         return tuple(lines), snapshot.source_created_at, snapshot.source_created_at_provenance
     if len(prepared) != 1:
         raise ValueError("ambiguous preparation provenance")
     preparation = prepared[0]
-    lines += [f"Preparation: {preparation.id}", "Timeline: prepared audio", f"Transformations: {_line(preparation.options_json)}"]
+    lines += [f"Preparation: {preparation.id}", f"Transformations: {_line(preparation.options_json)}"]
+    if clock == "legacy":
+        lines.append("Timeline: prepared audio")
     dates = []
     originals = []
     inputs = preparation.inputs

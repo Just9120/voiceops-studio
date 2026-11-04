@@ -1,6 +1,8 @@
 import { openYandexDiskPicker, diskFailureMessage, type DiskPickerMode } from "./YandexDiskPicker";
 import { parseProjectSourceCollection } from "./projectCollectionContracts";
 import { YandexDiskConnectionPanel } from "./YandexDiskConnectionPanel";
+import { LocalExecutionPanel } from "./LocalExecutionPanel";
+import { localDeviceReady, localDeviceStatus, localExecutionFailure, useLocalExecutionDevices } from "./localExecutionContracts";
 import { auditLabel } from "./auditLabels";
 import { useFormDraft, readFormDraft, clearFormDrafts } from "./formDrafts";
 import { composerDraftRows } from "./composerDraft";
@@ -83,6 +85,7 @@ import {
   reconcileOptimisticSources,
   preparedAudioContext,
   knownSourceDurationSeconds,
+  sourceFragmentUnavailableReason,
   sourceСтатусLabel,
   type Source,
 } from "./sourceModel";
@@ -1704,11 +1707,15 @@ function PreparationPanel({
       notice.panelId !== localUploadPanelId,
   );
   const [rows, setRows] = useState<ComposerRow[]>(() => [newComposerRow()]);
+  const [segmentCountDrafts, setSegmentCountDrafts] = useState<Record<string, string>>({});
   const [selectedProvider, setSelectedProvider] =
     useState<SttProvider>("elevenlabs");
   const [operatingMode, setOperatingMode] =
     useState<SttOperatingMode>("standard");
   const [selectedCredentialId, setSelectedCredentialId] = useState("");
+  const [selectedLocalDeviceId, setSelectedLocalDeviceId] = useState("");
+  const localDevices = useLocalExecutionDevices(selectedProvider === "nemotron");
+  const selectedLocalDevice = localDevices.items.find(row => row.id === selectedLocalDeviceId);
   const [languageMode, setLanguageMode] = useState<TranscriptionLanguageMode>(
     DEFAULT_TRANSCRIPTION_LANGUAGE_MODE,
   );
@@ -1853,6 +1860,7 @@ function PreparationPanel({
     setLanguageMode(DEFAULT_TRANSCRIPTION_LANGUAGE_MODE);
     setDiarizationEnabled(false);
     setSelectedDictionaryIds([]);
+    setSelectedLocalDeviceId("");
     setRecentlyAddedRow(null);
     setRowAdditionStatus("");
     setRemovedRow(null);
@@ -1862,15 +1870,16 @@ function PreparationPanel({
   const [removedRow, setRemovedRow] = useState<{ row: ComposerRow; index: number } | null>(null);
   const titleBeforeEdit = useRef(new Map<string, string>());
   const [composerRestored, setComposerRestored] = useState(false);
-  useFormDraft(`batch:${project.id}`, { rows: composerDraftRows(rows), selectedProvider, operatingMode, languageMode, diarizationEnabled }, (value) => {
+  useFormDraft(`batch:${project.id}`, { rows: composerDraftRows(rows), selectedProvider, selectedLocalDeviceId, operatingMode, languageMode, diarizationEnabled }, (value) => {
     if (!value || typeof value !== "object") return;
     const draft = value as Record<string, unknown>;
     const restored = composerDraftRows(draft.rows);
     if (!restored) return;
     setRows(restored);
-    if (["elevenlabs", "yandex", "tbank", "mistral", "gemini"].includes(String(draft.selectedProvider))) setSelectedProvider(draft.selectedProvider as SttProvider);
+    if (["elevenlabs", "yandex", "tbank", "mistral", "gemini", "nemotron"].includes(String(draft.selectedProvider))) setSelectedProvider(draft.selectedProvider as SttProvider);
     if (["economic", "standard", "premium"].includes(String(draft.operatingMode))) setOperatingMode(draft.operatingMode as SttOperatingMode);
     if (["ru", "en", "detect"].includes(String(draft.languageMode))) setLanguageMode(draft.languageMode as TranscriptionLanguageMode);
+    if (typeof draft.selectedLocalDeviceId === "string" && /^[a-f0-9-]{36}$/.test(draft.selectedLocalDeviceId)) setSelectedLocalDeviceId(draft.selectedLocalDeviceId);
     if (typeof draft.diarizationEnabled === "boolean") setDiarizationEnabled(draft.diarizationEnabled);
     setComposerRestored(true);
   });
@@ -2101,6 +2110,7 @@ function PreparationPanel({
     selectedProvider,
     operatingMode,
     selectedDictionaryIds,
+    selectedLocalDeviceId,
   );
   useEffect(() => {
     if (preflight && preflight.signature !== signature) {
@@ -2160,8 +2170,17 @@ function PreparationPanel({
     driveSourcePickerEnabled && sourceUploadPolicy,
   );
 
+  const invalidSegmentCountRowIds = new Set(rows.filter((row) => {
+    const draft = segmentCountDrafts[row.id];
+    if (!row.segmentation_enabled || draft === undefined) return false;
+    const count = Number(draft);
+    return !/^\d+$/.test(draft) || !Number.isInteger(count) || count < 1 || count > MAX_BATCH_ITEMS;
+  }).map((row) => row.id));
   const rowReadinessResults = rows.map((row, index) => {
     const rowNumber = index + 1;
+    if (invalidSegmentCountRowIds.has(row.id)) {
+      return { ready: false, reason: `Задача ${rowNumber}: введите целое число фрагментов от 1 до ${MAX_BATCH_ITEMS}` };
+    }
     if (!row.source_id) {
       return { ready: false, reason: `Задача ${rowNumber}: выберите источник` };
     }
@@ -2186,7 +2205,7 @@ function PreparationPanel({
       };
     }
     const segmentIssue = row.segmentation_enabled
-      ? composerSegmentPlanIssue(row.segments, knownSourceDurationSeconds(sourceById(row.source_id)))
+      ? sourceFragmentUnavailableReason(sourceById(row.source_id)) ?? composerSegmentPlanIssue(row.segments, knownSourceDurationSeconds(sourceById(row.source_id)))
       : null;
     if (segmentIssue) {
       return {
@@ -2207,7 +2226,11 @@ function PreparationPanel({
   ).length;
   const firstReadinessBlocker =
     rowReadinessResults.find((result) => !result.ready)?.reason ?? "";
-  const credentialBlocker = credentialsLoading
+  const credentialBlocker = selectedProvider === "nemotron"
+    ? localDevices.error || (!localDevices.checkedAt ? "Проверяем локальные компьютеры…"
+      : !selectedLocalDevice ? "Выберите подключённый компьютер"
+      : !localDeviceReady(selectedLocalDevice) ? `${selectedLocalDevice.label}: ${localDeviceStatus(selectedLocalDevice)}` : "")
+    : credentialsLoading
     ? "Загрузка профилей STT…"
     : credentialsError
       ? credentialsError
@@ -2286,11 +2309,9 @@ function PreparationPanel({
   const canSubmit =
     !submitting &&
     batchSubmission === null &&
-    !credentialsLoading &&
-    !credentialsError &&
+    !credentialBlocker &&
     !providerBlocker &&
     !dictionaryBlocker &&
-    Boolean(selectedCredentialId) &&
     rows.length > 0 &&
     plannedJobCount <= MAX_BATCH_ITEMS &&
     rowReadinessResults.every((result) => result.ready) &&
@@ -3704,6 +3725,9 @@ function PreparationPanel({
         setMessage(
           "Появилась активная или неразрешённая предыдущая транскрибация. Задачи не созданы; проверьте план заново после разрешения её статуса.",
         );
+      } else if (err instanceof ApiError && apiErrorDetailReason(err)?.startsWith("local_device_")) {
+        setPreflight(null);
+        setMessage(localExecutionFailure(err));
       } else if (err instanceof ApiError && err.status === 409) {
         setPreflight(null);
         setMessage(
@@ -3741,7 +3765,7 @@ function PreparationPanel({
     e.preventDefault();
     setMessage("");
     if (submitting) return;
-    if (credentialsLoading || credentialsError || !selectedCredentialId) {
+    if (credentialBlocker) {
       setMessage(credentialBlocker || "Выберите активный профиль STT.");
       return;
     }
@@ -3773,6 +3797,7 @@ function PreparationPanel({
       selectedProvider,
       operatingMode,
       selectedDictionaryIds,
+      selectedLocalDeviceId,
     );
     const confirming = activePreflight !== null;
     if (batchSubmission) {
@@ -3831,7 +3856,9 @@ function PreparationPanel({
       await performBatchCreation(requestBody, key);
     } catch (err) {
       setMessage(
-        err instanceof ApiError && err.status === 422
+        selectedProvider === "nemotron" && err instanceof ApiError && apiErrorDetailReason(err)?.startsWith("local_device_")
+          ? localExecutionFailure(err)
+          : err instanceof ApiError && err.status === 422
           ? "План не прошёл проверку Studio. Исправьте файлы, папки или профиль STT."
           : "Не удалось проверить план. Задачи не созданы; повторите проверку.",
       );
@@ -5049,7 +5076,9 @@ function PreparationPanel({
                             Выбрана подготовленная версия записи: {formatMediaTimestamp(preparedContext.output_duration_ms / 1000)}
                             (исходники: {formatMediaTimestamp(preparedContext.input_duration_ms / 1000)}).
                             {preparedContext.pauses_removed ? " Длинные паузы сокращены." : " Длительность относится к результату подготовки."}
-                            {" "}Границы фрагментов задаются по этой версии, а не по исходной записи.
+                            {" "}{preparedContext.original_timeline_available === true
+                              ? "Границы фрагментов и таймкоды относятся к исходной записи до обрезки и сокращения пауз."
+                              : "Исходная шкала этой версии не сохранена. Можно обработать файл целиком; для фрагментов выберите исходный файл."}
                           </p>}
                           <span>
                             {selectedSource.source_type === "google_drive"
@@ -5224,10 +5253,15 @@ function PreparationPanel({
                         type="number"
                         min={1}
                         max={MAX_BATCH_ITEMS}
-                        value={row.segments.length}
+                        value={segmentCountDrafts[row.id] ?? row.segments.length}
+                        aria-invalid={invalidSegmentCountRowIds.has(row.id) || undefined}
+                        aria-describedby={invalidSegmentCountRowIds.has(row.id) ? `segment-count-error-${row.id}` : undefined}
                         onChange={(event) => {
-                          const count = Number(event.target.value);
+                          const draft = event.target.value;
+                          setSegmentCountDrafts((current) => ({ ...current, [row.id]: draft }));
+                          const count = Number(draft);
                           if (
+                            /^\d+$/.test(draft) &&
                             Number.isInteger(count) &&
                             count >= 1 &&
                             count <= MAX_BATCH_ITEMS
@@ -5240,8 +5274,22 @@ function PreparationPanel({
                             });
                           }
                         }}
+                        onBlur={() => {
+                          if (!invalidSegmentCountRowIds.has(row.id)) {
+                            setSegmentCountDrafts((current) => {
+                              const next = { ...current };
+                              delete next[row.id];
+                              return next;
+                            });
+                          }
+                        }}
                         aria-label={`Количество фрагментов задачи ${index + 1}`}
                       />
+                      {invalidSegmentCountRowIds.has(row.id) && (
+                        <small id={`segment-count-error-${row.id}`} className="error">
+                          Введите целое число от 1 до {MAX_BATCH_ITEMS}.
+                        </small>
+                      )}
                       <small className="muted">
                         Общая папка используется по умолчанию; ниже можно выбрать
                         отдельную папку. Максимум: {MAX_BATCH_ITEMS}.
@@ -5249,7 +5297,7 @@ function PreparationPanel({
                     </label>
                     <ol className="segment-editor-list">
                       {row.segments.map((segment, segmentIndex) => {
-                        const segmentIssue = composerSegmentPlanIssue([segment], knownSourceDurationSeconds(selectedSource))
+                        const segmentIssue = sourceFragmentUnavailableReason(selectedSource) ?? composerSegmentPlanIssue([segment], knownSourceDurationSeconds(selectedSource))
                           ?.replace("фрагмент 1:", `фрагмент ${segmentIndex + 1}:`);
                         const segmentErrorId = `segment-error-${row.id}-${segment.id}`;
                         return (
@@ -5425,7 +5473,7 @@ function PreparationPanel({
                     ? " — не включён"
                     : ""}
                 </option>
-                {([['tbank', 'Т-Банк VoiceKit'], ['mistral', 'Mistral Voxtral'], ['gemini', 'Google Gemini Transcribe']] as const).map(([id, name]) => <option key={id} value={id} disabled={providerCatalog.find((entry) => entry.provider === id)?.byok_enabled !== true}>{name}</option>)}
+                {([['tbank', 'Т-Банк VoiceKit'], ['mistral', 'Mistral Voxtral'], ['gemini', 'Google Gemini Transcribe'], ['nemotron', 'Локально · NVIDIA Nemotron']] as const).map(([id, name]) => <option key={id} value={id} disabled={providerCatalog.find((entry) => entry.provider === id)?.byok_enabled !== true}>{name}</option>)}
               </select>
             </label>
             {visibleBatchModes.length > 1 ? (
@@ -5471,20 +5519,19 @@ function PreparationPanel({
             ) : null}
             {selectedModeCapability && (
               <details className="technical-details"><summary>Подробнее о режиме провайдера</summary><p className="muted stt-mode-explanation">
-                {sttModeExplanation(selectedModeCapability)}. Стоимость здесь не
-                сравнивается: провайдер не передал подтверждённые тарифы по режимам.
+                {sttModeExplanation(selectedModeCapability)}. {selectedProvider === "nemotron" ? "Распознавание выполняется на вашем компьютере без обращения к платному STT API." : "Стоимость здесь не сравнивается: провайдер не передал подтверждённые тарифы по режимам."}
               </p></details>
             )}
             {selectedModeCapability?.notes?.map((note) => <p className="muted" key={note}>{note}</p>)}
-            {selectedCredentialId && !credentialsError && !providerBlocker && (
+            {selectedProvider !== "nemotron" && selectedCredentialId && !credentialsError && !providerBlocker && (
               <span className="provider-ready">Профиль подключения выбран</span>
             )}
             <p className="muted">
-              Ключи создаются и изменяются только в настройках.
+              {selectedProvider === "nemotron" ? "Компьютеры подключаются в настройках. Выбранный компьютер должен оставаться включённым и на связи." : "Ключи создаются и изменяются только в настройках."}
             </p>
           </div>
-          {credentialsLoading && <p role="status">Загрузка подключения…</p>}
-          {credentialsError && (
+          {selectedProvider !== "nemotron" && credentialsLoading && <p role="status">Загрузка подключения…</p>}
+          {selectedProvider !== "nemotron" && credentialsError && (
             <div className="notice" role="alert">
               <p>{credentialsError}</p>
               <button type="button" onClick={loadCredentials}>
@@ -5497,7 +5544,7 @@ function PreparationPanel({
               {providerBlocker}
             </p>
           )}
-          {!credentialsLoading &&
+          {selectedProvider !== "nemotron" && !credentialsLoading &&
             !credentialsError &&
             activeProviderCredentials.length === 0 && (
               <div>
@@ -5521,7 +5568,7 @@ function PreparationPanel({
                 </button>
               </div>
             )}
-          {!credentialsLoading &&
+          {selectedProvider !== "nemotron" && !credentialsLoading &&
             !credentialsError &&
             activeProviderCredentials.length > 1 && (
               <label className="profile-selector">
@@ -5553,6 +5600,18 @@ function PreparationPanel({
                 </select>
               </label>
             )}
+          {selectedProvider === "nemotron" && <div>
+            <label className="profile-selector">Компьютер для распознавания
+              <select aria-label="Компьютер для распознавания" value={selectedLocalDeviceId} onChange={event => setSelectedLocalDeviceId(event.target.value)}>
+                <option value="">Выберите компьютер</option>
+                {selectedLocalDeviceId && !selectedLocalDevice && <option value={selectedLocalDeviceId}>Ранее выбранный компьютер недоступен</option>}
+                {localDevices.items.map(row => <option key={row.id} value={row.id}>{row.label} · {localDeviceStatus(row)}</option>)}
+              </select>
+            </label>
+            {credentialBlocker && <p className="notice" role="status">{credentialBlocker}</p>}
+            <div className="actions"><button type="button" disabled={localDevices.loading} onClick={() => void localDevices.refresh()}>{localDevices.loading ? "Проверяем компьютеры…" : "Обновить компьютеры"}</button>
+              <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("studio:navigate-settings", { detail: { section: "connections" } }))}>Подключить компьютер</button></div>
+          </div>}
           <label className="profile-selector">
             Язык транскрибации
             <select
@@ -5569,7 +5628,7 @@ function PreparationPanel({
             >
               <option value="ru">Русский</option>
               <option value="en">Английский</option>
-              <option value="detect">Автоопределение</option>
+              <option value="detect" disabled={selectedProvider === "nemotron"}>Автоопределение</option>
             </select>
           </label>
           <label
@@ -5773,6 +5832,8 @@ function PreparationPanel({
                 const segment = row?.segments.find(
                   (candidate) => candidate.id === expandedItem?.segment_id,
                 );
+                const rowSource = row ? sourceById(row.source_id) : null;
+                const preparedInfo = rowSource ? preparedAudioContext(rowSource) : null;
                 const clipLabel = item.media_clip
                   ? `${item.media_clip.start_seconds === 0 ? "Начало" : formatSegmentBoundary(item.media_clip.start_seconds ?? 0)} — ${item.media_clip.end_seconds === null ? "конец" : formatSegmentBoundary(item.media_clip.end_seconds)}`
                   : null;
@@ -5792,11 +5853,14 @@ function PreparationPanel({
                       </span>
                       <span>
                         Размер: {formatBytes(item.source.size_bytes)} ·{" "}
-                        Длительность:{" "}
+                        {preparedInfo ? "Длительность подготовленного файла:" : "Длительность:"}{" "}
                         {item.source.duration_seconds == null
                           ? "будет определена при подготовке"
                           : `${Math.round(item.source.duration_seconds)} сек.`}
                       </span>
+                      {preparedInfo?.original_timeline_available === true && (
+                        <span>Шкала исходной записи: {formatMediaTimestamp(preparedInfo.input_duration_ms / 1000)}. Границы части файла относятся к этой шкале.</span>
+                      )}
                       <span>{matchLabel}</span>
                       {clipLabel && <span>Часть файла: {clipLabel}</span>}
                       {providerAuthorityLabel && (
@@ -8866,8 +8930,10 @@ function SettingsPage({
           <h3>Ключи провайдеров</h3>
           <p className="notice">
             Ключи не сохраняются в браузере и никогда не отображаются обратно.
-            Обычная и Live-транскрибации поддерживают включённые оператором
-            профили ElevenLabs и Yandex SpeechKit. OpenAI key можно безопасно
+            Обычная транскрибация поддерживает включённые оператором профили
+            ElevenLabs, Yandex SpeechKit, Т-Банк VoiceKit, Mistral Voxtral и Google Gemini.
+            Live доступен для ElevenLabs и Yandex SpeechKit. Для запуска нужен
+            активный ключ выбранного сервиса. OpenAI key можно безопасно
             хранить для будущих интеграций, но текущий execution flow его не
             использует.
           </p>
@@ -9066,6 +9132,7 @@ function SettingsPage({
           </div>
           <SttDictionariesPanel csrf={csrf} onCsrf={onCsrf} />
           <YandexDiskConnectionPanel csrf={csrf} onCsrf={onCsrf} />
+          <LocalExecutionPanel key={user.email} csrf={csrf} onCsrf={onCsrf} />
           <h3>Google Drive</h3>
           <p
             className={
@@ -9853,7 +9920,7 @@ function DiagnosticsSettings({
             <dl className="meta">
               <dt>Встроенный мониторинг</dt>
               <dd>{alertSignalLabel(system.alerts?.incident_monitoring)}</dd>
-              <dt>Telegram</dt>
+              <dt>Telegram для операторских предупреждений</dt>
               <dd>{alertTransportLabel(system.alerts?.telegram)}</dd>
               <dt>Email</dt>
               <dd>{alertTransportLabel(system.alerts?.email ?? system.health?.email?.status)}</dd>
@@ -9862,6 +9929,10 @@ function DiagnosticsSettings({
               <dt>Остаток API credits</dt>
               <dd>{alertSignalLabel(system.alerts?.api_limit)}</dd>
             </dl>
+            <p className="muted">
+              Это каналы технических предупреждений оператору. Telegram-уведомления
+              о готовности ваших задач настраиваются отдельно в разделе «Уведомления».
+            </p>
             {(system.alerts?.incidents ?? []).filter((incident) => incident.status !== "resolved").length === 0 ? (
               <p className="notice" role="status">Активных системных предупреждений нет.</p>
             ) : (

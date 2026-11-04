@@ -382,3 +382,110 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
     }
   });
 }
+
+
+for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:1280,height:720}]) {
+  test(`local PC settings preserve usable actions and one-time keys at ${viewport.width}px`, async ({page}) => {
+    await page.setViewportSize(viewport);
+    await fixtures(page);
+    const now = new Date().toISOString();
+    const makeDevice = (index: number, label: string, runtime_status: string, online = true) => ({
+      id: `00000000-0000-4000-8000-${String(index).padStart(12,'0')}`, label,
+      credential_revision: 1, online, ready: online && runtime_status === 'ready', runtime_status,
+      runtime_version: '0.2.0+nightly.66d50d9', model: 'NVIDIA-Nemotron-3.5-Transcribe-30B-A4B',
+      last_seen_at: online ? now : new Date(Date.now()-120000).toISOString(), revoked_at: null,
+    });
+    let devices = [makeDevice(1,'Desktop'.repeat(11)+'PC','ready'), makeDevice(2,'Без модели','model_missing'),
+      makeDevice(3,'Без обработчика','runtime_missing'), makeDevice(4,'Отключённый ПК','unknown',false)];
+    const token = `vs-local.00000000-0000-4000-8000-000000000005.${'A'.repeat(43)}`;
+    let pairings = 0;
+    await page.route('**/api/local-execution/devices', async route => {
+      if (route.request().method() === 'POST') {
+        pairings++;
+        const body = route.request().postDataJSON();
+        expect(body.label).toBe('Тестовый компьютер');
+        expect(body.creation_key).toMatch(/^[a-f0-9-]{36}$/);
+        const device = makeDevice(5,body.label,'unknown',false);
+        devices = [...devices,device];
+        await route.fulfill({json:{device,pairing_token:token}});
+      } else await route.fulfill({json:{devices}});
+    });
+    await page.goto('/settings/connections');
+    const panel = page.getByRole('article').filter({has:page.getByRole('heading',{name:'Локальный компьютер · NVIDIA Nemotron'})});
+    await expect(panel.getByText('Готов к работе',{exact:true})).toBeVisible();
+    await expect(panel.getByText('Файлы модели не найдены',{exact:true})).toBeVisible();
+    await expect(panel.getByText('Обработчик не найден',{exact:true})).toBeVisible();
+    await expect(panel.getByText('Компьютер не на связи',{exact:true})).toBeVisible();
+    await noHorizontalOverflow(page);
+    const actions = panel.getByRole('button',{name:'Действия компьютера Без модели',exact:true});
+    await actions.focus(); await page.keyboard.press('Enter');
+    await expect(page.getByRole('menuitem',{name:'Отозвать доступ',exact:true})).toBeVisible();
+    await page.keyboard.press('Escape'); await expect(actions).toBeFocused();
+    await actions.click(); await page.getByRole('menuitem',{name:'Отозвать доступ',exact:true}).click();
+    const confirm = page.getByRole('dialog',{name:'Отозвать доступ «Без модели»?'});
+    await expect(confirm).toBeVisible(); await noHorizontalOverflow(page);
+    await page.keyboard.press('Escape'); await expect(confirm).not.toBeVisible();
+    await expect(actions).toBeFocused();
+    await panel.getByLabel('Название компьютера',{exact:true}).fill('Тестовый компьютер');
+    await panel.getByRole('button',{name:'Подключить компьютер',exact:true}).click();
+    const secret = panel.getByLabel('Ключ подключения',{exact:true});
+    await expect(secret).toHaveAttribute('type','password'); await expect(secret).toHaveValue(token);
+    await noHorizontalOverflow(page);
+    expect(await page.evaluate(value => [...Object.values(localStorage),...Object.values(sessionStorage)].some(item=>item.includes(value)),token)).toBe(false);
+    await panel.getByRole('button',{name:'Скрыть ключ',exact:true}).click();
+    await expect(secret).toHaveCount(0);
+    await page.reload();
+    await expect(panel.getByText('Тестовый компьютер',{exact:true})).toBeVisible();
+    await expect(secret).toHaveCount(0); expect(pairings).toBe(1);
+    await noHorizontalOverflow(page);
+  });
+}
+
+test('Live local recovery migrates legacy text and isolates independently cleared sessions', async ({page}) => {
+  await page.goto('/about.html');
+  const result = await page.evaluate(async () => {
+    const databaseName = 'studio-realtime-recovery';
+    const owner = 'synthetic-owner';
+    const projectId = 'synthetic-project';
+    const legacy = {key: `${owner}:${projectId}`, owner_user_id: owner, project_id: projectId,
+      client_session_id: 'legacy_session_123456789', revision: 1, committed_segments: ['legacy retained text'],
+      partial: '', updated_at: '2026-01-01T00:00:00Z', expires_at: '2026-01-02T00:00:00Z'};
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 1);
+      request.onupgradeneeded = () => request.result.createObjectStore('drafts', {keyPath:'key'});
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const database = request.result;
+        const transaction = database.transaction('drafts', 'readwrite');
+        transaction.objectStore('drafts').put(legacy);
+        transaction.oncomplete = () => { database.close(); resolve(); };
+        transaction.onerror = () => { database.close(); reject(transaction.error); };
+      };
+    });
+    const modulePath = '/src/realtimeDrafts.ts';
+    const drafts = await import(modulePath);
+    const recovered = await drafts.loadLocalRealtimeDraft(owner, projectId);
+    const first = drafts.makeRealtimeDraft({ownerUserId:owner, projectId,
+      clientSessionId:'new_session_123456789a', revision:1, committedSegments:['first tab'], partial:''});
+    const second = drafts.makeRealtimeDraft({ownerUserId:owner, projectId,
+      clientSessionId:'new_session_123456789b', revision:1, committedSegments:['second tab'], partial:''});
+    await Promise.all([drafts.saveLocalRealtimeDraft(first), drafts.saveLocalRealtimeDraft(second)]);
+    const before = await drafts.listLocalRealtimeDrafts(owner, projectId);
+    await drafts.deleteLocalRealtimeDraft(owner, projectId, first.client_session_id);
+    let lateRejected = false;
+    try { await drafts.saveLocalRealtimeDraft({...first, revision:999}); }
+    catch (error) { lateRejected = error instanceof Error && error.message === 'realtime_draft_cleared'; }
+    const after = await drafts.listLocalRealtimeDrafts(owner, projectId);
+    const otherOwner = await drafts.listLocalRealtimeDrafts('other-owner', projectId);
+    const otherProject = await drafts.listLocalRealtimeDrafts(owner, 'other-project');
+    const cleared = await drafts.loadLocalRealtimeDraft(owner, projectId, new Date(), first.client_session_id);
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.deleteDatabase(databaseName);
+      request.onsuccess = () => resolve(); request.onerror = () => reject(request.error);
+    });
+    return {legacy: recovered?.committed_segments, before: before.length, after: after.map((row: {client_session_id:string}) => row.client_session_id).sort(),
+      lateRejected, cleared, otherOwner:otherOwner.length, otherProject:otherProject.length};
+  });
+  expect(result).toEqual({legacy:['legacy retained text'], before:3,
+    after:['legacy_session_123456789','new_session_123456789b'], lateRejected:true, cleared:null, otherOwner:0, otherProject:0});
+});

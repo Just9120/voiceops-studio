@@ -1,4 +1,7 @@
 export const AUDIT_EVENT_LABELS: Record<string, string> = {
+    "local_device.paired": "Компьютер подключён для локальной обработки",
+    "local_device.rotated": "Ключ локального компьютера обновлён",
+    "local_device.revoked": "Доступ локального компьютера отозван",
     "google.connected": "Google Drive подключён",
     "google.disconnected": "Google Drive отключён",
     "google.oauth_started": "Начато подключение Google Drive",

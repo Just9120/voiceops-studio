@@ -553,8 +553,11 @@ for every snapshot. Repository configuration alone does not prove that the
 host timer is enabled or that a scheduled backup succeeded. Confirm those
 conditions and the latest snapshot age from host/backup records before recovery.
 The former fixed12-hour personal RPO and10-hour Studio schedule were superseded
-by the owner25Oct2026 in favour of Cloudkeep scheduling. A replacement guaranteed
-RPO is UNSET; a schedule and SQL delivery records alone do not establish it.
+by the owner25Oct2026 in favour of Cloudkeep scheduling. On04Nov2026 the owner
+set RPO to four days (345600 seconds), preserving the shared every-three-days
+schedule. CloudKeep retains the three most recent verified copies of each
+database separately at each destination; this is a count policy, not a day TTL.
+A schedule and copy/verify records alone do not establish recovery RPO.
 The4-hour RTO remains unchanged. Recovery measurements must identify the actual
 selected Cloudkeep version/target, available Studio decryption keys and complete
 application recovery. Existing R2 pre-migration snapshots remain in use.
@@ -592,7 +595,7 @@ nonce verification; performs a real custom-format PostgreSQL dump and restore
 of current-model synthetic data with encrypted Live drafts; and removes only
 its verified containers. Its report includes snapshot age at the synthetic incident, one measured post-snapshot metadata loss, and elapsed time
 to a quarantined restored state. The Linux suite requires this rehearsal;
-unavailable local Docker remains an explicit local limitation, not PASS. The default synthetic comparison retains the historical12h/4h reference solely as a regression fixture; it is not the current Cloudkeep RPO or production recovery Evidence. Current Cloudkeep RPO is UNSET and RTO4h. An explicit diagnostic override must supply both `--rpo-seconds` and `--rto-seconds`. Invalid or one-sided targets fail before container creation. The loss window is measured at the incident, excluding subsequent restore time; an exceeded RPO or already-over-budget quarantine fails. An in-budget quarantine reports full RTO as PENDING, never PASS, because service reactivation is outside that measurement.
+unavailable local Docker remains an explicit local limitation, not PASS. The default synthetic comparison retains the historical12h/4h reference solely as a regression fixture; it is not the current Cloudkeep RPO or production recovery Evidence. Current CloudKeep RPO is four days and RTO4h, as decided by the owner04Nov2026. An explicit diagnostic override must supply both `--rpo-seconds` and `--rto-seconds`. Invalid or one-sided targets fail before container creation. The loss window is measured at the incident, excluding subsequent restore time; an exceeded RPO or already-over-budget quarantine fails. An in-budget quarantine reports full RTO as PENDING, never PASS, because service reactivation is outside that measurement.
 
 The Linux integration test also checks authenticated application access on the
 restored synthetic target. The Linux host accesses the owned internal bridge
@@ -608,7 +611,7 @@ production restore, provider, Google or notification operation is performed.
 The quarantine statements in
 [recovery_quarantine.py](../../apps/studio-api/studio_api/recovery_quarantine.py)
 disable restored users, archive workspaces, revoke sessions/trusted devices/
-Google grants/provider credentials, suppress unsent notifications, and stop
+Google primary/maintenance and Yandex Disk grants/provider credentials, revoke Web Push subscriptions, disable restored notification preferences, suppress unsent notifications, and stop
 restored work and download slots with fenced leases. Text is retained encrypted
 for reconciliation. Apply them in one transaction **on the isolated restored
 copy before starting any runtime or allowing access**. The module is not an
@@ -623,6 +626,48 @@ source. This repository has no independent deletion ledger; if that evidence
 is unavailable, retain quarantine and stop. The measured time is restoration
 **to quarantine**, not proof of full service recovery, production RPO/RTO,
 R2 snapshot validity, Alembic role/grant compatibility or restored source bytes.
+
+### Qualified personal recovery boundary
+
+The04Nov2026 isolated qualification used the actual CloudKeep-created Studio
+custom dump SHA256`442bd085ef5e104402fa7ead254996b13de2e377787bfade471a5873f793c179`
+(snapshot07:24:42Z), not the synthetic fixture. Cached PostgreSQL17/API/Redis
+images, a private internal network, tmpfs databases and fresh candidate source
+were used without published ports or attaching production volumes. The copy
+upgraded0044→0045 and decrypted provider, Google primary/maintenance, Disk and
+TOTP records. The one-shot API probe had the candidate working directory so
+readiness compared the restored schema with the candidate Alembic head.
+
+Before isolated application access, a separately read, repeatable-read/read-only
+inventory from the still-running authoritative database supplied current user
+status, project ownership/archive/history cutoffs, source deletion/expiry,
+Live content HMAC/clear state, provider-cache HMACs and dismissed job controls.
+Source ownership was established through Project. The inventory contained no
+names, transcript text, URLs or credential values and stayed in private staging.
+It was read again immediately before the probe. Restored source deletion and
+expiry were reconciled conservatively; unavailable or changed cached content
+could not be reactivated. A synthetic stale Live draft, absent from this
+inventory, became an empty clear fence rather than accessible restored text.
+Original sessions, trusted devices, integrations, notifications and work remained
+quarantined. Only an in-process fresh session for the independently confirmed
+owner exercised project/source/Live reads; no listener or worker was started.
+
+Database/Redis health and authenticated application reads passed. Restore,
+migration, reconciliation and API verification took34.296s; the recorded
+download→transfer→application verification→cleanup interval was124.186s,
+below4h. The selected retained copy was42020.742s old at the simulated incident,
+below4days; it was not claimed to be the newest copy. All owned containers,
+network, remote staging and local dump/transfer archives were removed, with
+unchanged healthy production confirmed. Primary qualification run identity is
+recorded in the [delivery plan](../delivery-plan.md).
+
+This proves that isolated application boundary with the selected available
+backup, decryption key and current inventory. It does not prove recovery after
+loss of all current deletion evidence, re-enable original external grants, test
+real paid processing or perform production failover. If trusted deletion
+evidence is unavailable in a real incident, retain quarantine and escalate;
+the time target does not authorize restoring cleared data. Required current
+Linux role/release checks and exact-revision production delivery remain separate.
 
 ## Reference storage isolation
 

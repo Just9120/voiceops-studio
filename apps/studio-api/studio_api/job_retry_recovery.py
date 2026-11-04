@@ -30,6 +30,9 @@ AUTOMATIC_RETRY_TRANSIENT_FAILURES = {
     "provider_usage_accounting_unavailable",
 }
 AUTOMATIC_RETRY_BASE_SECONDS = 30
+PRE_PROVIDER_SAFE_FAILURES.add("media_timeline_unavailable")
+PRE_PROVIDER_SAFE_FAILURES.update({"local_input_unavailable", "local_model_unavailable", "local_runtime_unavailable",
+                                 "local_processing_failed", "local_worker_interrupted", "local_result_invalid", "local_device_offline", "local_device_revoked"})
 AUTOMATIC_RETRY_MAX_SECONDS = 300
 
 class RetryReason(str, Enum):
@@ -305,7 +308,7 @@ def _evaluate(db, job, *, mode: Literal["explicit", "recovery"], now: datetime|N
         if _has_output(db, rel.id): continue
         missing.append(rel)
         if _has_unresolved_reconciliation(db, rel.id): reason=RetryReason.output_reconciliation_required; continue
-        if job.provider in {"yandex", "gemini"}:
+        if job.provider in {"yandex", "gemini", "nemotron"}:
             from .job_cached_transcript import completed_yandex_result
             if completed_yandex_result(db, job, rel.id) is not None:
                 safe += 1; fully_cached_sources += 1; resumable_parts += 1; provider_total_parts += 1

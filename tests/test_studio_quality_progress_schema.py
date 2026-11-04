@@ -20,7 +20,8 @@ from studio_api import models  # noqa: F401
 def test_quality_progress_upgrade_old_schema_and_repeat_are_additive():
     scripts = ScriptDirectory.from_config(Config(str(API / "alembic.ini")))
     revision = scripts.get_revision("0044_quality_progress")
-    assert scripts.get_heads() == [revision.revision]
+    assert len(scripts.get_heads()) == 1
+    assert revision.revision in {item.revision for item in scripts.walk_revisions()}
     assert revision.down_revision == "0043_yandex_disk"
     assert revision.module.release_safety == "additive"
     engine = create_engine("sqlite:///:memory:")

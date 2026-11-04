@@ -586,6 +586,9 @@ h4,
 h5 {
   margin-top: 0;
 }
+.job-detail-subheading {
+  font-size: 0.83em;
+}
 code {
   display: inline-block;
   max-width: 100%;
@@ -832,6 +835,21 @@ code {
   gap: 1rem;
   align-items: flex-start;
 }
+.local-device-list {
+  list-style: none;
+  padding: 0;
+  min-width: 0;
+}
+.local-device-list > li {
+  flex-direction: row;
+  margin-block: 0.75rem;
+  min-width: 0;
+}
+.local-device-list > li > div:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -969,6 +987,9 @@ code {
   padding: 1rem;
   background: var(--studio-soft);
 }
+.live-session-history ul { list-style: none; padding: 0; display: grid; gap: 0.75rem; }
+.live-session-history li { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem; }
+.live-session-history li span { flex: 1 1 18rem; min-width: 0; overflow-wrap: anywhere; }
 .live-config-card .check-row {
   display: flex;
   align-items: flex-start;

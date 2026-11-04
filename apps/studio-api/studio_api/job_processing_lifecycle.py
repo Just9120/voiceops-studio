@@ -52,11 +52,12 @@ def begin_job_processing(db: Session, *, job_id: str, lease_owner_id: str, lease
     if job.status != JobStatus.queued:
         raise JobProcessingError(JobProcessingFailureReason.job_not_queued)
     _require_active_owner(job, lease_owner_id, lease_generation, now)
-    if not build_claim_readiness(job)["ready_for_future_claim"]:
+    if not build_claim_readiness(job, now=now)["ready_for_future_claim"]:
         raise JobProcessingError(JobProcessingFailureReason.job_not_ready)
     if job.cancel_requested_at is not None:
         raise JobProcessingError(JobProcessingFailureReason.cancellation_requested)
     job.status = JobStatus.processing
+    job.source_access_started_at = now
     job.attempt_count = (job.attempt_count or 0) + 1
     if job.started_at is None:
         job.started_at = now
@@ -70,7 +71,7 @@ def begin_job_processing(db: Session, *, job_id: str, lease_owner_id: str, lease
     return _result(job)
 
 
-def request_job_cancellation(db: Session, *, job_id: str, now: datetime) -> tuple[JobProcessingResult, bool, str | None]:
+def request_job_cancellation(db: Session, *, job_id: str, now: datetime, retire_part_checkpoints: bool = True) -> tuple[JobProcessingResult, bool, str | None]:
     job = _locked_job(db, job_id)
     if job is None:
         raise JobProcessingError(JobProcessingFailureReason.job_not_found)
@@ -93,13 +94,17 @@ def request_job_cancellation(db: Session, *, job_id: str, now: datetime) -> tupl
         event_type = "job.cancel_requested"
     if changed:
         if job.status == JobStatus.cancelled:
-            delete_provider_part_checkpoints(db, job_id=job.id)
+            # API owns the cancel decision, worker owns physical part rows.
+            # Terminal status fences reuse immediately; its existing bounded
+            # cleanup sweep retires those rows when inline deletion is forbidden.
+            if retire_part_checkpoints:
+                delete_provider_part_checkpoints(db, job_id=job.id)
             retire_cached_yandex_result(db, job_id=job.id)
         db.flush()
     return _result(job), changed, event_type
 
 
-def acknowledge_job_cancellation(db: Session, *, job_id: str, lease_owner_id: str, lease_generation: int, now: datetime) -> JobProcessingResult:
+def acknowledge_job_cancellation(db: Session, *, job_id: str, lease_owner_id: str, lease_generation: int, now: datetime, retire_part_checkpoints: bool = True) -> JobProcessingResult:
     job = _processing_job(db, job_id)
     if job.cancel_requested_at is None:
         raise JobProcessingError(JobProcessingFailureReason.cancellation_not_requested)
@@ -108,7 +113,8 @@ def acknowledge_job_cancellation(db: Session, *, job_id: str, lease_owner_id: st
     job.cancelled_at = now
     job.finished_at = now
     job.updated_at = now
-    delete_provider_part_checkpoints(db, job_id=job.id)
+    if retire_part_checkpoints:
+        delete_provider_part_checkpoints(db, job_id=job.id)
     retire_cached_yandex_result(db, job_id=job.id)
     invalidate_job_lease(job)
     finalize_job_provider_accounting(db, job=job, now=now)
@@ -151,6 +157,16 @@ def recover_expired_processing_job(db: Session, *, job_id: str, now: datetime) -
         job.finished_at = now
         delete_provider_part_checkpoints(db, job_id=job.id)
         retire_cached_yandex_result(db, job_id=job.id)
+    elif job.provider == "nemotron" and job.local_result_ready_at is None:
+        # A sleeping/offline PC is a visible recoverable failure, never an
+        # automatic paid dispatch or an indefinitely processing card.
+        from .job_retry_recovery import classify_source_attempt_failure
+        for relation in job.sources:
+            if relation.status != JobSourceStatus.skipped:
+                classify_source_attempt_failure(db, job_source_id=relation.id, failure_code="local_device_offline", now=now)
+        job.status = JobStatus.failed
+        job.finished_at = now
+        job.error_code = job.error_message = "local_device_offline"
     else:
         rel_ids=[r.id for r in db.execute(select(TranscriptionJobSource).where(TranscriptionJobSource.job_id==job.id, TranscriptionJobSource.status!=JobSourceStatus.skipped)).scalars().all()]
         output_count = db.execute(select(func.count(TranscriptionJobOutput.id)).where(TranscriptionJobOutput.job_id==job.id, TranscriptionJobOutput.job_source_id.in_(rel_ids or ["__none__"]))).scalar_one()

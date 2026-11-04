@@ -9,10 +9,11 @@ export type RealtimeCapability = {
   commit_strategy: "vad";
 };
 
+export type RealtimeWord = {text: string; start_seconds: number; end_seconds: number};
 export type RealtimeTranscriptEvent =
   | { kind: "session_started" }
-  | { kind: "partial"; text: string }
-  | { kind: "committed"; text: string; metadata?: RealtimeSegmentMetadata; timestampUpdate?: boolean }
+  | { kind: "partial"; text: string; words?: RealtimeWord[] }
+  | { kind: "committed"; text: string; metadata?: RealtimeSegmentMetadata; words?: RealtimeWord[]; timestampUpdate?: boolean }
   | { kind: "error"; code: string }
   | { kind: "ignored" };
 
@@ -166,31 +167,48 @@ export function parseRealtimeEvent(value: unknown): RealtimeTranscriptEvent {
       data.final_transcript,
   );
   if (!text) return { kind: "ignored" };
-  const metadata = transcriptEventMetadata(data);
+  const words = realtimeWords(data.words);
+  const wordPayload = words ? {words} : {};
+  const metadata = transcriptEventMetadata(data, words);
   if (eventType.includes("commit")) {
-    return { kind: "committed", text, ...(metadata ? { metadata } : {}), ...(eventType === "committed_transcript_with_timestamps" ? { timestampUpdate: true } : {}) };
+    return { kind: "committed", text, ...wordPayload, ...(metadata ? { metadata } : {}), ...(eventType === "committed_transcript_with_timestamps" ? { timestampUpdate: true } : {}) };
   }
   if (eventType === "final_transcript") {
-    return { kind: "partial", text };
+    return { kind: "partial", text, ...wordPayload };
   }
   if (eventType.includes("partial") || data.is_final === false) {
-    return { kind: "partial", text };
+    return { kind: "partial", text, ...wordPayload };
   }
   if (data.is_final === true) {
-    return { kind: "committed", text, ...(metadata ? { metadata } : {}) };
+    return { kind: "committed", text, ...wordPayload, ...(metadata ? { metadata } : {}) };
   }
-  return { kind: "partial", text };
+  return { kind: "partial", text, ...wordPayload };
 }
 
-function transcriptEventMetadata(data: Record<string, unknown>): RealtimeSegmentMetadata | undefined {
+function realtimeWords(value: unknown): RealtimeWord[] | undefined {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 20000) return undefined;
+  const result: RealtimeWord[] = [];
+  let length = 0;
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== "object") return undefined;
+    if (candidate.type === "spacing") continue;
+    const {text, start, end} = candidate;
+    if (typeof text !== "string" || !text || text.length > 20000 || typeof start !== "number" || typeof end !== "number"
+      || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start > end || end > 604800
+      || (result.length > 0 && start < result[result.length-1].start_seconds)) return undefined;
+    length += text.length;
+    if (length > 500000) return undefined;
+    result.push({text,start_seconds:start,end_seconds:end});
+  }
+  return result.length ? result : undefined;
+}
+
+function transcriptEventMetadata(data: Record<string, unknown>, words?: RealtimeWord[]): RealtimeSegmentMetadata | undefined {
   const index = data.final_index;
   const identity = typeof data.segment_id === "string" ? data.segment_id : Number.isInteger(index) && (index as number) >= 0 ? `index.${index}` : "timed";
   const metadata: RealtimeSegmentMetadata = { id: identity };
   let start = data.start_seconds, end = data.end_seconds;
-  if (Array.isArray(data.words) && data.words.length > 0 && data.words.length <= 20000) {
-    const words = data.words.filter((word) => word && typeof word === "object" && word.type !== "spacing");
-    if (words.length) { start ??= words[0].start; end ??= words[words.length - 1].end; }
-  }
+  if (words?.length) { start ??= words[0].start_seconds; end ??= words[words.length - 1].end_seconds; }
   if (typeof start === "number" && typeof end === "number") {
     metadata.start_seconds = start;
     metadata.end_seconds = end;

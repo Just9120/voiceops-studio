@@ -29,7 +29,7 @@ function requestTranscriptionAnalytics(
   projectId: string,
   signal?: AbortSignal,
 ) {
-  return api<unknown>(`/projects/${projectId}/transcription-analytics`, {
+  return api<unknown>(`/projects/${projectId}/transcription-analytics?include_local=true`, {
     signal,
     ignoredAbortReason: LATEST_REQUEST_CANCEL_REASON,
   });
@@ -297,7 +297,7 @@ export function TranscriptionAnalyticsPanel({
                   </span>
                   {(analytics.configuration.provider_model.yandex_general ?? 0) > 0 && <span>Yandex SpeechKit · general {analytics.configuration.provider_model.yandex_general}</span>}
                   {(analytics.configuration.provider_model.yandex_deferred_general ?? 0) > 0 && <span>Yandex SpeechKit · deferred-general {analytics.configuration.provider_model.yandex_deferred_general}</span>}
-                  {([['mistral_voxtral_small_transcribe_3', 'Mistral · Voxtral Small Transcribe 3'], ['gemini_35_transcribe', 'Google · Gemini 3.5 Transcribe'], ['tbank_default', 'Т-Банк · VoiceKit']] as const).map(([key, label]) => (analytics.configuration.provider_model[key] ?? 0) > 0 && <span key={key}>{label} {analytics.configuration.provider_model[key]}</span>)}
+                  {([['mistral_voxtral_small_transcribe_3', 'Mistral · Voxtral Small Transcribe 3'], ['gemini_35_transcribe', 'Google · Gemini 3.5 Transcribe'], ['tbank_default', 'Т-Банк · VoiceKit'], ['nemotron_35_transcribe_local', 'Локально · NVIDIA Nemotron 3.5']] as const).map(([key, label]) => (analytics.configuration.provider_model[key] ?? 0) > 0 && <span key={key}>{label} {analytics.configuration.provider_model[key]}</span>)}
                   {analytics.configuration.provider_model.unknown > 0 && (
                     <small>
                       Не определено:{" "}
@@ -417,7 +417,7 @@ export function TranscriptionAnalyticsPanel({
                 analytics.usage_cost.unavailable_jobs > 0) && (
                 <p className="notice" role="status">
                   Неподтверждённый исход: {analytics.usage_cost.uncertain_jobs} ·
-                  исторические задачи без учёта: {analytics.usage_cost.unavailable_jobs}.
+                  без подтверждённой стоимости API: {analytics.usage_cost.unavailable_jobs}.
                   Неподтверждённая часть не добавлена к сумме; уже подтверждённые
                   части таких задач учтены.
                 </p>

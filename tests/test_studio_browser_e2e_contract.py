@@ -18,7 +18,7 @@ def test_browser_e2e_uses_real_browser_api_and_isolated_service_state() -> None:
 
     assert package["scripts"]["test:e2e"] == "playwright test"
     assert package["devDependencies"]["@playwright/test"] == "1.61.1"
-    assert package["overrides"]["fast-uri"] == "3.1.8"
+    assert package["overrides"]["fast-uri"] == "3.1.9"
     assert "'/api': 'http://127.0.0.1:8000'" in vite
     assert "python -m uvicorn studio_api.main:app" in playwright
     assert "cwd: '../..'" in playwright

@@ -402,7 +402,7 @@ def _desired_import_values(
         source_value = _bounded_identity(
             metadata.source_identity.value,
             label="source",
-            maximum=256,
+            maximum=1024,
         )
 
     return {

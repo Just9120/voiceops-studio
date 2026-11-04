@@ -1,0 +1,8 @@
+{
+  "name": "@voiceops-studio/deepmerge",
+  "version": "4.3.1-voiceops.1",
+  "private": true,
+  "type": "commonjs",
+  "main": "index.cjs",
+  "license": "MIT"
+}

@@ -636,7 +636,7 @@ function installFocusedOutputFixture(options: OutputFixtureOptions = {}) {
         });
       if (url.endsWith("/api/auth/csrf"))
         return json({ csrf_token: "csrf-after-refresh" });
-      if (url.endsWith("/api/stt/providers"))
+      if (url.endsWith("/api/stt/providers?include_local=true"))
         return json(sttProviderCatalogFixture());
       if (url.endsWith("/api/stt/dictionaries"))
         return json({ dictionaries: [] });
@@ -1125,7 +1125,7 @@ describe("Studio PWA", () => {
             supported_mime_prefixes: ["audio/", "video/"],
             supported_mime_types: ["application/ogg"],
           });
-        if (url.endsWith("/api/stt/providers"))
+        if (url.endsWith("/api/stt/providers?include_local=true"))
           return json(sttProviderCatalogFixture());
         if (url.endsWith("/api/stt/dictionaries"))
           return json({ dictionaries: [] });
@@ -1570,6 +1570,67 @@ describe("Studio PWA", () => {
       }),
     );
   });
+  it("keeps local inference on the explicitly selected PC through preflight and creation", async () => {
+    const mock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const base = mock.getMockImplementation();
+    const model = "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B";
+    const firstPc = "00000000-0000-4000-8000-000000000001";
+    const secondPc = "00000000-0000-4000-8000-000000000002";
+    let pcReady = true;
+    const device = (id: string, label: string) => ({ id, label, credential_revision: 1, online: pcReady, ready: pcReady,
+      runtime_status: "ready", runtime_version: "0.2.0", model, last_seen_at: new Date().toISOString(), revoked_at: null });
+    const bodies: Record<string, unknown>[] = [];
+    mock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/api/stt/providers?include_local=true")) {
+        const catalog = sttProviderCatalogFixture();
+        catalog.providers.push({ provider: "nemotron", display_name: "NVIDIA Nemotron", byok_enabled: true,
+          modes: [{ mode: "standard", model, transport: "local_companion", languages: ["ru", "en"], diarization: true,
+            dictionaries: false, file_constraints: { max_bytes: null as unknown as number, max_duration_seconds: 3600, audio_channels: [1] },
+            health: { available: true, consecutive_failures: 0, retry_after_seconds: null } }] });
+        return json(catalog);
+      }
+      if (url.endsWith("/api/local-execution/devices")) return json({ devices: [device(firstPc, "ПК 1"), device(secondPc, "ПК 2")] });
+      if (isBatchPreflightRequest(url, init)) {
+        bodies.push(JSON.parse(String(init?.body)));
+        const response = await batchPreflightJson(init);
+        return json({ ...await response.json(), model });
+      }
+      if (url.endsWith("/api/projects/p1/jobs/batch") && init?.method === "POST") {
+        bodies.push(JSON.parse(String(init.body)));
+        return json({ created_count: 1, replayed: false, jobs: [{ id: "local-job", project_id: "p1", status: "queued", title: "Local test",
+          provider: "nemotron", source_count: 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), cancelled_at: null,
+          cancel_requested_at: null, attempt_count: 0, started_at: null, finished_at: null, error_code: null, error_message: null,
+          local_execution: { device_id: secondPc, device_name: "ПК 2", result_accepted: false } }] });
+      }
+      return base?.(url, init) ?? json({ ok: true });
+    });
+    renderApp(); await openProjectsPage(); await chooseExistingSource(1, "Лекция 1"); await chooseResultFolder(1);
+    await userEvent.selectOptions(screen.getByLabelText("Провайдер транскрибации"), "nemotron");
+    await screen.findByRole("option", { name: /ПК 1/ });
+    expect(screen.queryByText(/Добавьте активный ключ NVIDIA/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Проверить задачи (1)" })).toBeDisabled();
+    await userEvent.selectOptions(screen.getByLabelText("Компьютер для распознавания"), firstPc);
+    await userEvent.click(screen.getByRole("button", { name: "Проверить задачи (1)" }));
+    await screen.findByLabelText("Проверка перед созданием задач");
+    await userEvent.selectOptions(screen.getByLabelText("Компьютер для распознавания"), secondPc);
+    expect(screen.queryByLabelText("Проверка перед созданием задач")).not.toBeInTheDocument();
+    pcReady = false;
+    await userEvent.click(screen.getByRole("button", { name: "Обновить компьютеры" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Проверить задачи (1)" })).toBeDisabled());
+    expect(screen.getByLabelText("Компьютер для распознавания")).toHaveValue(secondPc);
+    expect(bodies).toHaveLength(1);
+    pcReady = true;
+    await userEvent.click(screen.getByRole("button", { name: "Обновить компьютеры" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Проверить задачи (1)" })).toBeEnabled());
+    await userEvent.click(screen.getByRole("button", { name: "Проверить задачи (1)" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Подтвердить и создать (1)" }));
+    await waitFor(() => expect(bodies).toHaveLength(3));
+    expect(bodies.map(body => body.local_device_id)).toEqual([firstPc, secondPc, secondPc]);
+    expect(bodies.every(body => body.provider === "nemotron" && body.provider_credential_id === null)).toBe(true);
+    expect(await screen.findByText("Локально · ПК 2")).toBeInTheDocument();
+    expect(mock.mock.calls.filter(([url, init]) => String(url).endsWith("/jobs/batch") && init?.method === "POST")).toHaveLength(1);
+  });
+
   it("uses the authenticated platform shell as the default app entrypoint", async () => {
     render(<App />);
     await waitForPlatformOverview();
@@ -1786,9 +1847,10 @@ describe("Studio PWA", () => {
     ).toBeInTheDocument();
     expect(screen.getAllByRole("tab")).toHaveLength(6);
     await userEvent.click(screen.getByRole("tab", { name: "Подключения" }));
-    expect(
-      screen.getByText(/профили ElevenLabs и Yandex SpeechKit/i),
-    ).toBeInTheDocument();
+    const providerGuidance = screen.getByText(/Обычная транскрибация поддерживает включённые оператором профили/i);
+    for (const provider of ["ElevenLabs", "Yandex SpeechKit", "Т-Банк VoiceKit", "Mistral Voxtral", "Google Gemini"])
+      expect(providerGuidance).toHaveTextContent(provider);
+    expect(providerGuidance).toHaveTextContent(/Live доступен для ElevenLabs и Yandex SpeechKit/);
 
     const accountTab = screen.getByRole("tab", { name: "Аккаунт" });
     accountTab.focus();
@@ -1850,6 +1912,56 @@ describe("Studio PWA", () => {
       screen.getByText("Лекция 1. Личность как психологическое явление.flac"),
     ).toBeInTheDocument();
     expect(document.body.textContent).not.toContain("______");
+  });
+
+  it("offers a non-destructive check for expired remnants when the active source list is empty", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const defaultFetch = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (/^\/api\/projects\/p1\/sources(?:\?|$)/.test(url) && !init?.method) {
+        return json({ sources: [], next_cursor: null, page_size: 50 });
+      }
+      if (url === "/api/projects/p1/sources/bulk-deletion/preview" && !init?.method) {
+        return json({ preview_token: "b".repeat(64), eligible_count: 1, listed_count: 0,
+          hidden_expired_count: 1, eligible_bytes: 1024, eligible_unknown_size_count: 0,
+          blocked_count: 0, blocked_bytes: 0, blocked_unknown_size_count: 0,
+          blocked_reasons: {}, google_drive_files_deleted: 0 });
+      }
+      return defaultFetch?.(url, init) ?? json({ ok: true });
+    });
+    renderApp();
+    await openSettingsSection("Файлы и хранилище");
+    const check = await screen.findByRole("button", { name: "Проверить остатки файлов" });
+    expect(check).not.toHaveClass("danger");
+    await userEvent.click(check);
+    expect(await screen.findByRole("region", { name: "План очистки файлов Studio" })).toHaveTextContent("Сейчас в списке файлов: 0");
+    expect(fetchMock.mock.calls.some(([url, init]) => url === "/api/projects/p1/sources/bulk-deletion" && init?.method === "POST")).toBe(false);
+  });
+
+  it.each([
+    ["transcription_in_progress", "идёт транскрибация"],
+    ["audio_processing_in_progress", "идёт обработка аудио"],
+  ])("explains expired-source retention deferral during %s without extending the deadline", async (reason, work) => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const defaultFetch = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (/^\/api\/projects\/p1\/sources(?:\?|$)/.test(url) && !init?.method) {
+        return json({ sources: [{ id: "expired-busy", project_id: "p1", source_type: "local_upload",
+          original_filename: "busy-recording.flac", mime_type: "audio/flac", size_bytes: 100,
+          drive_file_url: null, upload_status: "uploaded", uploaded_at: "2026-01-01T00:00:00Z",
+          source_created_at: null, source_created_at_provenance: null,
+          expires_at: "2026-01-04T00:00:00Z", retention_deferred_reason: reason,
+          deleted_at: null, delete_reason: null, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }], next_cursor: null, page_size: 50 });
+      }
+      return defaultFetch?.(url, init) ?? json({ ok: true });
+    });
+    renderApp();
+    await openSettingsSection("Файлы и хранилище");
+    const card = (await screen.findByText("busy-recording.flac")).closest("article")!;
+    expect(within(card).getByText("Статус: Очистка отложена")).toBeInTheDocument();
+    expect(within(card).getByRole("status")).toHaveTextContent(work);
+    expect(within(card).getByRole("status")).toHaveTextContent("для новых задач добавьте исходник заново");
+    expect(within(card).getByText(/Хранится до:/)).toHaveTextContent("04.01.2026");
   });
 
   it("previews and confirms a Studio-only bulk file cleanup", async () => {
@@ -5158,14 +5270,40 @@ describe("Studio PWA", () => {
     expect(
       await screen.findByRole("heading", { name: "Транскрибации" }),
     ).toBeInTheDocument();
-    expect(
-      await screen.findByLabelText("Существующий файл для задачи 1"),
-    ).toHaveValue("s1");
+    await waitFor(() => expect(
+      screen.getByLabelText("Существующий файл для задачи 1"),
+    ).toHaveValue("s1"));
     expect(
       screen.getByText(
         "Результат обработки добавлен в новую задачу транскрибации.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it.each([true, false])("uses the original fragment clock only when its map is available: %s", async (available) => {
+    const baseFetch = fetch as unknown as ReturnType<typeof vi.fn>;
+    const defaultFetch = baseFetch.getMockImplementation();
+    baseFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      const response = await defaultFetch?.(url, init);
+      if (url.endsWith("/api/projects/p1/sources") && !init?.method) {
+        const payload = await response.json();
+        return json({ ...payload, sources: payload.sources.map((source: { id: string }) => source.id === "s1"
+          ? { ...source, prepared_audio: { job_id: "a".repeat(36), input_duration_ms: 20000, output_duration_ms: 15000,
+              pauses_removed: true, original_timeline_available: available } }
+          : source) });
+      }
+      return response;
+    });
+    renderApp();
+    await openProjectsPage();
+    await chooseExistingSource(1, "Лекция 1");
+    await chooseResultFolder(1, "folder-segments");
+    expect(screen.getByText(available ? /Границы фрагментов и таймкоды относятся к исходной записи/ : /Исходная шкала этой версии не сохранена/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("checkbox", { name: /Разделить файл на фрагменты/ }));
+    fireEvent.change(screen.getByLabelText("Начало фрагмента 1 задачи 1"), { target: { value: "0:18" } });
+    const preflight = screen.getByRole("button", { name: "Проверить задачи (1)" });
+    if (available) expect(preflight).toBeEnabled();
+    else expect(preflight).toBeDisabled();
   });
 
   it("creates one internal transcription workspace when no active project exists", async () => {
@@ -5543,6 +5681,32 @@ describe("Studio PWA", () => {
       }),
     );
     expect(localStorage.getItem("studio-accent-preference")).toBeNull();
+  });
+
+  it("allows replacing the fragment count and blocks incomplete or out-of-range drafts", async () => {
+    renderApp();
+    await openProjectsPage();
+    await chooseExistingSource(1, "Лекция 1");
+    await chooseResultFolder(1, "folder-segments");
+    await userEvent.click(screen.getByRole("checkbox", { name: /Разделить файл на фрагменты/ }));
+    const count = screen.getByLabelText("Количество фрагментов задачи 1");
+    await userEvent.clear(count);
+    expect(count).toHaveValue(null);
+    expect(count).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("button", { name: "Проверить задачи (1)" })).toBeDisabled();
+    await userEvent.type(count, "3");
+    expect(count).toHaveValue(3);
+    expect(count).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByLabelText("Начало фрагмента 13 задачи 1")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Начало фрагмента 3 задачи 1")).toBeInTheDocument();
+    for (const invalid of ["0", "51", "1.5"]) {
+      fireEvent.change(count, { target: { value: invalid } });
+      expect(count).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByRole("button", { name: "Проверить задачи (3)" })).toBeDisabled();
+    }
+    fireEvent.change(count, { target: { value: "1" } });
+    expect(count).not.toHaveAttribute("aria-invalid");
+    expect(screen.getByRole("button", { name: "Проверить задачи (1)" })).toBeEnabled();
   });
 
   it("builds arbitrary ordered segment jobs from one source", async () => {
@@ -6283,7 +6447,7 @@ describe("Studio PWA", () => {
           });
         if (url.endsWith("/api/auth/csrf"))
           return json({ csrf_token: "csrf-after-refresh" });
-        if (url.endsWith("/api/stt/providers"))
+        if (url.endsWith("/api/stt/providers?include_local=true"))
           return json(sttProviderCatalogFixture());
         if (url.endsWith("/api/stt/dictionaries"))
           return json({ dictionaries: [] });
@@ -7117,7 +7281,7 @@ describe("Studio PWA", () => {
           });
         if (url.endsWith("/api/auth/csrf"))
           return json({ csrf_token: "csrf-after-refresh" });
-        if (url.endsWith("/api/stt/providers"))
+        if (url.endsWith("/api/stt/providers?include_local=true"))
           return json(sttProviderCatalogFixture());
         if (url.endsWith("/api/stt/dictionaries"))
           return json({ dictionaries: [] });
@@ -7641,7 +7805,7 @@ describe("Studio PWA", () => {
           });
         if (url.endsWith("/api/auth/csrf"))
           return json({ csrf_token: "csrf-after-refresh" });
-        if (url.endsWith("/api/stt/providers"))
+        if (url.endsWith("/api/stt/providers?include_local=true"))
           return json(sttProviderCatalogFixture());
         if (url.endsWith("/api/stt/dictionaries"))
           return json({ dictionaries: [] });

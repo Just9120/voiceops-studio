@@ -12,7 +12,8 @@ from .security import utcnow
 
 _reporter = ContextVar("work_progress_reporter", default=None)
 STAGES = frozenset({"source_download", "source_copy", "media_probe", "media_processing", "media_analysis", "speech_analysis",
-    "provider_upload", "provider_wait", "part_merge", "document_output", "audio_processing"})
+    "provider_upload", "provider_wait", "part_merge", "document_output", "audio_processing",
+    "local_transcription", "local_result_upload"})
 UNITS = frozenset({"bytes", "seconds", "files", "parts"})
 
 

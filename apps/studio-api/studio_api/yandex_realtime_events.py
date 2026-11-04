@@ -28,12 +28,14 @@ class YandexRealtimeEvents:
         text = alternative.text.strip()
         if not text:
             return None
+        words = self._words(alternative)
+        word_payload = {"words": words} if words else {}
         if kind == "partial":
-            return {"message_type": "partial_transcript", "text": text}
+            return {"message_type": "partial_transcript", "text": text, **word_payload}
         # An absent message decodes to final_index=0 in proto3. Do not invent
         # an identity that would replace unrelated finals in the browser.
         if kind == "final" and not response.HasField("audio_cursors"):
-            payload = {"message_type": "committed_transcript", "text": text}
+            payload = {"message_type": "committed_transcript", "text": text, **word_payload}
             start, end = alternative.start_time_ms, alternative.end_time_ms
             if 0 <= start < end <= 604800000:
                 payload.update(start_seconds=start / 1000, end_seconds=end / 1000)
@@ -56,7 +58,23 @@ class YandexRealtimeEvents:
         self.finals.move_to_end(index)
         if len(self.finals) > 5000:
             self.finals.popitem(last=False)
-        payload = {"message_type": "committed_transcript", "text": text, "final_index": index}
+        payload = {"message_type": "committed_transcript", "text": text, "final_index": index, **word_payload}
         if state.start is not None and state.end is not None:
             payload.update(start_seconds=state.start, end_seconds=state.end)
         return payload
+
+    @staticmethod
+    def _words(alternative):
+        if not alternative.words or len(alternative.words) > 20000:
+            return None
+        result, total = [], 0
+        for word in alternative.words:
+            start, end, text = word.start_time_ms, word.end_time_ms, word.text
+            if (not text or len(text) > 20000 or not 0 <= start <= end <= 604800000
+                or result and start / 1000 < result[-1]["start"]):
+                return None
+            total += len(text)
+            if total > 500000:
+                return None
+            result.append({"text": text, "start": start / 1000, "end": end / 1000, "type": "word"})
+        return result

@@ -12,10 +12,12 @@ from .provider_part_checkpoints import (
     complete_provider_attempt, checkpoint_resume_count, load_provider_part_checkpoints,
 )
 from .elevenlabs_transcription import merge_elevenlabs_transcript_results
+from .audio_timeline import AudioTimelineError
+from .transcript_timeline import original_clock_transcript
 
 
 def fully_cached_relation(db, job, relation_id, now):
-    if job.provider in {"yandex", "gemini"}:
+    if job.provider in {"yandex", "gemini", "nemotron"}:
         return completed_yandex_result(db, job, relation_id) is not None
     if job.provider not in {"elevenlabs", "mistral", "tbank"}:
         return False
@@ -27,6 +29,10 @@ def fully_cached_relation(db, job, relation_id, now):
 
 
 def completed_yandex_result(db, job, relation_id):
+    """Shared operation cache (legacy helper name): Yandex, Gemini and local PC.
+
+    Local acceptance is API-owned; worker-only part-checkpoint grants stay intact.
+    """
     from .transcription_metadata import stored_model
     row = db.scalar(select(SttProviderOperation).where(
         SttProviderOperation.job_id == job.id, SttProviderOperation.job_source_id == relation_id,
@@ -37,6 +43,11 @@ def completed_yandex_result(db, job, relation_id):
             or row.operating_mode != job.operating_mode
             or (stored_model(job.options_json) and stored_model(job.options_json) != row.model)
             or not all((row.result_ciphertext, row.result_nonce, row.result_key_id, row.result_hmac))):
+        return None
+    if job.provider == "nemotron" and (
+        job.local_result_ready_at is None or job.local_result_generation is None or not job.local_result_digest
+        or row.operation_id != f"local:{job.id}:{job.local_device_id}:{job.local_result_generation}:{job.local_result_digest}"
+    ):
         return None
     return row
 
@@ -78,7 +89,7 @@ def restore_cached_yandex_transcript(db, *, job_id, job_source_id, lease_owner_i
     from .provider_result_cache import load_operation_result
     job = db.get(TranscriptionJob, job_id)
     project = db.get(Project, job.project_id) if job else None
-    if (job is None or job.provider not in {"yandex", "gemini"} or job.status != JobStatus.processing
+    if (job is None or job.provider not in {"yandex", "gemini", "nemotron"} or job.status != JobStatus.processing
             or job.cancel_requested_at is not None or job.lease_owner_id != lease_owner_id
             or job.lease_generation != lease_generation or not is_lease_active(job, now)
             or project is None or project.owner_user_id != job.owner_user_id or project.archived_at is not None):
@@ -96,7 +107,10 @@ def restore_cached_yandex_transcript(db, *, job_id, job_source_id, lease_owner_i
         mark_attempt_provider_returned(db, job_id=job_id, job_source_id=job_source_id,
             lease_owner_id=lease_owner_id, lease_generation=lease_generation, now=now)
         db.commit()
-        yield result
+        with original_clock_transcript(db, job_id=job_id, job_source_id=job_source_id, result=result) as projected:
+            yield projected
+    except AudioTimelineError as exc:
+        raise ProviderPartCheckpointError(ProviderPartCheckpointReason.shape_conflict) from exc
     finally:
         result.revoke()
 
@@ -150,7 +164,10 @@ def restore_cached_transcript(db, *, job_id, job_source_id, lease_owner_id, leas
             result = merge_elevenlabs_transcript_results(_merge_inputs(SimpleNamespace(parts=parts), list(results)))
         if not result.text.strip():
             raise ProviderPartCheckpointError(ProviderPartCheckpointReason.payload_invalid)
-        yield result
+        with original_clock_transcript(db, job_id=job_id, job_source_id=job_source_id, result=result) as projected:
+            yield projected
+    except AudioTimelineError as exc:
+        raise ProviderPartCheckpointError(ProviderPartCheckpointReason.shape_conflict) from exc
     finally:
         if result is not None:
             result.revoke()

@@ -240,9 +240,9 @@ function requestCollectionPage(
   });
 }
 
-function parseCollectionPage<T>(
+export function parseCollectionPage<T>(
   candidate: unknown,
-  collectionKey: "sources" | "jobs",
+  collectionKey: "sources" | "jobs" | "sessions",
   items: T[],
 ): CollectionPage<T> | null {
   if (!isRecord(candidate) || !Array.isArray(candidate[collectionKey])) {
@@ -370,6 +370,8 @@ function parseSource(
     source_created_at: rawSourceCreatedAt as string | null,
     source_created_at_provenance: creationProvenance,
     expires_at: candidate.expires_at,
+    ...((candidate.retention_deferred_reason === "transcription_in_progress" || candidate.retention_deferred_reason === "audio_processing_in_progress")
+      ? { retention_deferred_reason: candidate.retention_deferred_reason } : {}),
     deleted_at: candidate.deleted_at,
     delete_reason: deleteReason,
     created_at: candidate.created_at,
@@ -468,6 +470,12 @@ function parseJob(
     candidate.speaker_identities,
   );
   const usageCost = parseOptionalJobUsageCost(candidate.usage_cost);
+  const local = candidate.local_execution;
+  const localExecution = local === undefined ? undefined : isRecord(local) && provider === "nemotron" &&
+    typeof local.device_id === "string" && /^[a-f0-9-]{36}$/.test(local.device_id) &&
+    boundedString(local.device_name, 80) && typeof local.result_accepted === "boolean"
+    ? { device_id: local.device_id, device_name: local.device_name as string, result_accepted: local.result_accepted }
+    : false;
   if (
     !id ||
     candidateProjectId !== projectId ||
@@ -483,6 +491,7 @@ function parseJob(
     batch === false ||
     speakerIdentities === false ||
     usageCost === false ||
+    localExecution === false ||
     (languageMode !== undefined &&
       languageMode !== null &&
       !isTranscriptionLanguageMode(languageMode)) ||
@@ -522,6 +531,7 @@ function parseJob(
     status: candidate.status as TranscriptionJob["status"],
     title,
     provider,
+    ...(localExecution ? { local_execution: localExecution } : {}),
     ...(outputProvider !== undefined ? { output_provider: outputProvider as "google_drive" | "yandex_disk" } : {}),
     ...(primaryOutputUrl ? { primary_output_url: primaryOutputUrl } : {}),
     ...(languageMode !== undefined ? { language_mode: languageMode } : {}),

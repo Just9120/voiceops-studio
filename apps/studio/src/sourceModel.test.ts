@@ -1,5 +1,8 @@
 import {
   isUsableJobSource,
+  knownSourceDurationSeconds,
+  sourceFragmentUnavailableReason,
+  parsePreparedAudioContext,
   reconcileOptimisticSources,
   sourceСтатусLabel,
   unusableJobSourceReason,
@@ -24,6 +27,25 @@ const uploadedSource: Source = {
 };
 
 describe("source model", () => {
+  it("uses the recorded original duration for fragments and never infers it from prepared duration", () => {
+    const prepared_audio = { job_id: "a".repeat(36), input_duration_ms: 15000, output_duration_ms: 10000,
+      pauses_removed: true, original_timeline_available: true };
+    const source = { ...uploadedSource, prepared_audio };
+    expect(knownSourceDurationSeconds(source)).toBe(15);
+    expect(sourceFragmentUnavailableReason(source)).toBeNull();
+    for (const available of [false, undefined]) {
+      const legacy = { ...source, prepared_audio: { ...prepared_audio, original_timeline_available: available } };
+      expect(knownSourceDurationSeconds(legacy)).toBeNull();
+      expect(sourceFragmentUnavailableReason(legacy)).toContain("обработайте запись целиком");
+    }
+    expect(sourceFragmentUnavailableReason(uploadedSource)).toBeNull();
+  });
+  it("preserves an explicit original-timeline claim and keeps private receipts out of the projection", () => {
+    const context = { job_id: "a".repeat(36), input_duration_ms: 15000, output_duration_ms: 10000,
+      pauses_removed: true, original_timeline_available: true };
+    expect(parsePreparedAudioContext({ ...context, content_sha256: "private", timeline_sha256: "private" })).toEqual(context);
+    expect(parsePreparedAudioContext({ ...context, original_timeline_available: "true" })).toBeNull();
+  });
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-22T10:00:00Z"));

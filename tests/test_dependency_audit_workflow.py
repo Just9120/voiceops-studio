@@ -98,10 +98,23 @@ def test_studio_uses_the_supported_eslint_runtime_contract():
     assert package["engines"]["node"] == "^20.19.0 || ^22.13.0 || >=24"
     assert packages["node_modules/eslint"]["version"] == "10.8.0"
     assert packages["node_modules/@eslint/js"]["version"] == "10.0.1"
-    assert packages["node_modules/minimatch"]["version"] == "10.2.5"
+    assert package["overrides"]["minimatch"] == "11.0.1"
+    assert packages["node_modules/minimatch"]["version"] == "11.0.1"
     assert package["overrides"]["brace-expansion"] == "5.0.12"
     assert packages["node_modules/brace-expansion"]["version"] == "5.0.12"
     assert "node_modules/@eslint/eslintrc" not in packages
+
+
+def test_patched_deepmerge_is_available_before_container_dependency_install():
+    package = json.loads((STUDIO / "package.json").read_text(encoding="utf-8"))
+    lock = json.loads((STUDIO / "package-lock.json").read_text(encoding="utf-8"))
+    assert package["devDependencies"]["deepmerge"] == "file:vendor/deepmerge"
+    assert package["overrides"]["deepmerge"] == "$deepmerge"
+    assert lock["packages"]["node_modules/deepmerge"] == {"resolved": "vendor/deepmerge", "link": True}
+    assert lock["packages"]["vendor/deepmerge"]["version"] == "4.3.1-voiceops.1"
+    assert (STUDIO / "vendor/deepmerge/LICENSE").is_file()
+    dockerfile = (STUDIO / "Dockerfile").read_text(encoding="utf-8")
+    assert dockerfile.index("COPY vendor ./vendor") < dockerfile.index("RUN npm ci")
 
 
 def test_studio_api_pins_the_current_fixed_cryptography_release():

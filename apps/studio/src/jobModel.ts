@@ -97,6 +97,7 @@ export type JobSpeakerIdentity = {
 };
 export type TranscriptionJob = {
   output_provider?: "google_drive" | "yandex_disk";
+  local_execution?: { device_id: string; device_name: string; result_accepted: boolean };
   id: string;
   project_id: string;
   status: JobСтатус;
@@ -232,6 +233,16 @@ export function jobСтатусLabel(status: JobСтатус) {
 }
 
 const JOB_ERROR_LABELS: Record<string, string> = {
+  local_device_offline: "Компьютер потерял связь со Studio. Запустите локальный обработчик и повторите задачу доступной кнопкой. Облачное распознавание не запускалось.",
+  local_device_revoked: "Доступ компьютера отозван или его ключ заменён. Подключите обработчик с новым ключом и повторите задачу.",
+  local_worker_interrupted: "Локальный обработчик был остановлен. После его запуска можно явно повторить задачу.",
+  local_model_unavailable: "Не найдены проверенные файлы локальной модели. Проверьте установку обработчика на компьютере.",
+  local_runtime_unavailable: "Локальный обработчик не готов. Проверьте его запуск на выбранном компьютере.",
+  local_input_unavailable: "Компьютер не смог получить или подготовить исходную запись. Проверьте источник перед повтором.",
+  local_processing_failed: "Локальная обработка не завершилась. Проверьте обработчик на компьютере и доступное продолжение задачи.",
+  local_result_invalid: "Полный результат локальной модели не подтверждён. Неполный текст не сохранён как готовая транскрипция.",
+  media_timeline_unavailable:
+    "Не удалось подтвердить исходную шкалу этой версии записи. Выберите исходный файл или проверьте результат подготовки перед новым запуском.",
   malformed_provider_response:
     "Сервис распознавания вернул неполный ответ. Откройте детали задачи и проверьте доступное безопасное продолжение.",
   provider_authentication_failed:

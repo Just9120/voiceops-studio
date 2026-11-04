@@ -2,6 +2,7 @@ import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ApiError, mutateWithCsrfRetry } from "./apiClient";
 import { lockDocumentScroll } from "./documentScrollLock";
+import { collectDiskFolderPreview, isDiskMedia, type DiskFolderPreview } from "./yandexFolderPreview";
 
 export type DiskResource = {
   path: string; name: string; is_folder: boolean; fingerprint: string;
@@ -54,10 +55,6 @@ export function diskFailureMessage(error: unknown) {
   return "Не удалось выполнить действие с Яндекс Диском. Проверьте подключение и повторите попытку.";
 }
 
-function isMedia(row: DiskResource) {
-  return !row.is_folder && Boolean(row.mime_type && (/^(audio|video)\//.test(row.mime_type) || row.mime_type === "application/ogg"));
-}
-
 export function YandexDiskPicker({ mode, csrf, onCsrf, onFinish }: Props) {
   const titleId = useId();
   const dialog = useRef<HTMLElement>(null);
@@ -74,6 +71,7 @@ export function YandexDiskPicker({ mode, csrf, onCsrf, onFinish }: Props) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [selection, setSelection] = useState(new Map<string, DiskResource>());
+  const [folderPreview, setFolderPreview] = useState<DiskFolderPreview | null>(null);
   const options = useRef({ csrf, onCsrf });
   options.current.onCsrf = onCsrf;
   useEffect(() => { options.current.csrf = csrf; }, [csrf]);
@@ -105,7 +103,7 @@ export function YandexDiskPicker({ mode, csrf, onCsrf, onFinish }: Props) {
     currentRequest.current = controller;
     const version = ++requestVersion.current;
     const timeout = setTimeout(() => controller.abort(), 20_000);
-    setBusy(true); setPage(null); setError("");
+    setBusy(true); setPage(null); setError(""); setFolderPreview(null);
     void post("/yandex/resources/list", { path, sort, folders_only: mode === "output-folder" }, controller.signal)
       .then(parsePage).then((result) => {
         if (alive.current && version === requestVersion.current) setPage(result);
@@ -150,18 +148,15 @@ export function YandexDiskPicker({ mode, csrf, onCsrf, onFinish }: Props) {
     try {
       let items = [...selection.values()];
       if (mode === "source-folder") {
-        let slice = parsePage(await post("/yandex/resources/list", { path, sort }, controller.signal));
-        const baseline = slice.folder;
-        items = slice.items.filter(isMedia);
-        while (slice.next_offset !== null) {
-          const offset = slice.next_offset;
-          if (items.length > 50) throw new Error("disk_folder_over_limit");
-          slice = parsePage(await post("/yandex/resources/list", { path, sort, offset }, controller.signal));
-          if (slice.folder.fingerprint !== baseline.fingerprint || slice.folder.modified !== baseline.modified || (slice.next_offset !== null && slice.next_offset <= offset)) throw new Error("changed_disk_page");
-          items.push(...slice.items.filter(isMedia));
+        const preview = await collectDiskFolderPreview(page.folder, async (folderPath, offset) =>
+          parsePage(await post("/yandex/resources/list", { path: folderPath, sort, ...(offset === null ? {} : { offset }) }, controller.signal)), controller.signal);
+        if (!alive.current || controller.signal.aborted) return;
+        if (!folderPreview || folderPreview.signature !== preview.signature) {
+          setFolderPreview(preview);
+          if (folderPreview) setError("Состав папки изменился. Проверьте новый список и подтвердите ещё раз; ничего не добавлено.");
+          return;
         }
-        if (items.length > 50) throw new Error("disk_folder_over_limit");
-        if (new Set(items.map((item) => item.path)).size !== items.length) throw new Error("changed_disk_page");
+        items = preview.resources;
       }
       async function select(item: DiskResource): Promise<DiskSelection> {
         const raw = await post("/yandex/resources/select", { path: item.path, fingerprint: item.fingerprint, is_folder: item.is_folder }, controller.signal);
@@ -177,7 +172,9 @@ export function YandexDiskPicker({ mode, csrf, onCsrf, onFinish }: Props) {
       if (alive.current) onFinish({ resources, folder });
     } catch (err) {
       if (alive.current) setError(err instanceof Error && err.message === "disk_folder_over_limit"
-        ? "В папке больше 50 записей. Выберите нужные файлы отдельно; ничего не добавлено."
+        ? "В папке с подпапками больше 50 записей. Выберите нужные файлы отдельно; ничего не добавлено."
+        : err instanceof Error && err.message === "disk_tree_over_limit"
+        ? "Папка слишком велика для одного выбора: максимум 500 объектов, 100 папок и 8 уровней. Выберите вложенную папку; ничего не добавлено."
         : err instanceof Error && err.message === "changed_disk_page"
         ? "Содержимое папки изменилось. Обновите список и повторите выбор; ничего не добавлено." : diskFailureMessage(err));
     } finally {
@@ -195,11 +192,11 @@ export function YandexDiskPicker({ mode, csrf, onCsrf, onFinish }: Props) {
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
   }
 
-  const shown = page?.items.filter((item) => (item.is_folder || isMedia(item)) && item.name.toLocaleLowerCase("ru").includes(search.toLocaleLowerCase("ru"))) ?? [];
+  const shown = page?.items.filter((item) => (item.is_folder || isDiskMedia(item)) && item.name.toLocaleLowerCase("ru").includes(search.toLocaleLowerCase("ru"))) ?? [];
   return <div className="confirm-clear-backdrop"><section ref={dialog} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={`${titleId}-description`}
     className="card google-drive-folder-picker-dialog yandex-disk-picker-dialog" data-studio-scroll-lock-allow onKeyDown={keyDown}>
     <header className="google-drive-folder-picker-header"><div><h2 id={titleId}>{mode === "sources" ? "Выберите записи на Яндекс Диске" : "Выберите папку Яндекс Диска"}</h2>
-      <p id={`${titleId}-description`}>{mode === "source-folder" ? "Будут добавлены аудио и видео из текущей папки без вложенных папок. Пустую папку тоже можно выбрать." : mode === "output-folder" ? "Откройте нужную папку и подтвердите её. Результат сохранится как DOCX." : "Можно выбрать до 50 аудио и видео, в том числе из разных папок."}</p></div>
+      <p id={`${titleId}-description`}>{mode === "source-folder" ? "Будут найдены аудио и видео в текущей папке и всех подпапках. Сначала проверьте состав и причины исключений, затем подтвердите выбор. Пустую папку тоже можно выбрать." : mode === "output-folder" ? "Откройте нужную папку и подтвердите её. Результат сохранится как DOCX." : "Можно выбрать до 50 аудио и видео, в том числе из разных папок."}</p></div>
       <button ref={close} type="button" onClick={() => { currentRequest.current?.abort(); onFinish(null); }}>Закрыть</button></header>
     <div className="yandex-disk-picker-toolbar">
       <label>Поиск в текущей папке<input type="search" value={search} disabled={pending} onChange={(event) => setSearch(event.target.value)} aria-describedby={`${titleId}-search-hint`} /></label>
@@ -214,6 +211,15 @@ export function YandexDiskPicker({ mode, csrf, onCsrf, onFinish }: Props) {
     <div className="google-drive-folder-picker-content yandex-disk-picker-content" aria-busy={busy}>
     {error && <div role="alert"><p className="error">{error}</p><button type="button" disabled={busy || pending} onClick={() => setReload((value) => value + 1)}>Обновить список</button></div>}
     {busy && <p role="status">Загружаем список…</p>}
+    {folderPreview && <section aria-label="Состав папки и подпапок">
+      <h3>Состав выбранной папки</h3>
+      <p>Проверено папок: {folderPreview.folder_count}. Будут добавлены записи: {folderPreview.resources.length}. Исключено: {folderPreview.excluded.length}.</p>
+      <ul>{folderPreview.resources.map(item => <li key={item.path}>{item.path.slice(6)}</li>)}</ul>
+      {folderPreview.excluded.length > 0 && <details><summary>Исключённые файлы и причины</summary>
+        <ul>{folderPreview.excluded.map(item => <li key={item.path}>{item.path.slice(6)} — {item.reason}</li>)}</ul>
+      </details>}
+      {!folderPreview.resources.length && <p className="muted">Поддерживаемых записей нет. Можно подтвердить пустой выбор без создания исходников.</p>}
+    </section>}
     {page && <><ul className="google-drive-folder-list">{shown.map((item) => <li key={item.path}>
       {item.is_folder ? <button type="button" className="google-drive-folder-row" disabled={pending} onClick={() => { setPath(item.path); setSearch(""); }}><span aria-hidden="true">📁</span><span className="yandex-disk-picker-name">{item.name}</span><span className="google-drive-picker-row-action">Открыть</span></button> : mode === "source-folder" ? <span className="google-drive-folder-row"><span aria-hidden="true">🎧</span><span className="yandex-disk-picker-name">{item.name}</span></span> : mode === "sources" && <button type="button" className="google-drive-folder-row google-drive-file-row" aria-pressed={selection.has(item.path)} disabled={pending || (!selection.has(item.path) && selection.size >= 50)}
         onClick={() => setSelection((previous) => { const next = new Map(previous); if (next.has(item.path)) next.delete(item.path); else next.set(item.path, item); return next; })}><span aria-hidden="true">🎧</span><span className="yandex-disk-picker-name">{item.name}</span><span className="google-drive-picker-row-action">{selection.has(item.path) ? "Выбрано" : "Выбрать"}</span></button>}
@@ -222,7 +228,7 @@ export function YandexDiskPicker({ mode, csrf, onCsrf, onFinish }: Props) {
       {page.next_offset !== null && <button type="button" disabled={busy || pending} onClick={() => void loadMore()}>Показать ещё</button>}
     </>}
     </div>
-    <footer className="actions google-drive-folder-picker-actions"><button type="button" className="primary" disabled={!page || busy || pending || (mode === "sources" && !selection.size)} aria-busy={pending || undefined} onClick={() => void confirm()}>{pending ? "Проверяем выбор…" : mode === "sources" ? `Выбрать файлы (${selection.size})` : "Выбрать эту папку"}</button>
+    <footer className="actions google-drive-folder-picker-actions"><button type="button" className="primary" disabled={!page || busy || pending || (mode === "sources" && !selection.size)} aria-busy={pending || undefined} onClick={() => void confirm()}>{pending ? "Проверяем выбор…" : mode === "sources" ? `Выбрать файлы (${selection.size})` : mode === "source-folder" && folderPreview ? `Подтвердить выбор (${folderPreview.resources.length})` : "Выбрать эту папку"}</button>
       <span className="muted">{mode === "sources" ? `Выбрано файлов: ${selection.size} из 50` : "Выбирается текущая открытая папка"}</span></footer>
   </section></div>;
 }

@@ -46,6 +46,30 @@ class User(Base):
     deleted_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
     __table_args__=(CheckConstraint("source_retention_ttl_seconds IN (3600, 86400, 259200, 604800, 2592000)", name="ck_users_source_retention_ttl_allowed"), CheckConstraint("accent_color IN ('blue', 'violet', 'teal', 'rose')", name="ck_users_accent_color_allowed"),)
 
+class LocalExecutionDevice(Base):
+    """A revocable PC capability, separate from browser sessions/provider keys."""
+    __tablename__ = "local_execution_devices"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    owner_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    creation_key: Mapped[str] = mapped_column(String(36), nullable=False)
+    label: Mapped[str] = mapped_column(String(80), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    credential_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default=text("1"))
+    runtime_status: Mapped[str] = mapped_column(String(24), nullable=False, default="unknown", server_default=text("'unknown'"))
+    runtime_version: Mapped[str|None] = mapped_column(String(80))
+    model: Mapped[str|None] = mapped_column(String(80))
+    last_seen_at: Mapped[datetime|None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now, onupdate=now)
+    revoked_at: Mapped[datetime|None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "creation_key", name="uq_local_execution_device_creation"),
+        CheckConstraint("credential_revision >= 1", name="ck_local_execution_device_revision"),
+        CheckConstraint("runtime_status IN ('unknown','loading_model','ready','model_missing','runtime_missing','runtime_error')", name="ck_local_execution_device_status"),
+        CheckConstraint("length(trim(label)) > 0", name="ck_local_execution_device_label"),
+    )
+
+
 class UserNotificationPreference(Base):
     __tablename__="user_notification_preferences"
     user_id: Mapped[str]=mapped_column(ForeignKey("users.id"), primary_key=True)
@@ -353,6 +377,9 @@ class Source(Base):
     prepared_audio_context_json: Mapped[str|None]=mapped_column(Text)
     size_bytes: Mapped[int|None]=mapped_column(Integer)
     drive_file_id: Mapped[str|None]=mapped_column(String(256))
+    drive_revision_id: Mapped[str|None]=mapped_column(String(256))
+    drive_md5_checksum: Mapped[str|None]=mapped_column(String(32))
+    drive_sha256_checksum: Mapped[str|None]=mapped_column(String(64))
     drive_file_url: Mapped[str|None]=mapped_column(Text)
     s3_bucket: Mapped[str|None]=mapped_column(String(255))
     s3_object_key: Mapped[str|None]=mapped_column(Text)
@@ -387,6 +414,12 @@ class Source(Base):
     __table_args__=(CheckConstraint("audio_retention_days IS NULL OR audio_retention_days IN (3,7,30)", name="ck_sources_audio_retention_days"), Index("ix_sources_storage_identity", "reference_class", "s3_bucket", "s3_object_key"), Index("ix_sources_project_status", "project_id", "upload_status", "created_at"), Index("ix_sources_project_deleted_created_id", "project_id", "deleted_at", "created_at", "id"), Index("ix_sources_storage_cleanup_selection", "storage_cleanup_status", "storage_cleanup_not_before_at", "storage_cleanup_lease_expires_at"), CheckConstraint("storage_cleanup_attempt_count >= 0", name="ck_sources_storage_cleanup_attempt_count_nonnegative"), CheckConstraint("storage_cleanup_generation >= 0", name="ck_sources_storage_cleanup_generation_nonnegative"), CheckConstraint("reference_class IN ('transcription','audio_processing')", name="ck_sources_reference_class"), CheckConstraint("upload_protocol IN ('single_put','multipart')", name="ck_sources_upload_protocol"), CheckConstraint("((upload_protocol = 'single_put' AND multipart_upload_id IS NULL AND multipart_part_size_bytes IS NULL AND multipart_part_count IS NULL AND multipart_completed_at IS NULL) OR (upload_protocol = 'multipart' AND multipart_upload_id IS NOT NULL AND multipart_part_size_bytes >= 5242880 AND multipart_part_count >= 1))", name="ck_sources_multipart_authority"), CheckConstraint("((source_created_at IS NULL AND source_created_at_provenance IS NULL) OR (source_created_at IS NOT NULL AND source_created_at_provenance IN ('google_drive_created_time', 'yandex_disk_created_time', 'embedded_media_metadata')))", name="ck_sources_creation_authority"),)
 
 class TranscriptionJob(Base):
+    local_device_id: Mapped[str|None] = mapped_column(ForeignKey("local_execution_devices.id", name="fk_transcription_jobs_local_device"))
+    local_input_receipt_json: Mapped[str|None] = mapped_column(Text, deferred=True)
+    local_result_ready_at: Mapped[datetime|None] = mapped_column(DateTime(timezone=True))
+    local_result_digest: Mapped[str|None] = mapped_column(String(64))
+    local_result_generation: Mapped[int|None] = mapped_column(Integer)
+    source_access_started_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
     work_progress_json: Mapped[str|None]=mapped_column(Text)
     __tablename__="transcription_jobs"
     id: Mapped[str]=mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -409,6 +442,7 @@ class TranscriptionJob(Base):
     batch_position: Mapped[int|None]=mapped_column(Integer)
     media_clip_start_seconds: Mapped[int|None]=mapped_column(Integer)
     media_clip_end_seconds: Mapped[int|None]=mapped_column(Integer)
+    media_timeline_version: Mapped[int|None]=mapped_column(Integer)
     long_duration_cost_confirmed: Mapped[bool]=mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     long_duration_preflight_json: Mapped[str|None]=mapped_column(Text)
     terminal_dismissed_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
@@ -502,7 +536,7 @@ class TranscriptCatalogEntry(Base):
     language_mode: Mapped[str|None]=mapped_column(String(40))
     diarization_enabled: Mapped[bool|None]=mapped_column(Boolean)
     source_identity_kind: Mapped[TranscriptCatalogSourceIdentityKind|None]=mapped_column(Enum(TranscriptCatalogSourceIdentityKind))
-    source_identity_value: Mapped[str|None]=mapped_column(String(256))
+    source_identity_value: Mapped[str|None]=mapped_column(String(1024))
     imported_at: Mapped[datetime]=mapped_column(DateTime(timezone=True), default=now, nullable=False)
     updated_at: Mapped[datetime]=mapped_column(DateTime(timezone=True), default=now, onupdate=now, nullable=False)
     __table_args__=(
@@ -565,6 +599,7 @@ class TranscriptionJobSource(Base):
     job_id: Mapped[str]=mapped_column(ForeignKey("transcription_jobs.id"), index=True)
     source_id: Mapped[str]=mapped_column(ForeignKey("sources.id"), index=True)
     position: Mapped[int]=mapped_column(Integer)
+    transcript_timeline_json: Mapped[str|None]=mapped_column(Text, deferred=True)
     status: Mapped[JobSourceStatus]=mapped_column(Enum(JobSourceStatus), default=JobSourceStatus.queued)
     created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True), default=now)
     job: Mapped[TranscriptionJob]=relationship("TranscriptionJob", back_populates="sources")
@@ -573,6 +608,7 @@ class TranscriptionJobSource(Base):
 
 
 class AudioPreparationJob(Base):
+    source_access_started_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
     work_progress_json: Mapped[str|None]=mapped_column(Text)
     __tablename__="audio_preparation_jobs"
     id: Mapped[str]=mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -590,6 +626,11 @@ class AudioPreparationJob(Base):
     output_filename: Mapped[str|None]=mapped_column(String(255))
     output_mime_type: Mapped[str|None]=mapped_column(String(255))
     output_size_bytes: Mapped[int|None]=mapped_column(Integer)
+    output_sha256_checksum: Mapped[str|None]=mapped_column(String(64))
+    output_md5_checksum: Mapped[str|None]=mapped_column(String(32))
+    output_timeline_json: Mapped[str|None]=mapped_column(Text)
+    recipe_version: Mapped[int|None]=mapped_column(Integer)
+    retained_frames_json: Mapped[str|None]=mapped_column(Text)
     visual_analysis_json: Mapped[str|None]=mapped_column(Text)
     download_slot: Mapped[int|None]=mapped_column(Integer)
     download_preview: Mapped[bool]=mapped_column(Boolean, default=False, server_default=text("false"))
@@ -599,6 +640,7 @@ class AudioPreparationJob(Base):
     download_previous_stage: Mapped[str|None]=mapped_column(String(40))
     download_error_code: Mapped[str|None]=mapped_column(String(80))
     output_drive_file_id: Mapped[str|None]=mapped_column(String(256), unique=True)
+    output_drive_receipt_json: Mapped[str|None]=mapped_column(Text)
     output_drive_web_view_url: Mapped[str|None]=mapped_column(Text)
     total_input_duration_ms: Mapped[int|None]=mapped_column(Integer)
     estimated_output_duration_ms: Mapped[int|None]=mapped_column(Integer)
@@ -822,7 +864,7 @@ class SttProviderOperation(Base):
         UniqueConstraint("job_source_id","attempt_number",name="uq_stt_provider_operations_source_attempt"),
         UniqueConstraint("provider","operation_id",name="uq_stt_provider_operations_provider_operation"),
         CheckConstraint("attempt_number >= 1", name="ck_stt_provider_operations_attempt_positive"),
-        CheckConstraint("provider IN ('yandex','gemini')", name="ck_stt_provider_operations_provider"),
+        CheckConstraint("provider IN ('yandex','gemini','nemotron')", name="ck_stt_provider_operations_provider"),
         CheckConstraint("operating_mode IN ('economic','standard','premium')", name="ck_stt_provider_operations_mode"),
         CheckConstraint("status IN ('pending','completed','failed')", name="ck_stt_provider_operations_status"),
         CheckConstraint("((result_ciphertext IS NULL AND result_nonce IS NULL AND result_key_id IS NULL AND result_hmac IS NULL) OR (result_ciphertext IS NOT NULL AND result_nonce IS NOT NULL AND result_key_id IS NOT NULL AND length(result_hmac) = 64))", name="ck_stt_provider_operations_result_shape"),
@@ -881,6 +923,7 @@ class TranscriptionProviderPartCheckpoint(Base):
     )
 
 class RealtimeTranscriptDraft(Base):
+    cleared_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
     __tablename__="realtime_transcript_drafts"
     id: Mapped[str]=mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     owner_user_id: Mapped[str]=mapped_column(ForeignKey("users.id"), nullable=False)

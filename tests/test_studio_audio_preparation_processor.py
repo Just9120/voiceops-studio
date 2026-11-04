@@ -64,6 +64,10 @@ def runner(command, **_kwargs):
     if command[0] == "ffprobe":
         payload = {"streams": [{"codec_type": "audio", "duration": "60", "codec_name": "flac", "sample_rate": "48000", "channels": 2, "channel_layout": "stereo"}], "format": {"duration": "60", "format_name": "flac"}}
         return SimpleNamespace(stdout=json.dumps(payload), stderr="")
+    if command[-1] == "pipe:1" and "-progress" in command:
+        # Versioned edits require an observed decoded clock, not only ffprobe.
+        duration = float(command[command.index("-t") + 1])
+        return SimpleNamespace(stdout=f"out_time_us={round(duration * 1_000_000)}\nprogress=end\n", stderr="")
     if command[-1] != "-":
         Path(command[-1]).write_bytes(b"processed-audio")
     return SimpleNamespace(stdout="", stderr="")
@@ -124,6 +128,12 @@ def test_preview_processing_storage_and_selected_source_retention_are_durable(tm
         assert persisted.output_filename == f"{result_title}.flac"
         assert persisted.output_mime_type == "audio/flac"
         assert persisted.output_size_bytes == len(b"processed-audio")
+        import hashlib
+        from studio_api.audio_timeline import AudioTimeline
+        assert persisted.output_sha256_checksum == hashlib.sha256(b"processed-audio").hexdigest()
+        assert persisted.output_md5_checksum == hashlib.md5(b"processed-audio", usedforsecurity=False).hexdigest()
+        assert AudioTimeline.parse(persisted.output_timeline_json) == AudioTimeline.identity(60)
+        assert persisted.recipe_version == 2 and persisted.retained_frames_json is not None
         assert persisted.title == result_title
         assert db.query(Source).count() == 1
         db.refresh(source)
@@ -299,7 +309,8 @@ def test_materialization_bounds_actual_aggregate_and_closes_streams(tmp_path, kn
     inputs = [SimpleNamespace(position=i, source=SimpleNamespace(
         project_id="project", upload_status=SourceUploadStatus.uploaded, deleted_at=None,
         expires_at=None, mime_type="audio/flac", original_filename="input.flac",
-        source_type=SourceType.google_drive, drive_file_id=str(i), size_bytes=8 if known_sizes else None)) for i in range(3)]
+        source_type=SourceType.google_drive, drive_file_id=str(i), drive_revision_id=None,
+        drive_md5_checksum=None, size_bytes=8 if known_sizes else None)) for i in range(3)]
     job = SimpleNamespace(project_id="project", owner_user_id="owner", inputs=inputs)
     db = SimpleNamespace(get=lambda *a: SimpleNamespace(owner_user_id="owner", archived_at=None))
     settings = SimpleNamespace(source_max_upload_bytes=10, audio_preparation_max_input_bytes=20)

@@ -68,6 +68,14 @@ const usageCost = {
   },
 } as const;
 
+it("preserves a local job target across collection and detail parsing", () => {
+  const local_execution = { device_id: "00000000-0000-4000-8000-000000000001", device_name: "Домашний ПК", result_accepted: true };
+  expect(parseJobSummaryResponse({ ...job, provider: "nemotron", local_execution }, "project-safe", "job-safe"))
+    .toMatchObject({ provider: "nemotron", local_execution });
+  expect(parseProjectJobCollection({ jobs: [{ ...job, provider: "nemotron", local_execution: { ...local_execution, device_name: {} } }] }, "project-safe"))
+    .toBeNull();
+});
+
 describe("project collection contracts", () => {
   it("validates bounded signed page envelopes", () => {
     const cursor = "signed_cursor-1";

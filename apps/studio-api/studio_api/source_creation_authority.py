@@ -208,11 +208,12 @@ def _load_sources_by_identity(
     identity_values: set[str],
 ) -> dict[str, tuple[tuple[datetime | None, str | None], ...]]:
     from .models import Project, Source
+    from .transcript_catalog import _drive_identity_sql
 
     if not identity_values:
         return {}
     identity_column = (
-        Source.id if identity_kind == "studio_source" else Source.drive_file_id
+        Source.id if identity_kind == "studio_source" else _drive_identity_sql(Source)
     )
     rows = (
         db.query(

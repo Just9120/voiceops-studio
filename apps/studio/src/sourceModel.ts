@@ -1,5 +1,5 @@
 export type Source = {
-  prepared_audio?: { job_id: string; input_duration_ms: number; output_duration_ms: number; pauses_removed: boolean };
+  prepared_audio?: { job_id: string; input_duration_ms: number; output_duration_ms: number; pauses_removed: boolean; original_timeline_available?: boolean };
   id: string;
   project_id: string;
   source_type: "local_upload" | "google_drive" | "yandex_disk";
@@ -16,6 +16,7 @@ export type Source = {
     | "embedded_media_metadata"
     | null;
   expires_at: string | null;
+  retention_deferred_reason?: "transcription_in_progress" | "audio_processing_in_progress";
   deleted_at: string | null;
   delete_reason: string | null;
   created_at: string;
@@ -32,8 +33,15 @@ export function sourceLocationLabel(kind: string | null) {
 
 export function knownSourceDurationSeconds(source: Source | null | undefined): number | null {
   const context = source ? preparedAudioContext(source) : null;
-  return context && context.output_duration_ms <= 604800000
-    ? context.output_duration_ms / 1000 : null;
+  return context?.original_timeline_available === true && context.input_duration_ms <= 604800000
+    ? context.input_duration_ms / 1000 : null;
+}
+
+export function sourceFragmentUnavailableReason(source: Source | null | undefined): string | null {
+  const context = source ? preparedAudioContext(source) : null;
+  return context && context.original_timeline_available !== true
+    ? "Для этой подготовленной версии нет подтверждённой исходной шкалы. Выберите исходный файл или обработайте запись целиком."
+    : null;
 }
 
 export function parsePreparedAudioContext(candidate: unknown): Source["prepared_audio"] | null {
@@ -43,9 +51,11 @@ export function parsePreparedAudioContext(candidate: unknown): Source["prepared_
       typeof value.input_duration_ms !== "number" || typeof value.output_duration_ms !== "number" ||
       !Number.isSafeInteger(value.input_duration_ms) || value.input_duration_ms <= 0 ||
       !Number.isSafeInteger(value.output_duration_ms) || value.output_duration_ms <= 0 ||
-      typeof value.pauses_removed !== "boolean") return null;
+      typeof value.pauses_removed !== "boolean" ||
+      (value.original_timeline_available !== undefined && typeof value.original_timeline_available !== "boolean")) return null;
   return { job_id: value.job_id, input_duration_ms: value.input_duration_ms,
-    output_duration_ms: value.output_duration_ms, pauses_removed: value.pauses_removed };
+    output_duration_ms: value.output_duration_ms, pauses_removed: value.pauses_removed,
+    ...(typeof value.original_timeline_available === "boolean" ? { original_timeline_available: value.original_timeline_available } : {}) };
 }
 
 export function reconcileOptimisticSources(

@@ -4,6 +4,20 @@ import { describe, expect, it, vi } from "vitest";
 import { ConfirmClearDialog } from "./ConfirmClearDialog";
 
 describe("ConfirmClearDialog", () => {
+  it("supports three explicit Live actions and restores focus to an available control", async () => {
+    const trigger = document.createElement("button"), fallback = document.createElement("button");
+    document.body.append(trigger,fallback); trigger.focus();
+    const stop = vi.fn(), cancel = vi.fn();
+    const view = render(<ConfirmClearDialog title="Очистить Live?" description="Другие сессии сохранятся."
+      pending={false} confirmLabel="Очистить и продолжить" cancelLabel="Отмена"
+      secondaryConfirm={{label:"Остановить и очистить",onClick:stop}} onConfirm={vi.fn()} onCancel={cancel}
+      fallbackFocus={() => fallback.focus()} />);
+    expect(screen.getByRole("button",{name:"Отмена"})).toHaveFocus();
+    await userEvent.click(screen.getByRole("button",{name:"Остановить и очистить"}));
+    expect(stop).toHaveBeenCalledOnce(); expect(cancel).not.toHaveBeenCalled();
+    trigger.disabled = true; view.unmount(); expect(fallback).toHaveFocus();
+    trigger.remove(); fallback.remove();
+  });
   it("requires an explicit Да and keeps Нет as a separate safe action", async () => {
     const onConfirm = vi.fn();
     const onCancel = vi.fn();

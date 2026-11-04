@@ -160,7 +160,7 @@ def test_database_role_manifest_lets_real_migrator_extend_existing_enum(tmp_path
                 conn.execute(text("ALTER ROLE studio_migrator NOLOGIN"))
 
         with temp_engine.connect() as conn:
-            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0044_quality_progress"
+            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0045_personal_audit"
             assert conn.execute(
                 text(
                     "SELECT count(*) FROM pg_enum e "
@@ -168,6 +168,119 @@ def test_database_role_manifest_lets_real_migrator_extend_existing_enum(tmp_path
                     "WHERE t.typname='credentialprovider' AND e.enumlabel='yandex'"
                 )
             ).scalar_one() == 1
+
+
+def test_local_result_handoff_uses_api_grants_without_worker_checkpoint_write(monkeypatch):
+    """Real login + real manifest; SQLite cannot prove this permission boundary."""
+    import gzip
+    import hashlib
+    import io
+    from sqlalchemy.orm import Session, sessionmaker
+    from studio_api.local_execution_devices import pair_device
+    from studio_api.local_execution_jobs import claim_local_job
+    from studio_api.local_execution_transfer import open_local_input, prepare_local_input, decode_local_result, accept_local_result
+    from studio_api.job_source_materialization import MaterializedJobSource, MaterializedSourceIdentity
+    from studio_api.models import LocalExecutionDevice, SttProviderOperation, TranscriptionProviderPartCheckpoint
+    from studio_api.nemotron_local_result import NEMOTRON_MODEL
+    from studio_api.job_cached_transcript import completed_yandex_result
+
+    suffix = uuid.uuid4().hex
+    roles = {name: f"{name}_test_{suffix}" for name in ("studio_api", "studio_migrator", "studio_owner")}
+    api_engine = None
+    try:
+        with isolated_migration_database("studio_local_grants") as (temp_engine, env):
+            run_alembic("head", env=env)
+            manifest = (ROOT / "deploy/studio/database-roles.sql").read_text(encoding="utf-8")
+            manifest = manifest.replace("ON DATABASE studio TO", f'ON DATABASE "{temp_engine.url.database}" TO')
+            for name, replacement in roles.items():
+                manifest = re.sub(r"\b" + name + r"\b", replacement, manifest)
+            password = "synthetic-" + suffix
+            with temp_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+                conn.exec_driver_sql(manifest, execution_options={"no_parameters": True})
+                conn.exec_driver_sql(f"ALTER ROLE {roles['studio_api']} LOGIN PASSWORD '{password}'")
+            api_engine = create_engine(temp_engine.url.set(username=roles["studio_api"], password=password))
+            settings = Settings(database_url=api_engine.url.render_as_string(hide_password=False))
+            monkeypatch.setattr(Settings, "master_key_b64", lambda _self: base64.b64encode(b"n" * 32).decode())
+            maker = sessionmaker(api_engine, expire_on_commit=False)
+            now = datetime.now(timezone.utc)
+            with maker() as db:
+                assert db.execute(text("SELECT current_user")).scalar_one() == roles["studio_api"]
+                assert db.execute(text("SELECT has_table_privilege(current_user, 'transcription_provider_part_checkpoints', 'INSERT')")).scalar_one() is False
+                owner = User(email=f"local-role-{suffix}@example.test", status=UserStatus.active)
+                db.add(owner); db.flush()
+                device, raw_token = pair_device(db, owner_user_id=owner.id, label="Synthetic PC", creation_key=str(uuid.uuid4()), now=now)
+                device.runtime_status, device.model, device.runtime_version, device.last_seen_at = "ready", NEMOTRON_MODEL, "0.2.0", now
+                project = Project(owner_user_id=owner.id, title="Local role test")
+                db.add(project); db.flush()
+                source = Source(project_id=project.id, source_type=SourceType.local_upload, original_filename="synthetic.wav",
+                    upload_status=SourceUploadStatus.uploaded, s3_bucket="synthetic", s3_object_key="synthetic", expires_at=now+timedelta(days=3))
+                db.add(source); db.flush()
+                job = TranscriptionJob(owner_user_id=owner.id, project_id=project.id, status=JobStatus.queued,
+                    provider="nemotron", operating_mode="standard", language="en", local_device_id=device.id, media_timeline_version=2,
+                    output_drive_folder_id="synthetic-folder", options_json=json.dumps({"_stt_model": NEMOTRON_MODEL, "diarize": False}))
+                db.add(job); db.flush()
+                relation = TranscriptionJobSource(job_id=job.id, source_id=source.id, position=0)
+                db.add(relation); db.commit()
+                claimed = claim_local_job(db, device=device, now=now)
+                assert claimed.id == job.id
+                generation, job_id, device_id, relation_id = claimed.lease_generation, job.id, device.id, relation.id
+                db.commit()
+
+                raw = b"synthetic input bytes"
+                @contextmanager
+                def materialize(*_args, **_kwargs):
+                    with io.BytesIO(raw) as stream:
+                        yield MaterializedJobSource(identity=MaterializedSourceIdentity(job_id, relation_id, source.id), position=0,
+                            original_filename="synthetic.wav", mime_type="audio/wav", byte_count=len(raw), stream=stream)
+                with open_local_input(db, device=device, raw_token=raw_token, job_id=job_id, generation=generation,
+                        settings=settings, clock=lambda: now, materializer=materialize) as (chunks, receipt):
+                    assert b"".join(chunks) == raw
+                digest = hashlib.sha256(raw).hexdigest()
+                prepare_local_input(db, device=device, job_id=job_id, generation=generation, source_sha256=digest,
+                    source_duration_seconds=1, settings=settings, now=now)
+                db.commit()
+                value = {"generation": generation, "source_sha256": digest, "result": {"text": "Synthetic speech.",
+                    "file": "synthetic.wav", "confidence": 0,
+                    "duration": 1, "languages": ["en"], "words": [{"word": "Synthetic", "start": 0, "end": .5},
+                        {"word": "speech.", "start": .5, "end": 1}]}}
+                envelope, result_digest = decode_local_result(gzip.compress(json.dumps(value).encode()))
+                assert accept_local_result(db, device=device, job_id=job_id, envelope=envelope, digest=result_digest,
+                    settings=settings, now=now) == {"accepted": True, "already_accepted": False}
+                db.commit()
+                assert db.scalar(select(TranscriptionProviderPartCheckpoint)) is None
+                operation = db.scalar(select(SttProviderOperation))
+                assert operation.provider == "nemotron" and operation.status == "completed"
+                assert b"Synthetic speech" not in operation.result_ciphertext
+                assert completed_yandex_result(db, db.get(TranscriptionJob, job_id), relation_id).id == operation.id
+                assert db.get(LocalExecutionDevice, device_id).revoked_at is None
+                from studio_api.job_processing_lifecycle import request_job_cancellation
+                from studio_api.local_execution_jobs import heartbeat_local_job
+                # Same API path after accepted handoff: clear operation text,
+                # preserve the worker-only checkpoint privilege boundary.
+                request_job_cancellation(db, job_id=job_id, now=now, retire_part_checkpoints=False)
+                db.commit()
+                assert db.get(TranscriptionJob, job_id).status == JobStatus.cancelled
+                assert operation.result_ciphertext is None and operation.result_hmac is None
+                next_job = TranscriptionJob(owner_user_id=owner.id, project_id=project.id, status=JobStatus.queued,
+                    provider="nemotron", operating_mode="standard", language="en", local_device_id=device.id, media_timeline_version=2,
+                    output_drive_folder_id="synthetic-folder", options_json=json.dumps({"_stt_model": NEMOTRON_MODEL, "diarize": False}))
+                db.add(next_job); db.flush()
+                db.add(TranscriptionJobSource(job_id=next_job.id, source_id=source.id, position=0)); db.commit()
+                assert claim_local_job(db, device=device, now=now).id == next_job.id
+                next_generation = next_job.lease_generation
+                request_job_cancellation(db, job_id=next_job.id, now=now, retire_part_checkpoints=False)
+                db.commit()
+                assert heartbeat_local_job(db, device=device, job_id=next_job.id, generation=next_generation,
+                    stage="local_transcription", sequence=1, completed=None, total=None, unit=None, now=now) == {"cancelled": True}
+                db.commit()
+                assert next_job.status == JobStatus.cancelled
+            api_engine.dispose(); api_engine = None
+    finally:
+        if api_engine is not None:
+            api_engine.dispose()
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            for name in ("studio_api", "studio_migrator", "studio_owner"):
+                conn.exec_driver_sql(f"DROP ROLE IF EXISTS {roles[name]}")
 
 
 def admin(email="a@example.com", password="correct horse battery"):
@@ -490,7 +603,7 @@ def test_alembic_upgrade_and_readiness_current():
     c = TestClient(app)
     r = c.get("/api/healthz")
     assert r.status_code == 200
-    assert r.json() == {"ok": True, "database": "reachable", "migrations": "current", "schema_revision": "0044_quality_progress", "redis": "reachable"}
+    assert r.json() == {"ok": True, "database": "reachable", "migrations": "current", "schema_revision": "0045_personal_audit", "redis": "reachable"}
     assert c.get("/api/readyz").json() == r.json()
     assert c.get("/api/livez").json() == {"ok": True, "status": "alive"}
 
@@ -1975,6 +2088,25 @@ def test_realtime_draft_routes_are_private_monotonic_and_no_store():
     finally:
         db.close()
 
+    sessions_path = f"/api/projects/{project['id']}/realtime/drafts"
+    assert TestClient(app).get(sessions_path).status_code == 401
+    assert other_client.get(sessions_path).status_code == 404
+    opened = owner_client.get(path)
+    assert opened.headers["cache-control"] == "no-store"
+    assert opened.json() == {"draft": latest.json()["draft"], "cleared": False}
+    second_path = sessions_path + "/session_987654321"
+    assert owner_client.put(second_path, json=body, headers=owner_headers).status_code == 200
+    first_page = owner_client.get(sessions_path, params={"page_size": 1})
+    assert first_page.headers["cache-control"] == "no-store" and first_page.headers["pragma"] == "no-cache"
+    assert "Секретный" not in first_page.text and "секретный partial" not in first_page.text
+    assert len(first_page.json()["sessions"]) == 1 and first_page.json()["next_cursor"]
+    second_page = owner_client.get(sessions_path, params={"page_size": 1, "cursor": first_page.json()["next_cursor"]})
+    sessions = first_page.json()["sessions"] + second_page.json()["sessions"]
+    assert {item["client_session_id"] for item in sessions} == {session_id, "session_987654321"}
+    assert second_page.json()["next_cursor"] is None
+    assert all(item["committed_segment_count"] == 1 for item in sessions)
+    assert owner_client.delete(second_path, headers=owner_headers).status_code == 200
+
     assert owner_client.delete(
         path,
         headers={"origin": "https://evil.test", "x-csrf-token": owner_csrf},
@@ -1984,6 +2116,10 @@ def test_realtime_draft_routes_are_private_monotonic_and_no_store():
     assert deleted.headers["cache-control"] == "no-store"
     assert deleted.json() == {"ok": True, "deleted": True}
     assert owner_client.get(latest_path).json() == {"draft": None}
+    assert owner_client.get(path).json() == {"draft": None, "cleared": True}
+    assert owner_client.get(sessions_path).json()["sessions"] == []
+    late_save = owner_client.put(path, json={**body, "revision": 999}, headers=owner_headers)
+    assert late_save.status_code == 409 and late_save.json()["detail"]["reason"] == "realtime_draft_cleared"
 
 
 def test_realtime_draft_validation_redacts_transcript_input():
@@ -4666,7 +4802,7 @@ def test_job_lease_migration_real_0005_shape_upgrades_to_head():
             assert {"lease_owner_id", "lease_generation", "claimed_at", "lease_expires_at", "attempt_count", "cancel_requested_at"}.issubset(cols)
             indexes = [idx["name"] for idx in inspector.get_indexes("transcription_jobs")]
             assert indexes.count("ix_transcription_jobs_status_lease_expires_created") == 1
-            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0044_quality_progress"
+            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0045_personal_audit"
 
 
 
@@ -4730,7 +4866,7 @@ def test_job_output_migration_clean_chain_constraints_and_0007_roundtrip():
         run_alembic("head", env=env)
         with temp_engine.begin() as conn:
             assert "transcription_job_outputs" in inspect(conn).get_table_names()
-            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0044_quality_progress"
+            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0045_personal_audit"
 
 
 
@@ -7459,7 +7595,7 @@ def test_batch_rejects_out_of_bounds_known_prepared_version_before_creating_jobs
         "items": [{"source_id": source_a, "output_folder_id": "one", "media_clip_start_seconds": 0, "media_clip_end_seconds": 20}],
     }, headers={"origin": "https://studio.test", "x-csrf-token": csrf, "Idempotency-Key": "prepared-boundary-regression-0001"})
     assert response.status_code == 422
-    assert "длительность" in response.json()["detail"]
+    assert "исходной шкалы" in response.json()["detail"]
     assert _count_batch_rows() == (0, 0)
 
 
@@ -9045,7 +9181,7 @@ def test_job_destination_migration_0008_0009_upgrade_downgrade_backfill(tmp_path
         with temp_engine.begin() as conn:
             assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0009_job_output_destinations"
         cfg = Config(str(ALEMBIC))
-        assert ScriptDirectory.from_config(cfg).get_current_head() == "0044_quality_progress"
+        assert ScriptDirectory.from_config(cfg).get_current_head() == "0045_personal_audit"
     finally:
         temp_engine.dispose()
         cleanup_engine = create_engine(admin_url, isolation_level="AUTOCOMMIT")
@@ -9327,10 +9463,13 @@ def test_long_recording_confirmation_rejects_stale_quote_and_requires_owner_csrf
     assert queued == [True]
 
 
-def test_audio_reuse_imports_only_verified_drive_copy_and_is_idempotent(monkeypatch):
+@pytest.mark.parametrize("modern", [False, True])
+def test_audio_reuse_imports_only_verified_drive_copy_and_is_idempotent(monkeypatch, modern):
     from types import SimpleNamespace
     from studio_api import main as api_main
     from studio_api.models import AudioPreparationJob, AudioPreparationStatus
+    from studio_api.audio_export_receipt import AudioExportReceipt
+    from studio_api.audio_timeline import AudioTimeline
     email = "audio-reuse-owner@example.com"
     client = TestClient(app)
     csrf = login(client, admin(email), email)
@@ -9343,14 +9482,22 @@ def test_audio_reuse_imports_only_verified_drive_copy_and_is_idempotent(monkeypa
             output_filename="Лекция.flac", output_mime_type="audio/flac", output_size_bytes=14,
             output_drive_file_id="prepared-audio-file", output_drive_web_view_url="https://drive.google.com/file/d/prepared-audio-file/view")
         db.add(job)
+        if modern:
+            job.recipe_version = 2
+            job.total_input_duration_ms = 15000
+            job.output_duration_ms = 10000
+            job.output_timeline_json = AudioTimeline.from_seconds(15, [(0, 5), (10, 15)]).serialize()
+            job.output_drive_receipt_json = AudioExportReceipt("prepared-audio-file", 14, "a" * 64, "revision-one").serialize()
         db.commit()
         job_id = job.id
     calls = []
+    metadata_state = {"sha256_checksum": "a" * 64, "head_revision_id": "revision-one"}
     monkeypatch.setattr(api_main, "refreshed_google_drive_access_token", lambda *args: "synthetic-token")
     def metadata(db, user, file_id, **kwargs):
         assert not db.in_transaction()
         calls.append(file_id)
         return SimpleNamespace(id=file_id, name="Лекция.flac", size_bytes=14, is_folder=False,
+            md5_checksum="c" * 32, **metadata_state,
             created_time="2026-10-05T21:00:00Z", web_view_link="https://drive.google.com/file/d/prepared-audio-file/view"), "audio/flac"
     monkeypatch.setattr(api_main, "_validated_google_drive_source_metadata", metadata)
     route = f"/api/audio-preparations/{job_id}/reuse-source"
@@ -9366,6 +9513,19 @@ def test_audio_reuse_imports_only_verified_drive_copy_and_is_idempotent(monkeypa
         source = db.get(Source, first.json()["id"])
         assert source.s3_object_key is None and source.s3_bucket is None
     assert calls == ["prepared-audio-file", "prepared-audio-file"]
+    if modern:
+        assert first.json()["prepared_audio"]["original_timeline_available"] is True
+        assert "content_sha256" not in first.text and "retained" not in first.text
+        metadata_state.update(sha256_checksum="b" * 64, head_revision_id="revision-two")
+        changed = client.post(route, headers=headers)
+        assert changed.status_code == 409 and changed.json()["detail"]["reason"] == "output_copy_changed"
+        metadata_state.update(sha256_checksum=None, head_revision_id=None)
+        unverified = client.post(route, headers=headers)
+        assert unverified.status_code == 409 and unverified.json()["detail"]["reason"] == "output_copy_unverified"
+        with SessionLocal() as db:
+            assert db.scalar(select(func.count(Source.id)).where(Source.project_id == project_id)) == 1
+    else:
+        assert "prepared_audio" not in first.json()
 
 
 def test_audio_legacy_recovery_api_is_owner_csrf_scoped_and_never_calls_google(monkeypatch):

@@ -1,5 +1,7 @@
 from __future__ import annotations
 from .preparation_control import PreparationInterrupted
+from .audio_timeline import AudioTimelineError
+from .transcript_timeline import select_transcript_clock, persist_transcript_clock, original_clock_transcript
 
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -85,6 +87,7 @@ class JobElevenLabsTranscriptionReason(str, Enum):
     media_split_failed = "media_split_failed"
     media_part_too_large = "media_part_too_large"
     media_clip_out_of_bounds = "media_clip_out_of_bounds"
+    media_timeline_unavailable = "media_timeline_unavailable"
     media_duration_confirmation_required = "media_duration_confirmation_required"
     media_duration_too_long = "media_duration_too_long"
     existing_result_conflict = "existing_result_conflict"
@@ -208,8 +211,10 @@ def transcribe_processing_job_source_with_elevenlabs(
                         provider_model=provider_model,
                     )
                     media_clip = initial_job_snapshot["catalog_settings"]
+                    clock_selection = select_transcript_clock(db.get(TranscriptionJob, job_id), source)
                     from .long_media_preflight import confirmed_source_duration
-                    confirmed_duration = confirmed_source_duration(db.get(TranscriptionJob, job_id), job_source_id)
+                    confirmed_duration = confirmed_source_duration(db.get(TranscriptionJob, job_id), job_source_id,
+                        clock_selection=clock_selection)
                     # Preserve an existing multipart checkpoint/usage plan on recovery.
                     prior_part_count = db.scalar(
                         select(TranscriptionJobSourceAttempt.provider_total_parts)
@@ -230,8 +235,8 @@ def transcribe_processing_job_source_with_elevenlabs(
                         **({"prefer_whole_recording": (
                             media_clip.diarization_enabled and (prior_part_count is None or prior_part_count == 1)
                         )} if expected_provider == "elevenlabs" else {}),
-                        media_clip_start_seconds=media_clip.media_clip_start_seconds,
-                        media_clip_end_seconds=media_clip.media_clip_end_seconds,
+                        media_clip_start_seconds=clock_selection.prepared_start,
+                        media_clip_end_seconds=clock_selection.prepared_end,
                         duration_warning_seconds=settings.media_duration_warning_seconds,
                         max_duration_seconds=settings.media_max_duration_seconds,
                         long_duration_confirmed=confirmed_duration is not None,
@@ -266,12 +271,16 @@ def transcribe_processing_job_source_with_elevenlabs(
                         )
                 except PreparationInterrupted as exc:
                     raise JobElevenLabsTranscriptionError(JobElevenLabsTranscriptionReason.lifecycle_changed_before_provider_call) from exc
+                except AudioTimelineError as exc:
+                    mapped = JobElevenLabsTranscriptionReason.media_timeline_unavailable
+                    _best_effort_classify(db, job_id, job_source_id, lease_owner_id, lease_generation, mapped.value, clock)
+                    raise JobElevenLabsTranscriptionError(mapped) from exc
                 except MediaPreparationError as exc:
                     if exc.reason is MediaPreparationReason.media_duration_confirmation_required:
                         from .long_media_preflight import record_long_media_preflight
                         record_long_media_preflight(db, job_id=job_id, relation_id=job_source_id,
                             duration=exc.duration_seconds, settings=settings, owner=lease_owner_id,
-                            generation=lease_generation, now=clock())
+                            generation=lease_generation, now=clock(), clock_selection=clock_selection)
                     mapped = _map_media_preparation_reason(exc.reason)
                     _best_effort_classify(db, job_id, job_source_id, lease_owner_id, lease_generation, mapped.value, clock)
                     raise JobElevenLabsTranscriptionError(mapped) from exc
@@ -295,6 +304,12 @@ def transcribe_processing_job_source_with_elevenlabs(
                         expected_provider=expected_provider,
                         provider_model=provider_model,
                     )
+                    try:
+                        persist_transcript_clock(db, job_id=job_id, job_source_id=job_source_id,
+                            source=source, selection=clock_selection, observed_source_duration=prepared_batch.source_duration_seconds,
+                            lease_owner_id=lease_owner_id, lease_generation=lease_generation, now=clock())
+                    except AudioTimelineError as exc:
+                        raise JobElevenLabsTranscriptionError(JobElevenLabsTranscriptionReason.media_timeline_unavailable) from exc
                     _emit_provider(db, job_id, "SOURCE_READY", {"attempt_number": _attempt(db, job_id)})
                     part_results: list[ElevenLabsTranscriptResult] = []
                     if part_checkpoints_enabled:
@@ -570,7 +585,11 @@ def transcribe_processing_job_source_with_elevenlabs(
                 finally:
                     prepared_cm.__exit__(None, None, None)
                 _emit_provider(db, job_id, "PROVIDER_REQUEST_COMPLETED", {"attempt_number": _attempt(db, job_id)})
-                yield result
+                try:
+                    with original_clock_transcript(db, job_id=job_id, job_source_id=job_source_id, result=result) as projected:
+                        yield projected
+                except AudioTimelineError as exc:
+                    raise JobElevenLabsTranscriptionError(JobElevenLabsTranscriptionReason.media_timeline_unavailable) from exc
             finally:
                 source_cm.__exit__(None, None, None)
         finally:
@@ -644,6 +663,7 @@ def _coerce_prepared_media_batch(value) -> PreparedMediaBatch:
             parts=(value,),
             duration_seconds=float(value.duration_seconds or 0.0),
             source_created_at=value.source_created_at,
+            source_duration_seconds=value.source_duration_seconds,
         )
     raise MediaPreparationError(MediaPreparationReason.media_preparation_failed)
 

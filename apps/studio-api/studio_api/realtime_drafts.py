@@ -10,20 +10,22 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import delete, select, func
+from sqlalchemy import case, select, func
 from sqlalchemy.orm import Session
 
 from .models import Project, RealtimeTranscriptDraft, User
-from .security import decrypt, encrypt, master_key_from_b64
+from .security import decrypt, encrypt, master_key_from_b64, utcnow
 
 
 MAX_COMMITTED_SEGMENTS = 5_000
 MAX_COMMITTED_CHARACTERS = 500_000
 MAX_PARTIAL_CHARACTERS = 20_000
 CLIENT_SESSION_PATTERN = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+ROW_BUDGET_BYTES = 512
 
 
 class RealtimeDraftReason(str, Enum):
+    cleared = "realtime_draft_cleared"
     scope_conflict = "realtime_draft_scope_conflict"
     revision_conflict = "realtime_draft_revision_conflict"
     storage_limit = "realtime_draft_storage_limit"
@@ -78,6 +80,8 @@ def save_realtime_draft(
     ).scalar_one_or_none()
     if existing is not None and existing.project_id != project.id:
         raise RealtimeDraftError(RealtimeDraftReason.scope_conflict)
+    if existing is not None and existing.cleared_at is not None:
+        raise RealtimeDraftError(RealtimeDraftReason.cleared)
     if existing is not None and revision < existing.revision:
         raise RealtimeDraftError(RealtimeDraftReason.revision_conflict)
 
@@ -103,13 +107,15 @@ def save_realtime_draft(
         ciphertext, nonce = encrypt(payload, key, associated)
     except Exception as exc:
         raise RealtimeDraftError(RealtimeDraftReason.crypto_failed) from exc
-    count, stored_bytes = db.execute(
-        select(func.count(RealtimeTranscriptDraft.id), func.coalesce(func.sum(func.length(RealtimeTranscriptDraft.ciphertext)), 0))
+    count, total_count, stored_bytes = db.execute(
+        select(func.coalesce(func.sum(case((RealtimeTranscriptDraft.cleared_at.is_(None), 1), else_=0)), 0),
+            func.count(RealtimeTranscriptDraft.id), func.coalesce(func.sum(func.length(RealtimeTranscriptDraft.ciphertext)), 0))
         .where(RealtimeTranscriptDraft.owner_user_id == owner_user_id)
     ).one()
     max_count = getattr(settings, "realtime_draft_max_count", 20)
     max_bytes = getattr(settings, "realtime_draft_max_storage_bytes", 32 * 1024 * 1024)
-    if (existing is None and count >= max_count) or stored_bytes - (len(existing.ciphertext) if existing else 0) + len(ciphertext) > max_bytes:
+    if (existing is None and count >= max_count) or (stored_bytes - (len(existing.ciphertext) if existing else 0)
+        + len(ciphertext) + (total_count + (existing is None)) * ROW_BUDGET_BYTES > max_bytes):
         raise RealtimeDraftError(RealtimeDraftReason.storage_limit)
     # Only an explicit owner clear retires Live text. Legacy dates are not
     # authority to erase a draft, including one recovered after deployment.
@@ -177,6 +183,7 @@ def load_latest_realtime_draft(
         .where(
             RealtimeTranscriptDraft.owner_user_id == owner_user_id,
             RealtimeTranscriptDraft.project_id == project.id,
+            RealtimeTranscriptDraft.cleared_at.is_(None),
         )
         .order_by(
             RealtimeTranscriptDraft.updated_at.desc(),
@@ -193,18 +200,57 @@ def delete_realtime_draft(
     owner_user_id: str,
     project: Project,
     client_session_id: str,
+    settings=None,
+    now: datetime | None = None,
 ) -> bool:
     _require_project_scope(project, owner_user_id)
     normalized = _client_session_id(client_session_id)
     db.execute(select(User.id).where(User.id == owner_user_id).with_for_update()).scalar_one()
-    result = db.execute(
-        delete(RealtimeTranscriptDraft).where(
+    row = db.execute(
+        select(RealtimeTranscriptDraft).where(
             RealtimeTranscriptDraft.owner_user_id == owner_user_id,
-            RealtimeTranscriptDraft.project_id == project.id,
             RealtimeTranscriptDraft.client_session_id == normalized,
-        )
-    )
-    return bool(result.rowcount)
+        ).with_for_update()
+    ).scalar_one_or_none()
+    if row is not None and row.project_id != project.id:
+        raise RealtimeDraftError(RealtimeDraftReason.scope_conflict)
+    if row is not None and row.cleared_at is not None:
+        return False
+    deleted = row is not None
+    now = now or utcnow()
+    if row is None:
+        total_count, stored_bytes = db.execute(select(func.count(RealtimeTranscriptDraft.id),
+            func.coalesce(func.sum(func.length(RealtimeTranscriptDraft.ciphertext)), 0)).where(
+                RealtimeTranscriptDraft.owner_user_id == owner_user_id)).one()
+        if stored_bytes + (total_count + 1) * ROW_BUDGET_BYTES > getattr(settings, "realtime_draft_max_storage_bytes", 32 * 1024 * 1024):
+            raise RealtimeDraftError(RealtimeDraftReason.storage_limit)
+        row = RealtimeTranscriptDraft(id=str(uuid.uuid4()), owner_user_id=owner_user_id,
+            project_id=project.id, client_session_id=normalized, revision=1, created_at=now)
+        db.add(row)
+    row.cleared_at = now
+    row.updated_at = now
+    row.expires_at = None
+    row.ciphertext = b""
+    row.nonce = b""
+    row.key_id = ""
+    row.payload_hmac = "0" * 64
+    row.committed_segment_count = row.committed_character_count = row.partial_character_count = 0
+    db.flush()
+    return deleted
+
+
+def load_realtime_draft_state(db: Session, *, owner_user_id: str, project: Project,
+                              client_session_id: str, settings) -> tuple[RealtimeDraftContent | None, bool]:
+    _require_project_scope(project, owner_user_id)
+    normalized = _client_session_id(client_session_id)
+    row = db.execute(select(RealtimeTranscriptDraft).where(
+        RealtimeTranscriptDraft.owner_user_id == owner_user_id, RealtimeTranscriptDraft.project_id == project.id,
+        RealtimeTranscriptDraft.client_session_id == normalized)).scalar_one_or_none()
+    if row is None:
+        return None, False
+    if row.cleared_at is not None:
+        return None, True
+    return _row_content(row, settings=settings), False
 
 
 DEFAULT_REALTIME_DRAFT_CLEANUP_BATCH_SIZE = 500

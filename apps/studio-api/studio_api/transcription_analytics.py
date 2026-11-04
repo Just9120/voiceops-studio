@@ -66,11 +66,13 @@ def build_transcription_analytics_payload(
     attempts: Iterable[Any],
     provider_by_credential_id: Mapping[str, str],
     since: datetime | None = None,
+    include_local: bool = False,
 ) -> dict[str, Any]:
     job_rows = list(jobs)
     attempt_rows = list(attempts)
     outcomes = {status: 0 for status in JOB_STATUSES}
     provider_model = {"elevenlabs_scribe_v2": 0, "yandex_general": 0, "yandex_deferred_general": 0, "mistral_voxtral_small_transcribe_3": 0, "gemini_35_transcribe": 0, "tbank_default": 0, "unknown": 0}
+    if include_local: provider_model["nemotron_35_transcribe_local"] = 0
     language_mode = {"ru": 0, "en": 0, "detect": 0, "other": 0}
     diarization = {"enabled": 0, "disabled": 0}
     queue_durations: list[float] = []
@@ -91,7 +93,7 @@ def build_transcription_analytics_payload(
 
         provider_key = analytics_bucket(_selected_provider(job, provider_by_credential_id),
             getattr(job, "options_json", None), getattr(job, "operating_mode", None))
-        provider_model[provider_key] += 1
+        provider_model[provider_key if provider_key in provider_model else "unknown"] += 1
 
         selected_language = browser_language_mode(getattr(job, "language", None))
         language_key = (
@@ -196,6 +198,7 @@ def load_transcription_analytics_payload(
     owner_user_id: str,
     project_id: str,
     since: datetime | None = None,
+    include_local: bool = False,
 ):
     from sqlalchemy import and_, case, func
 
@@ -216,6 +219,7 @@ def load_transcription_analytics_payload(
 
     outcomes = {status: 0 for status in JOB_STATUSES}
     provider_model = {"elevenlabs_scribe_v2": 0, "yandex_general": 0, "yandex_deferred_general": 0, "mistral_voxtral_small_transcribe_3": 0, "gemini_35_transcribe": 0, "tbank_default": 0, "unknown": 0}
+    if include_local: provider_model["nemotron_35_transcribe_local"] = 0
     language_mode = {"ru": 0, "en": 0, "detect": 0, "other": 0}
     diarization = {"enabled": 0, "disabled": 0}
     total_jobs = 0
@@ -262,7 +266,8 @@ def load_transcription_analytics_payload(
         status_key = _enum_value(status)
         if status_key in outcomes:
             outcomes[status_key] += count
-        provider_model[analytics_bucket(selected_provider(explicit_provider, _enum_value(credential_provider)), options_json, operating_mode)] += count
+        provider_key = analytics_bucket(selected_provider(explicit_provider, _enum_value(credential_provider)), options_json, operating_mode)
+        provider_model[provider_key if provider_key in provider_model else "unknown"] += count
         selected_language = browser_language_mode(language)
         language_mode[
             selected_language

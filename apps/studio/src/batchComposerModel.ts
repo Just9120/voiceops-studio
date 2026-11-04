@@ -7,7 +7,7 @@ import {
 export const DEFAULT_TRANSCRIPTION_LANGUAGE_MODE: TranscriptionLanguageMode =
   "ru";
 export const MAX_BATCH_ITEMS = 50;
-export type SttProvider = "elevenlabs" | "yandex" | "tbank" | "mistral" | "gemini";
+export type SttProvider = "elevenlabs" | "yandex" | "tbank" | "mistral" | "gemini" | "nemotron";
 export type SttOperatingMode = "economic" | "standard" | "premium";
 
 export type VerifiedOutputFolder = {
@@ -41,6 +41,7 @@ export type BatchCreateRequest = {
   provider?: SttProvider;
   operating_mode?: SttOperatingMode;
   provider_credential_id: string | null;
+  local_device_id?: string;
   language: TranscriptionLanguageMode;
   options: { diarize: boolean; dictionary_ids?: string[] };
   items: {
@@ -184,6 +185,7 @@ export function composerSignature(
   provider?: SttProvider,
   operatingMode?: SttOperatingMode,
   dictionaryIds?: string[],
+  localDeviceId?: string,
 ) {
   try {
     return JSON.stringify(
@@ -195,6 +197,7 @@ export function composerSignature(
         provider,
         operatingMode,
         dictionaryIds,
+        localDeviceId,
       ),
     );
   } catch {
@@ -205,6 +208,7 @@ export function composerSignature(
       provider,
       operatingMode,
       dictionaryIds,
+      localDeviceId,
       invalid_rows: rows.map((row) => ({
         id: row.id,
         source_id: row.source_id,
@@ -367,16 +371,18 @@ export function buildBatchCreateRequest(
   provider?: SttProvider,
   operatingMode?: SttOperatingMode,
   dictionaryIds?: string[],
+  localDeviceId?: string,
 ): BatchCreateRequest {
   const items = expandComposerRows(rows).map((item) => item.request_item);
   if (items.length > MAX_BATCH_ITEMS) throw new Error("Batch item limit exceeded");
   const request: BatchCreateRequest = {
-    provider_credential_id: credentialId || null,
+    provider_credential_id: provider === "nemotron" ? null : credentialId || null,
     language: languageMode,
     options: { diarize: diarizationEnabled },
     items,
   };
   if (provider) request.provider = provider;
+  if (provider === "nemotron" && localDeviceId) request.local_device_id = localDeviceId;
   if (operatingMode) request.operating_mode = operatingMode;
   if (dictionaryIds?.length) request.options.dictionary_ids = [...dictionaryIds];
   return request;
@@ -399,7 +405,7 @@ export function parseBatchPreflightResponse(
       "summary",
       "confirmation_required",
     ]) ||
-    !["elevenlabs", "yandex", "tbank", "mistral", "gemini"].includes(String(value.provider)) ||
+    !["elevenlabs", "yandex", "tbank", "mistral", "gemini", "nemotron"].includes(String(value.provider)) ||
     typeof value.model !== "string" ||
     value.model.length === 0 ||
     value.model.length > 120 ||

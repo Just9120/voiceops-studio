@@ -1,7 +1,7 @@
 import { validSegmentMetadataList, type RealtimeSegmentMetadata } from "./realtimeTranscript";
 
 const DATABASE_NAME = "studio-realtime-recovery";
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 const STORE_NAME = "drafts";
 export const REALTIME_PARTIAL_CHECKPOINT_DEBOUNCE_MS = 750;
 
@@ -23,9 +23,15 @@ export type RealtimeDraft = {
 };
 
 type StoredRealtimeDraft = RealtimeDraft & { key: string };
+type LocalDraftFence = { key: string; owner_user_id: string; project_id: string; client_session_id: string; retired: true };
 
-function draftKey(ownerUserId: string, projectId: string) {
-  return `${ownerUserId}:${projectId}`;
+function isLocalDraftFence(value: unknown, owner: string, project: string): value is LocalDraftFence {
+  return Boolean(value && typeof value === "object" && (value as LocalDraftFence).retired === true
+    && (value as LocalDraftFence).owner_user_id === owner && (value as LocalDraftFence).project_id === project);
+}
+
+function draftKey(ownerUserId: string, projectId: string, clientSessionId: string) {
+  return `${ownerUserId}:${projectId}:${clientSessionId}`;
 }
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
@@ -60,10 +66,29 @@ function transactionComplete(transaction: IDBTransaction): Promise<void> {
 async function openDatabase(): Promise<IDBDatabase | null> {
   if (typeof indexedDB === "undefined") return null;
   const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-  request.addEventListener("upgradeneeded", () => {
+  request.addEventListener("upgradeneeded", (event) => {
     const database = request.result;
-    if (!database.objectStoreNames.contains(STORE_NAME)) {
-      database.createObjectStore(STORE_NAME, { keyPath: "key" });
+    const store = database.objectStoreNames.contains(STORE_NAME)
+      ? request.transaction!.objectStore(STORE_NAME)
+      : database.createObjectStore(STORE_NAME, { keyPath: "key" });
+    if (!store.indexNames.contains("owner_project")) {
+      store.createIndex("owner_project", ["owner_user_id", "project_id"]);
+    }
+    if (event.oldVersion === 1) {
+      const cursor = store.openCursor();
+      cursor.addEventListener("success", () => {
+        const item = cursor.result;
+        if (!item) return;
+        const value = item.value as StoredRealtimeDraft;
+        if (value && typeof value === "object" && isDraftShape(value, value.owner_user_id, value.project_id)) {
+          const key = draftKey(value.owner_user_id, value.project_id, value.client_session_id);
+          if (item.primaryKey !== key) {
+            store.put({ ...value, key });
+            item.delete();
+          }
+        }
+        item.continue();
+      });
     }
   });
   return requestResult(request);
@@ -165,8 +190,12 @@ export async function saveLocalRealtimeDraft(draft: RealtimeDraft) {
     const transaction = database.transaction(STORE_NAME, "readwrite");
     const completion = transactionComplete(transaction);
     const store = transaction.objectStore(STORE_NAME);
-    const key = draftKey(draft.owner_user_id, draft.project_id);
+    const key = draftKey(draft.owner_user_id, draft.project_id, draft.client_session_id);
     const existing = await requestResult(store.get(key));
+    if (isLocalDraftFence(existing, draft.owner_user_id, draft.project_id)) {
+      await completion;
+      throw new Error("realtime_draft_cleared");
+    }
     if (
       isDraftShape(existing, draft.owner_user_id, draft.project_id) &&
       existing.revision > draft.revision
@@ -205,48 +234,51 @@ export async function saveLocalRealtimeDraft(draft: RealtimeDraft) {
   }
 }
 
-export async function loadLocalRealtimeDraft(
-  ownerUserId: string,
-  projectId: string,
-  _now = new Date(),
-): Promise<RealtimeDraft | null> {
-  // Keep the former TTL clock argument compatible; expiry no longer deletes Live.
-  void _now;
+export async function listLocalRealtimeDrafts(ownerUserId: string, projectId: string): Promise<RealtimeDraft[]> {
   const database = await openDatabase();
-  if (!database) return null;
+  if (!database) return [];
   try {
-    const key = draftKey(ownerUserId, projectId);
-    const transaction = database.transaction(STORE_NAME, "readwrite");
+    const transaction = database.transaction(STORE_NAME, "readonly");
     const completion = transactionComplete(transaction);
-    const store = transaction.objectStore(STORE_NAME);
-    const candidate = await requestResult(store.get(key));
-    if (
-      !isDraftShape(candidate, ownerUserId, projectId)
-    ) {
-      if (candidate !== undefined) store.delete(key);
-      await completion;
-      return null;
-    }
+    const rows: unknown[] = await requestResult(transaction.objectStore(STORE_NAME).index("owner_project").getAll([ownerUserId, projectId]));
     await completion;
-    return {
-      ...candidate,
-      committed_segments: [...candidate.committed_segments],
-    };
+    return rows.filter((row): row is RealtimeDraft => isDraftShape(row, ownerUserId, projectId))
+      .map((row) => ({ ...row, committed_segments: [...row.committed_segments] }))
+      .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at) || b.client_session_id.localeCompare(a.client_session_id));
   } finally {
     database.close();
   }
 }
 
-export async function deleteLocalRealtimeDraft(
-  ownerUserId: string,
-  projectId: string,
-) {
+export async function loadLocalRealtimeDraft(
+  ownerUserId: string, projectId: string, _now = new Date(), clientSessionId?: string,
+): Promise<RealtimeDraft | null> {
+  void _now;
+  if (!clientSessionId) return (await listLocalRealtimeDrafts(ownerUserId, projectId))[0] ?? null;
+  const database = await openDatabase();
+  if (!database) return null;
+  try {
+    const transaction = database.transaction(STORE_NAME, "readonly");
+    const completion = transactionComplete(transaction);
+    const candidate = await requestResult(transaction.objectStore(STORE_NAME).get(draftKey(ownerUserId, projectId, clientSessionId)));
+    await completion;
+    return isDraftShape(candidate, ownerUserId, projectId) ? { ...candidate, committed_segments: [...candidate.committed_segments] } : null;
+  } finally {
+    database.close();
+  }
+}
+
+export async function deleteLocalRealtimeDraft(ownerUserId: string, projectId: string, clientSessionId?: string) {
+  const selected = clientSessionId ?? (await loadLocalRealtimeDraft(ownerUserId, projectId))?.client_session_id;
+  if (!selected) return;
+  if (!CLIENT_SESSION_PATTERN.test(selected)) throw new Error("invalid_realtime_draft");
   const database = await openDatabase();
   if (!database) return;
   try {
     const transaction = database.transaction(STORE_NAME, "readwrite");
     const completion = transactionComplete(transaction);
-    transaction.objectStore(STORE_NAME).delete(draftKey(ownerUserId, projectId));
+    transaction.objectStore(STORE_NAME).put({ key: draftKey(ownerUserId, projectId, selected),
+      owner_user_id: ownerUserId, project_id: projectId, client_session_id: selected, retired: true } satisfies LocalDraftFence);
     await completion;
   } finally {
     database.close();

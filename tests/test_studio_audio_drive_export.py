@@ -92,8 +92,11 @@ def test_export_preserves_ready_output_and_is_idempotent(export_state, tmp_path)
     assert job.status is AudioPreparationStatus.completed
     assert job.current_stage == "google_drive_export_queued"
     assert audio_preparation_payload(job, now=NOW)["output"]["download_ready"] is True
-    assert deletion_readiness(db, source, now=NOW).value == "audio_preparation_uses_source"
+    # Waiting without a lease cannot retain a source indefinitely. Protection
+    # starts when a worker actually claims the export and lasts through I/O.
+    assert deletion_readiness(db, source, now=NOW).value == "available"
     claimed = claim(db)
+    assert deletion_readiness(db, source, now=NOW).value == "audio_preparation_uses_source"
     assert claim(db, "second-worker") is None
     seen = []
     def uploader(token, **kwargs):
@@ -141,6 +144,35 @@ def test_failed_export_can_retry_without_losing_output_or_changing_target(export
         return RESULT
     process(db, job, tmp_path, lookup_existing)
     assert job.output_drive_file_id == "file"
+
+
+def test_changed_drive_copy_keeps_download_and_reports_a_specific_safe_recovery(export_state, tmp_path):
+    from studio_api.google_drive_upload import GoogleDriveUploadError, GoogleDriveUploadReason
+    from studio_api.audio_preparation import AudioPreparationError
+    db, job, source = export_state
+    queue(db); claim(db)
+    def changed_copy(*args, **kwargs):
+        raise GoogleDriveUploadError(GoogleDriveUploadReason.content_mismatch)
+    with pytest.raises(AudioPreparationError, match="output_copy_changed"):
+        process(db, job, tmp_path, changed_copy)
+    db.refresh(job); db.refresh(source)
+    assert job.status is AudioPreparationStatus.completed
+    assert job.current_stage == "google_drive_export_failed" and job.error_code == "output_copy_changed"
+    assert job.output_source_id == source.id and job.output_drive_file_id is None
+    assert source.upload_status is SourceUploadStatus.uploaded and source.deleted_at is None
+    assert audio_preparation_payload(job, now=NOW)["output"]["download_ready"] is True
+
+
+def test_verified_export_receipt_is_atomic_with_the_confirmed_file(export_state, tmp_path):
+    from studio_api.audio_export_receipt import AudioExportReceipt
+    db, job, _ = export_state
+    queue(db); claim(db)
+    process(db, job, tmp_path, lambda *a, **k: SimpleNamespace(file_id="file", web_view_url=RESULT.web_view_url,
+        sha256_checksum="a" * 64, size_bytes=5, head_revision_id="revision-one"))
+    db.refresh(job)
+    receipt = AudioExportReceipt.parse(job.output_drive_receipt_json)
+    assert receipt.file_id == job.output_drive_file_id == "file" and receipt.sha256 == "a" * 64
+    assert "output_drive_receipt_json" not in audio_preparation_payload(job, now=NOW)
 
 
 @pytest.mark.parametrize("claimed", [False, True])

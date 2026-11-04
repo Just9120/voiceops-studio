@@ -8,7 +8,7 @@ from .elevenlabs_transcription import normalize_elevenlabs_transcript_response
 from .security import aad, encrypt, decrypt, master_key_from_b64
 
 
-def persist_operation_result(db, operation, result, *, settings, now):
+def persist_operation_result(db, operation, result, *, settings, now, commit=True):
     value = {"text": result.text, "language_code": result.detected_language_code, "language_probability": result.language_probability, "words": [
         dict(text=w.text, start=w.start, end=w.end, type=w.type, speaker_id=w.speaker_id) for w in result.words]}
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -18,7 +18,10 @@ def persist_operation_result(db, operation, result, *, settings, now):
     operation.result_key_id = settings.credential_key_id
     operation.result_hmac = hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
     operation.status, operation.completed_at, operation.updated_at = "completed", now, now
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()  # The local acceptance caller commits result + lease handoff atomically.
 
 
 def load_operation_result(operation, *, settings):

@@ -23,10 +23,11 @@ def whole_file_preparer(provider, *, diarize=False):
             _copy_input(stream, source)
             creation = _probe_source_creation_time(run, source) if probe_source_creation_time else None
             source_duration = _probe_duration_seconds(run, source)
-            _validate_whole_source_duration(source_duration, max_duration_seconds, duration_warning_seconds,
-                long_duration_confirmed and (confirmed_source_duration_seconds is None or round(source_duration, 3) == confirmed_source_duration_seconds))
             start, end = _validated_manual_clip_bounds(start_seconds=media_clip_start_seconds, end_seconds=media_clip_end_seconds, source_duration_seconds=source_duration)
             duration = end - start
+            _validate_whole_source_duration(duration, max_duration_seconds, duration_warning_seconds,
+                long_duration_confirmed and (confirmed_source_duration_seconds is None or round(source_duration, 3) == confirmed_source_duration_seconds),
+                source_duration_seconds=source_duration)
             if provider == "gemini" and duration > (1800 if diarize else 3600):
                 raise MediaPreparationError(MediaPreparationReason.media_duration_too_long)
             extension = "mp3" if provider == "tbank" else "flac"
@@ -54,5 +55,5 @@ def whole_file_preparer(provider, *, diarize=False):
                 yield PreparedMediaBatch(parts=(PreparedMediaInput(filename=target.name,
                     mime_type="audio/mpeg" if extension == "mp3" else "audio/flac", byte_count=size, stream=prepared,
                     audio_extracted=True, duration_seconds=duration, timeline_offset_seconds=start),),
-                    duration_seconds=duration, source_created_at=creation)
+                    duration_seconds=duration, source_created_at=creation, source_duration_seconds=source_duration)
     return prepare

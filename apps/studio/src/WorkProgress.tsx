@@ -7,6 +7,7 @@ const labels = {
   media_analysis: "Анализируем запись", audio_processing: "Обрабатываем выбранное аудио",
   speech_analysis: "Находим участки речи",
   provider_upload: "Передаём запись для распознавания", provider_wait: "Ожидаем ответ сервиса распознавания",
+  local_transcription: "Распознаём на вашем компьютере", local_result_upload: "Передаём готовый текст в Studio",
   part_merge: "Собираем текст", document_output: "Сохраняем документ",
 } as const;
 export type WorkProgress = {
@@ -42,6 +43,7 @@ export function WorkProgressDetail({ value }: { value: unknown }) {
   return <section className="work-progress-detail" aria-label="Текущий этап обработки">
     <p><strong>{labels[work.stage]}</strong>{percent !== null ? ` · ${percent}% этапа` : ""}</p>
     {work.completed !== null && <p>{amount(work.completed, work.unit)}{work.total !== null ? ` из ${amount(work.total, work.unit)}` : " обработано"}</p>}
+    {work.stage === "local_transcription" && <p className="muted">Модель не сообщает процент распознавания. Время этапа и связь с компьютером обновляются отдельно.</p>}
     {work.stage === "provider_wait" && <p className="muted">Сервис не сообщает процент распознавания. Ожидание ответа не означает зависание.</p>}
     <p className="muted">На этапе: {formatAudioDuration(Math.max(0, (now - Date.parse(work.started_at)) / 1000))} · подтверждено в {new Date(work.updated_at).toLocaleTimeString("ru-RU")}</p>
   </section>;

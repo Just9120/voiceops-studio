@@ -146,6 +146,7 @@ def passthrough_test_media(**kwargs):
         byte_count=kwargs["byte_count"],
         stream=kwargs["stream"],
         duration_seconds=1.0,
+        source_duration_seconds=1.0,
     )
 
 

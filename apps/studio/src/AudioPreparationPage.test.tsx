@@ -573,6 +573,23 @@ describe("audio UX regression", () => {
     expect(posts).toEqual([{ folder_id: "original" }]);
     expect(picker).toHaveBeenCalledTimes(1);
   });
+  it("explains a modified Drive copy without suggesting reconnect and keeps download available", async () => {
+    const ready = { ...previewJob("ready", "Аудио", []), status: "completed",
+      error_code: "output_copy_changed", progress: { percent: 100, stage: "google_drive_export_failed" },
+      output_folder: { id: "original", name: "Материалы" },
+      output: { download_ready: true, source_id: "out", google_drive_url: null } };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/workspace")) return json({ project: { id: "project-id", title: "Studio" } });
+      if (url.endsWith("/sources")) return json({ sources: [] });
+      if (url.endsWith("/audio-preparations")) return json({ jobs: [ready] });
+      throw new Error("Unexpected request");
+    }));
+    render(<AudioPreparationPage csrf="csrf" onCsrf={vi.fn()} />);
+    expect(await screen.findByText(/Копия на Google Drive изменена и не была перезаписана/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Скачать файл" })).toHaveAttribute("href", "/api/audio-preparations/ready/download");
+    expect(screen.queryByText(/Проверьте подключение Google Drive и повторите/)).not.toBeInTheDocument();
+  });
   it("hands a regenerated result through a confirmed Drive copy without an S3 output Source", async () => {
     const ready = { ...previewJob("ready", "Готовая лекция", []), status: "completed", progress: { percent: 100, stage: "completed" },
       output: { download_ready: true, export_ready: true, regeneration_required: true, source_id: null, google_drive_url: null } };

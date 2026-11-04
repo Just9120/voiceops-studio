@@ -47,6 +47,7 @@ class AudioPreparationServiceReason(str, Enum):
     invalid_sources = "invalid_sources"
     input_too_large = "input_too_large"
     source_unavailable = "source_unavailable"
+    source_version_unavailable = "source_version_unavailable"
     invalid_state = "invalid_state"
     invalid_destination = "invalid_destination"
     lease_unavailable = "lease_unavailable"
@@ -110,6 +111,7 @@ def create_audio_preparation_job(
         status=AudioPreparationStatus.preview_queued,
         title=clean_title,
         options_json=serialize_options(options),
+        recipe_version=2,
         output_destination=destination,
         output_drive_folder_id=folder_snapshot[0],
         output_drive_folder_url=folder_snapshot[1],
@@ -242,11 +244,19 @@ def queue_audio_drive_export(db: Session, *, owner_user_id: str, job_id: str, fo
     return job
 
 
-def complete_audio_drive_export(db: Session, *, job_id: str, lease_owner_id: str, lease_generation: int, file_id: str, web_view_url: str) -> AudioPreparationJob:
+def complete_audio_drive_export(db: Session, *, job_id: str, lease_owner_id: str, lease_generation: int, file_id: str, web_view_url: str, content_receipt: str | None = None) -> AudioPreparationJob:
     job = _locked_leased_job(db, job_id, lease_owner_id, lease_generation)
     if job.status is not AudioPreparationStatus.completed or job.current_stage != "google_drive_upload":
         raise AudioPreparationServiceError(AudioPreparationServiceReason.invalid_state)
+    if content_receipt is not None:
+        from .audio_export_receipt import AudioExportReceipt
+        try:
+            if AudioExportReceipt.parse(content_receipt).file_id != file_id:
+                raise ValueError("export_file_changed")
+        except ValueError as exc:
+            raise AudioPreparationServiceError(AudioPreparationServiceReason.invalid_state) from exc
     job.output_drive_file_id = file_id
+    job.output_drive_receipt_json = content_receipt
     job.output_drive_web_view_url = web_view_url
     job.current_stage = "completed"
     job.progress_percent = 100
@@ -337,6 +347,11 @@ def claim_next_audio_preparation_job(
     if job is None:
         return None
     _recover_legacy_stored_output(db, job, now=now)
+    was_running = job.status in {AudioPreparationStatus.analyzing, AudioPreparationStatus.processing} or (
+        job.status in {AudioPreparationStatus.completed, AudioPreparationStatus.preview_ready}
+        and job.current_stage in {"audio_download_rendering", "google_drive_upload"})
+    if not was_running or job.source_access_started_at is None:
+        job.source_access_started_at = _naive_utc(now)
     job.lease_generation = (job.lease_generation or 0) + 1
     job.lease_owner_id = owner
     job.claimed_at = _naive_utc(now)
@@ -639,6 +654,7 @@ def audio_result_sources_available(job: AudioPreparationJob, *, now: datetime) -
         return bool(source and _source_available(source, project_id=job.project_id, now=now))
     return bool(job.output_filename and job.inputs and all(
         item.source and _source_available(item.source, project_id=job.project_id, now=now)
+        and _source_version_recorded(item.source)
         for item in job.inputs
     ))
 
@@ -654,6 +670,12 @@ def require_audio_result_sources(db: Session, job: AudioPreparationJob, *, now: 
         _source_available(source, project_id=job.project_id, now=now) for source in sources
     ):
         raise AudioPreparationServiceError(AudioPreparationServiceReason.source_unavailable)
+    if not job.output_source_id and not all(_source_version_recorded(source) for source in sources):
+        raise AudioPreparationServiceError(AudioPreparationServiceReason.source_version_unavailable)
+
+
+def _source_version_recorded(source: Source) -> bool:
+    return source.source_type is not SourceType.google_drive or bool(source.drive_revision_id or source.drive_md5_checksum or source.drive_sha256_checksum)
 
 
 def _destination_snapshot(destination: str, folder: object | None) -> tuple[str, tuple[str | None, str | None, str | None]]:

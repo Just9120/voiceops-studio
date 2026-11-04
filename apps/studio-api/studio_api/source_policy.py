@@ -73,6 +73,22 @@ def _as_utc_aware(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def operation_retains_source(job, expires_at: datetime | None, now: datetime) -> bool:
+    """Finish an admitted operation across TTL; never admit a new one after TTL."""
+    admitted = getattr(job, "source_access_started_at", None)
+    lease_end = getattr(job, "lease_expires_at", None)
+    status = str(getattr(getattr(job, "status", None), "value", getattr(job, "status", "")))
+    running = status in {"processing", "analyzing"} or (
+        status in {"completed", "preview_ready"}
+        and getattr(job, "current_stage", None) in {"audio_download_rendering", "google_drive_upload"}
+    )
+    return bool(running and admitted and expires_at and lease_end
+        and getattr(job, "lease_owner_id", None)
+        and getattr(job, "cancel_requested_at", None) is None
+        and _as_utc_aware(admitted) < _as_utc_aware(expires_at)
+        and _as_utc_aware(lease_end) > _as_utc_aware(now))
+
+
 def uploaded_object_metadata_issue(
     *,
     expected_size_bytes: int | None,

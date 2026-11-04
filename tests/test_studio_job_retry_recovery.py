@@ -67,8 +67,8 @@ def test_retry_recovery_model_metadata_contract(studio_model_modules):
 def test_alembic_single_head_is_partial_provider_checkpoints():
     cfg = Config("apps/studio-api/alembic.ini")
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_heads() == ["0044_quality_progress"]
-    assert script.get_current_head() == "0044_quality_progress"
+    assert script.get_heads() == ["0045_personal_audit"]
+    assert script.get_current_head() == "0045_personal_audit"
 
 
 def test_partial_provider_actions_require_explicit_cost_confirmation():
@@ -562,7 +562,8 @@ def test_confirmed_first_part_without_checkpoint_requires_explicit_full_restart(
     assert uncertain.reason.value == "provider_outcome_uncertain"
 
 
-def test_retired_checkpoint_cleanup_is_bounded_and_preserves_unfinished_text(sqlite_db):
+@pytest.mark.parametrize("retirement_route", ["terminal_state", "api_queued", "companion_ack"])
+def test_retired_checkpoint_cleanup_is_bounded_and_preserves_unfinished_text(sqlite_db, retirement_route):
     from studio_api.provider_part_checkpoints import (
         cleanup_expired_provider_part_checkpoints,
     )
@@ -601,7 +602,18 @@ def test_retired_checkpoint_cleanup_is_bounded_and_preserves_unfinished_text(sql
 
     assert cleanup_expired_provider_part_checkpoints(sqlite_db, now=now + timedelta(days=90), limit=2) == 0
     assert sqlite_db.query(m.TranscriptionProviderPartCheckpoint).count() == 4
-    job.status = m.JobStatus.cancelled
+    if retirement_route == "terminal_state":
+        job.status = m.JobStatus.cancelled
+    else:
+        from studio_api.job_processing_lifecycle import request_job_cancellation, acknowledge_job_cancellation
+        job.status = m.JobStatus.queued if retirement_route == "api_queued" else m.JobStatus.processing
+        sqlite_db.commit()
+        request_job_cancellation(sqlite_db, job_id=job.id, now=now, retire_part_checkpoints=False)
+        if retirement_route == "companion_ack":
+            acknowledge_job_cancellation(sqlite_db, job_id=job.id, lease_owner_id=job.lease_owner_id,
+                lease_generation=job.lease_generation, now=now, retire_part_checkpoints=False)
+        assert job.status == m.JobStatus.cancelled
+        assert sqlite_db.query(m.TranscriptionProviderPartCheckpoint).count() == 4
     sqlite_db.commit()
     assert cleanup_expired_provider_part_checkpoints(
         sqlite_db,

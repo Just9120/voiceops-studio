@@ -151,6 +151,85 @@ def fake_drive_meta(token, drive_file_id):
     return GoogleDriveMetadata(id=drive_file_id, name="meeting.mp3", mime_type="audio/mpeg", size_bytes=100, web_view_link=None, created_time=None, modified_time=None, is_folder=False)
 
 
+@pytest.mark.parametrize("admission", ["before", "after", "missing"])
+def test_materialization_crosses_source_ttl_only_for_already_admitted_current_operation(sqlite_session, models, admission):
+    from studio_api.job_source_materialization import materialize_processing_job_source, SourceMaterializationError
+    job, source, relation, _, now, _ = make_job(sqlite_session, models,
+        source_kwargs={"expires_at": None})
+    expiry = now + timedelta(seconds=1)
+    source.expires_at = expiry
+    job.source_access_started_at = now if admission == "before" else (expiry if admission == "after" else None)
+    sqlite_session.commit()
+    after = expiry + timedelta(seconds=1)
+    body = FakeBody([b"a" * 50, b"b" * 50])
+    stream = FakeStream(body)
+    context = materialize_processing_job_source(sqlite_session, job_id=job.id, job_source_id=relation.id,
+        lease_owner_id="worker-1", lease_generation=1, settings=SimpleSettings(), now=after, clock=lambda: after,
+        storage_factory=lambda settings: FakeStorage(stream))
+    if admission == "before":
+        with context as result:
+            assert result.stream.read() == b"a" * 50 + b"b" * 50
+        assert body.closed
+    else:
+        with pytest.raises(SourceMaterializationError, match="availability_verification_failed"):
+            with context:
+                pytest.fail("expired source cannot be newly admitted")
+    assert source.expires_at == expiry
+
+
+@pytest.mark.parametrize("replace_same_size", [False, True])
+def test_selected_drive_revision_and_content_checksum_are_enforced_before_stt(sqlite_session, models, replace_same_size):
+    import hashlib
+    from dataclasses import replace
+    from studio_api.job_source_materialization import SourceMaterializationError
+    digest = hashlib.md5(b"a" * 100, usedforsecurity=False).hexdigest()
+    job, _, rel, _, now, _ = make_job(sqlite_session, models,
+        source_type=models.SourceType.google_drive,
+        source_kwargs={"drive_revision_id": "selected-v1", "drive_md5_checksum": digest})
+    metadata_calls, content_calls = [], []
+    body = FakeBody([b"b" * 100 if replace_same_size else b"a" * 100])
+
+    def metadata(token, file_id, *, revision_id):
+        metadata_calls.append(revision_id)
+        return replace(fake_drive_meta(token, file_id), head_revision_id=revision_id, md5_checksum=digest)
+
+    def content(token, file_id, *, revision_id):
+        content_calls.append(revision_id)
+        return FakeStream(body)
+
+    context = materialize(sqlite_session, job, rel, drive_fetcher=content, drive_meta=metadata, now=now)
+    if replace_same_size:
+        with pytest.raises(SourceMaterializationError, match="selected_source_changed"):
+            with context:
+                pytest.fail("wrong bytes must never reach STT")
+    else:
+        with context as selected:
+            assert selected.stream.read() == b"a" * 100
+    assert metadata_calls == content_calls == ["selected-v1"]
+    assert body.closed
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_sha_only_drive_version_is_enforced_without_a_prepared_claim_or_revision(sqlite_session, models, changed):
+    import hashlib
+    from dataclasses import replace
+    from studio_api.job_source_materialization import SourceMaterializationError
+    digest = hashlib.sha256(b"a" * 100).hexdigest()
+    job, _, relation, _, now, _ = make_job(sqlite_session, models,
+        source_type=models.SourceType.google_drive, source_kwargs={"drive_sha256_checksum": digest})
+    body = FakeBody([b"b" * 100 if changed else b"a" * 100])
+    context = materialize(sqlite_session, job, relation, now=now,
+        drive_meta=lambda token, file_id: replace(fake_drive_meta(token, file_id), sha256_checksum=digest),
+        drive_fetcher=lambda *a, **kw: FakeStream(body))
+    if changed:
+        with pytest.raises(SourceMaterializationError, match="selected_source_changed"):
+            with context: pytest.fail("same-size replacement must not reach STT")
+    else:
+        with context as selected:
+            assert selected.stream.read() == b"a" * 100
+    assert body.closed
+
+
 @pytest.mark.parametrize("failure", [None, "changed", "cancelled"])
 def test_yandex_source_is_revalidated_streamed_and_controlled(sqlite_session, models, monkeypatch, failure):
     from studio_api import job_source_materialization as materialization
@@ -423,6 +502,63 @@ def test_heartbeat_only_lease_expiry_change_does_not_trip_source_snapshot(sqlite
     storage = FakeStorage(FakeStream(body))
     with materialize(sqlite_session, job, rel, storage=storage, now=now, drive_meta=fake_drive_meta) as handle:
         assert handle.byte_count == 100
+
+
+@pytest.mark.parametrize("transport", ["local_upload", "google_drive", "yandex_disk"])
+@pytest.mark.parametrize("changed", [False, True])
+def test_prepared_body_hash_is_checked_before_any_transport_reaches_stt(sqlite_session, models, transport, changed):
+    import hashlib
+    import json
+    from studio_api.job_source_materialization import materialize_processing_job_source, SourceMaterializationError
+    from studio_api.yandex_disk import resource_from_payload
+    payload = b"a" * 100
+    context = json.dumps(dict(version=2, job_id="0" * 36, input_duration_ms=5000,
+        output_duration_ms=3000, pauses_removed=True,
+        content_sha256=hashlib.sha256(payload).hexdigest(), timeline_sha256=None))
+    job, _, relation, _, now, _ = make_job(sqlite_session, models,
+        source_type=getattr(models.SourceType, transport), source_kwargs={"prepared_audio_context_json": context})
+    actual = b"b" * 100 if changed else payload
+    body = FakeBody([actual[:50], actual[50:]])
+    stream = FakeStream(body)
+    resource = resource_from_payload({"type": "file", "path": "disk:/test.mp3",
+        "name": "test.mp3", "size": 100, "mime_type": "audio/mpeg"})
+    class DiskClient:
+        def download_to(self, selected, target, *, maximum_bytes, check):
+            check()
+            target.write(actual)
+            return len(actual)
+    operation = materialize_processing_job_source(sqlite_session, job_id=job.id, job_source_id=relation.id,
+        lease_owner_id="worker-1", lease_generation=1, settings=SimpleSettings(), now=now,
+        storage_factory=lambda _: FakeStorage(stream), drive_token_resolver=lambda *a, **kw: "synthetic",
+        drive_content_fetcher=lambda *a, **kw: stream, drive_metadata_fetcher=fake_drive_meta,
+        disk_resource_verifier=lambda *a, **kw: resource,
+        disk_token_resolver=lambda *a, **kw: "synthetic", disk_client_factory=lambda _: DiskClient())
+    if changed:
+        with pytest.raises(SourceMaterializationError, match="selected_source_changed"):
+            with operation:
+                pytest.fail("different same-sized prepared bytes must not reach STT")
+    else:
+        with operation as selected:
+            assert selected.stream.read() == payload
+            assert selected.prepared_audio_context_json == context
+            assert context not in repr(selected)
+    if transport != "yandex_disk":
+        assert body.closed
+
+
+def test_prepared_context_change_during_download_is_rejected(sqlite_session, models):
+    import json
+    from studio_api.job_source_materialization import SourceMaterializationError
+    context = dict(job_id="0" * 36, input_duration_ms=5000, output_duration_ms=3000, pauses_removed=True)
+    job, source, rel, _, now, _ = make_job(sqlite_session, models,
+        source_kwargs={"prepared_audio_context_json": json.dumps(context)})
+    def mutation():
+        source.prepared_audio_context_json = json.dumps(dict(context, input_duration_ms=6000))
+        sqlite_session.flush()
+    storage = FakeStorage(FakeStream(FakeBody([b"a" * 100], before_eof=mutation)))
+    with pytest.raises(SourceMaterializationError, match="selected_source_changed"):
+        with materialize(sqlite_session, job, rel, storage=storage, now=now):
+            pytest.fail("a different recipe must not be applied to the downloaded body")
 
 
 @pytest.mark.parametrize("mutate,reason", [

@@ -2,6 +2,33 @@ import { describe, expect, it } from "vitest";
 import { RealtimeSegmentStream } from "./realtimeSegmentStream";
 
 describe("Live provider stream correlation", () => {
+  it("fences cleared identities and keeps the word-timed suffix of an in-flight utterance", () => {
+    const stream = new RealtimeSegmentStream("capture.1", 20);
+    stream.committed({kind:"committed",text:"старый индекс",metadata:{id:"index.0",start_seconds:1,end_seconds:2}});
+    stream.clearBefore(25);
+    expect(stream.partial({kind:"partial",text:"старый partial"})).toBe("");
+    expect(stream.committed({kind:"committed",text:"позднее исправление",metadata:{id:"index.0",start_seconds:6,end_seconds:7}})).toBeNull();
+    expect(stream.committed({kind:"committed",text:"до после"})).toBeNull();
+    const filtered = stream.committed({kind:"committed",text:"до после",timestampUpdate:true,
+      metadata:{id:"timed",start_seconds:4,end_seconds:7},words:[
+        {text:"до",start_seconds:4,end_seconds:4.5},{text:"после",start_seconds:6,end_seconds:7}]});
+    expect(filtered).toMatchObject({text:"после",replaces:false,metadata:{start_seconds:26,end_seconds:27}});
+    expect(stream.partial({kind:"partial",text:"следующая реплика"})).toBe("следующая реплика");
+    expect(stream.committed({kind:"committed",text:"до",timestampUpdate:true,metadata:{id:"timed",start_seconds:4,end_seconds:4.5}})).toBeNull();
+    stream.clearBefore(28);
+    expect(stream.committed({kind:"committed",text:"после",timestampUpdate:true,metadata:{id:"timed",start_seconds:6,end_seconds:7}})).toBeNull();
+  });
+
+  it("keeps the original clear boundary across a new transport and never guesses an untimed correction", () => {
+    const stream = new RealtimeSegmentStream("capture.2", 20);
+    stream.clearBefore(25);
+    expect(stream.committed({kind:"committed",text:"старый финал",metadata:{id:"index.0",start_seconds:1,end_seconds:2}})).toBeNull();
+    expect(stream.committed({kind:"committed",text:"фраза на границе",metadata:{id:"index.1",start_seconds:4,end_seconds:6}})).toBeNull();
+    expect(stream.committed({kind:"committed",text:"новая фраза",metadata:{id:"index.2",start_seconds:5,end_seconds:6}}))
+      .toMatchObject({text:"новая фраза",metadata:{start_seconds:25,end_seconds:26}});
+    expect(stream.committed({kind:"committed",text:"исправлено",metadata:{id:"index.2",start_seconds:5,end_seconds:6}}))
+      .toMatchObject({text:"исправлено",replaces:true});
+  });
   it("carries one capture identity through separate transports", () => {
     const sessionId = "capture_session_123456";
     const event = { kind: "committed" as const, text: "фрагмент", metadata: { id: "index.0", start_seconds: 0, end_seconds: 1 } };

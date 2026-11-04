@@ -52,6 +52,9 @@ def state(tmp_path, monkeypatch):
             options_payload={"preset": "processing_only", "output_format": "flac"},
             output_destination="download", output_folder=None, now=NOW)
         job.status = AudioPreparationStatus.completed
+        # A pre-existing completed result without a recorded recipe models the
+        # historical regeneration path; newly processed v2 results keep one.
+        job.recipe_version = None
         job.current_stage = "completed"
         job.progress_percent = 100
         job.output_filename = "Лекция 1. Предмет.flac"
@@ -106,8 +109,14 @@ def test_regenerate_in_worker_after_reload_stream_and_remove_temporary_bytes(sta
     assert prepare(state)["state"] == "preparing"
     first_id = state.job.download_request_id
     assert prepare(state)["state"] == "preparing" and state.job.download_request_id == first_id
-    assert deletion_readiness(state.db, state.source, now=NOW).value == "audio_preparation_uses_source"
-    render(state)
+    # An idle queued request is not an active processing lease.
+    assert deletion_readiness(state.db, state.source, now=NOW).value == "available"
+
+    def active_runner(command, **kwargs):
+        assert deletion_readiness(state.db, state.source, now=NOW).value == "audio_preparation_uses_source"
+        return runner(command, **kwargs)
+
+    render(state, media_runner=active_runner)
     directory = artifact(state)
     assert state.manager.status(owner="owner", job_id=state.job.id) == {"state": "ready", "percent": 100, "reason": None}
     assert state.storage.puts == []
@@ -123,6 +132,15 @@ def test_regenerate_in_worker_after_reload_stream_and_remove_temporary_bytes(sta
     state.db.refresh(state.job)
     assert state.job.download_slot is None and state.job.download_request_id is None
     assert state.db.query(Source).count() == 1
+
+
+def test_unversioned_legacy_drive_source_cannot_silently_regenerate_with_current_file(state):
+    state.source.source_type = SourceType.google_drive
+    state.source.drive_file_id = "legacy-file"
+    state.db.commit()
+    with pytest.raises(AudioPreparationServiceError, match="source_version_unavailable"):
+        prepare(state)
+    assert state.job.download_request_id is None and state.job.download_slot is None
 
 
 def test_disconnect_before_body_starts_cleans_rendered_result(state):
