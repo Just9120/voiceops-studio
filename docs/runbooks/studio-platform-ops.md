@@ -553,8 +553,11 @@ for every snapshot. Repository configuration alone does not prove that the
 host timer is enabled or that a scheduled backup succeeded. Confirm those
 conditions and the latest snapshot age from host/backup records before recovery.
 The former fixed12-hour personal RPO and10-hour Studio schedule were superseded
-by the owner25Oct2026 in favour of Cloudkeep scheduling. A replacement guaranteed
-RPO is UNSET; a schedule and SQL delivery records alone do not establish it.
+by the owner25Oct2026 in favour of Cloudkeep scheduling. On04Nov2026 the owner
+set RPO to four days (345600 seconds), preserving the shared every-three-days
+schedule. CloudKeep retains the three most recent verified copies of each
+database separately at each destination; this is a count policy, not a day TTL.
+A schedule and copy/verify records alone do not establish recovery RPO.
 The4-hour RTO remains unchanged. Recovery measurements must identify the actual
 selected Cloudkeep version/target, available Studio decryption keys and complete
 application recovery. Existing R2 pre-migration snapshots remain in use.
