@@ -48,8 +48,10 @@ export function JobDetailSection({
       <p>
         Разделение спикеров: {job.diarization_enabled ? "Включено" : "Выключено"}
       </p>
-      <h3 className="job-detail-subheading">Расход сервиса распознавания</h3>
-      <JobUsageCostSummary usageCost={job.usage_cost} />
+      {job.provider === "nemotron" ? <p>Локальное распознавание · {job.local_execution?.device_name ?? "назначенный компьютер"}. Платный STT API не используется.</p> : <>
+        <h3 className="job-detail-subheading">Расход сервиса распознавания</h3>
+        <JobUsageCostSummary usageCost={job.usage_cost} />
+      </>}
       <h3 className="job-detail-subheading">Папка результата</h3>
       {job.output_folder ? (
         <p>

@@ -11,6 +11,7 @@ class SttProvider(str, Enum):
     tbank = "tbank"
     mistral = "mistral"
     gemini = "gemini"
+    nemotron = "nemotron"
 
 
 class SttOperatingMode(str, Enum):
@@ -113,6 +114,12 @@ def provider_catalog(settings) -> dict[SttProvider, SttProviderCapability]:
         audio_channels=(1,),
     )
     return {
+        SttProvider.nemotron: SttProviderCapability(SttProvider.nemotron, "NVIDIA Nemotron — локально", True, {
+            SttOperatingMode.standard: SttModeCapability(SttOperatingMode.standard,
+                "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B", "local_companion", ("ru", "en"), True, False,
+                SttFileConstraints(None, 3600, (1,)),
+                ("До 60 минут выбранного аудио целым файлом. Компьютер должен быть включён, модель загружена. "
+                 "Язык задаётся явно; Live и словари не поддерживаются. Используются ресурсы вашего ПК, без облачного STT и автоматической подмены провайдера.",))}),
         SttProvider.elevenlabs: SttProviderCapability(
             provider=SttProvider.elevenlabs,
             display_name="ElevenLabs",
@@ -204,5 +211,6 @@ def validate_selection(
     return capability
 
 
-def catalog_payload(settings) -> dict[str, Any]:
-    return {"providers": [provider_catalog(settings)[provider].browser_payload() for provider in SttProvider]}
+def catalog_payload(settings, *, include_local=False) -> dict[str, Any]:
+    return {"providers": [provider_catalog(settings)[provider].browser_payload() for provider in SttProvider
+                          if include_local or provider != SttProvider.nemotron]}

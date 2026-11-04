@@ -133,7 +133,7 @@ describe("LiveTranscriptionPanel", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((url: string, init?: RequestInit) => {
-        if (url.endsWith("/api/stt/providers")) {
+        if (url.endsWith("/api/stt/providers?include_local=true")) {
           return response({
             providers: [
               {
@@ -327,7 +327,7 @@ describe("LiveTranscriptionPanel", () => {
   it("blocks Live start while the selected provider circuit is open", async () => {
     const defaultFetch = vi.mocked(fetch).getMockImplementation();
     vi.mocked(fetch).mockImplementation((url: string, init?: RequestInit) => {
-      if (url.endsWith("/api/stt/providers")) {
+      if (url.endsWith("/api/stt/providers?include_local=true")) {
         return response({
           providers: [
             {

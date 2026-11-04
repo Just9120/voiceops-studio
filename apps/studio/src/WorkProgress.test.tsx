@@ -22,4 +22,11 @@ describe("measured work progress", () => {
     expect(parseWorkProgress({ ...value, stage: "private/path" })).toBeNull();
     expect(parseWorkProgress({ ...value, sequence: -1 })).toBeNull();
   });
+  it("reports actual local inference without manufacturing a percentage", () => {
+    render(<WorkProgressDetail value={{ ...value, stage: "local_transcription", completed: null, total: null, unit: null }} />);
+    expect(screen.getByText("Распознаём на вашем компьютере")).toBeVisible();
+    expect(screen.getByText(/Модель не сообщает процент/)).toBeVisible();
+    expect(screen.queryByText(/% этапа/)).not.toBeInTheDocument();
+    expect(parseWorkProgress({ ...value, stage: "local_result_upload", unit: "bytes" })?.stage).toBe("local_result_upload");
+  });
 });

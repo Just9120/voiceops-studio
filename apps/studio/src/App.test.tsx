@@ -636,7 +636,7 @@ function installFocusedOutputFixture(options: OutputFixtureOptions = {}) {
         });
       if (url.endsWith("/api/auth/csrf"))
         return json({ csrf_token: "csrf-after-refresh" });
-      if (url.endsWith("/api/stt/providers"))
+      if (url.endsWith("/api/stt/providers?include_local=true"))
         return json(sttProviderCatalogFixture());
       if (url.endsWith("/api/stt/dictionaries"))
         return json({ dictionaries: [] });
@@ -1125,7 +1125,7 @@ describe("Studio PWA", () => {
             supported_mime_prefixes: ["audio/", "video/"],
             supported_mime_types: ["application/ogg"],
           });
-        if (url.endsWith("/api/stt/providers"))
+        if (url.endsWith("/api/stt/providers?include_local=true"))
           return json(sttProviderCatalogFixture());
         if (url.endsWith("/api/stt/dictionaries"))
           return json({ dictionaries: [] });
@@ -1570,6 +1570,67 @@ describe("Studio PWA", () => {
       }),
     );
   });
+  it("keeps local inference on the explicitly selected PC through preflight and creation", async () => {
+    const mock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const base = mock.getMockImplementation();
+    const model = "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B";
+    const firstPc = "00000000-0000-4000-8000-000000000001";
+    const secondPc = "00000000-0000-4000-8000-000000000002";
+    let pcReady = true;
+    const device = (id: string, label: string) => ({ id, label, credential_revision: 1, online: pcReady, ready: pcReady,
+      runtime_status: "ready", runtime_version: "0.2.0", model, last_seen_at: new Date().toISOString(), revoked_at: null });
+    const bodies: Record<string, unknown>[] = [];
+    mock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/api/stt/providers?include_local=true")) {
+        const catalog = sttProviderCatalogFixture();
+        catalog.providers.push({ provider: "nemotron", display_name: "NVIDIA Nemotron", byok_enabled: true,
+          modes: [{ mode: "standard", model, transport: "local_companion", languages: ["ru", "en"], diarization: true,
+            dictionaries: false, file_constraints: { max_bytes: null as unknown as number, max_duration_seconds: 3600, audio_channels: [1] },
+            health: { available: true, consecutive_failures: 0, retry_after_seconds: null } }] });
+        return json(catalog);
+      }
+      if (url.endsWith("/api/local-execution/devices")) return json({ devices: [device(firstPc, "ПК 1"), device(secondPc, "ПК 2")] });
+      if (isBatchPreflightRequest(url, init)) {
+        bodies.push(JSON.parse(String(init?.body)));
+        const response = await batchPreflightJson(init);
+        return json({ ...await response.json(), model });
+      }
+      if (url.endsWith("/api/projects/p1/jobs/batch") && init?.method === "POST") {
+        bodies.push(JSON.parse(String(init.body)));
+        return json({ created_count: 1, replayed: false, jobs: [{ id: "local-job", project_id: "p1", status: "queued", title: "Local test",
+          provider: "nemotron", source_count: 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), cancelled_at: null,
+          cancel_requested_at: null, attempt_count: 0, started_at: null, finished_at: null, error_code: null, error_message: null,
+          local_execution: { device_id: secondPc, device_name: "ПК 2", result_accepted: false } }] });
+      }
+      return base?.(url, init) ?? json({ ok: true });
+    });
+    renderApp(); await openProjectsPage(); await chooseExistingSource(1, "Лекция 1"); await chooseResultFolder(1);
+    await userEvent.selectOptions(screen.getByLabelText("Провайдер транскрибации"), "nemotron");
+    await screen.findByRole("option", { name: /ПК 1/ });
+    expect(screen.queryByText(/Добавьте активный ключ NVIDIA/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Проверить задачи (1)" })).toBeDisabled();
+    await userEvent.selectOptions(screen.getByLabelText("Компьютер для распознавания"), firstPc);
+    await userEvent.click(screen.getByRole("button", { name: "Проверить задачи (1)" }));
+    await screen.findByLabelText("Проверка перед созданием задач");
+    await userEvent.selectOptions(screen.getByLabelText("Компьютер для распознавания"), secondPc);
+    expect(screen.queryByLabelText("Проверка перед созданием задач")).not.toBeInTheDocument();
+    pcReady = false;
+    await userEvent.click(screen.getByRole("button", { name: "Обновить компьютеры" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Проверить задачи (1)" })).toBeDisabled());
+    expect(screen.getByLabelText("Компьютер для распознавания")).toHaveValue(secondPc);
+    expect(bodies).toHaveLength(1);
+    pcReady = true;
+    await userEvent.click(screen.getByRole("button", { name: "Обновить компьютеры" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Проверить задачи (1)" })).toBeEnabled());
+    await userEvent.click(screen.getByRole("button", { name: "Проверить задачи (1)" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Подтвердить и создать (1)" }));
+    await waitFor(() => expect(bodies).toHaveLength(3));
+    expect(bodies.map(body => body.local_device_id)).toEqual([firstPc, secondPc, secondPc]);
+    expect(bodies.every(body => body.provider === "nemotron" && body.provider_credential_id === null)).toBe(true);
+    expect(await screen.findByText("Локально · ПК 2")).toBeInTheDocument();
+    expect(mock.mock.calls.filter(([url, init]) => String(url).endsWith("/jobs/batch") && init?.method === "POST")).toHaveLength(1);
+  });
+
   it("uses the authenticated platform shell as the default app entrypoint", async () => {
     render(<App />);
     await waitForPlatformOverview();
@@ -6385,7 +6446,7 @@ describe("Studio PWA", () => {
           });
         if (url.endsWith("/api/auth/csrf"))
           return json({ csrf_token: "csrf-after-refresh" });
-        if (url.endsWith("/api/stt/providers"))
+        if (url.endsWith("/api/stt/providers?include_local=true"))
           return json(sttProviderCatalogFixture());
         if (url.endsWith("/api/stt/dictionaries"))
           return json({ dictionaries: [] });
@@ -7219,7 +7280,7 @@ describe("Studio PWA", () => {
           });
         if (url.endsWith("/api/auth/csrf"))
           return json({ csrf_token: "csrf-after-refresh" });
-        if (url.endsWith("/api/stt/providers"))
+        if (url.endsWith("/api/stt/providers?include_local=true"))
           return json(sttProviderCatalogFixture());
         if (url.endsWith("/api/stt/dictionaries"))
           return json({ dictionaries: [] });
@@ -7743,7 +7804,7 @@ describe("Studio PWA", () => {
           });
         if (url.endsWith("/api/auth/csrf"))
           return json({ csrf_token: "csrf-after-refresh" });
-        if (url.endsWith("/api/stt/providers"))
+        if (url.endsWith("/api/stt/providers?include_local=true"))
           return json(sttProviderCatalogFixture());
         if (url.endsWith("/api/stt/dictionaries"))
           return json({ dictionaries: [] });

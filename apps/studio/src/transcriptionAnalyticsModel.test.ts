@@ -68,6 +68,14 @@ const valid = {
   },
 };
 
+it("accepts explicit local model counts and rejects a negative count", () => {
+  const provider_model = { elevenlabs_scribe_v2: 0, yandex_general: 0, yandex_deferred_general: 0,
+    mistral_voxtral_small_transcribe_3: 0, gemini_35_transcribe: 0, tbank_default: 0, nemotron_35_transcribe_local: 3, unknown: 0 };
+  const value = { ...valid, configuration: { ...valid.configuration, provider_model } };
+  expect(parseTranscriptionAnalytics(value)?.configuration.provider_model.nemotron_35_transcribe_local).toBe(3);
+  expect(parseTranscriptionAnalytics({ ...value, configuration: { ...value.configuration, provider_model: { ...provider_model, nemotron_35_transcribe_local: -1 } } })).toBeNull();
+});
+
 describe("transcription analytics parser", () => {
   it("accepts the exact aggregate contract", () => {
     expect(parseTranscriptionAnalytics(valid)).toEqual(valid);

@@ -31,6 +31,7 @@ export type TranscriptionAnalytics = {
       mistral_voxtral_small_transcribe_3?: number;
       gemini_35_transcribe?: number;
       tbank_default?: number;
+      nemotron_35_transcribe_local?: number;
       yandex_deferred_general?: number;
       unknown: number;
     };
@@ -80,6 +81,7 @@ const EXACT_KEYS = {
   providerModel: ["elevenlabs_scribe_v2", "unknown"],
   providerModelExtended: ["elevenlabs_scribe_v2", "yandex_general", "yandex_deferred_general", "unknown"],
   providerModelExpanded: ["elevenlabs_scribe_v2", "yandex_general", "yandex_deferred_general", "mistral_voxtral_small_transcribe_3", "gemini_35_transcribe", "tbank_default", "unknown"],
+  providerModelLocal: ["elevenlabs_scribe_v2", "yandex_general", "yandex_deferred_general", "mistral_voxtral_small_transcribe_3", "gemini_35_transcribe", "tbank_default", "nemotron_35_transcribe_local", "unknown"],
   languageMode: ["ru", "en", "detect", "other"],
   diarization: ["enabled", "disabled"],
   usageCost: [
@@ -124,7 +126,7 @@ export function parseTranscriptionAnalytics(
     !isRecord(value.configuration) ||
     !hasExactKeys(value.configuration, EXACT_KEYS.configuration) ||
     !(isCountRecord(value.configuration.provider_model, EXACT_KEYS.providerModel) ||
-      isCountRecord(value.configuration.provider_model, EXACT_KEYS.providerModelExtended) || isCountRecord(value.configuration.provider_model, EXACT_KEYS.providerModelExpanded)) ||
+      isCountRecord(value.configuration.provider_model, EXACT_KEYS.providerModelExtended) || isCountRecord(value.configuration.provider_model, EXACT_KEYS.providerModelExpanded) || isCountRecord(value.configuration.provider_model, EXACT_KEYS.providerModelLocal)) ||
     !isCountRecord(
       value.configuration.language_mode,
       EXACT_KEYS.languageMode,

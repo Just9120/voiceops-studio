@@ -5,7 +5,7 @@ export type SttModeCapability = {
   notes?: string[];
   mode: SttOperatingMode | "realtime";
   model: string;
-  transport: "batch" | "deferred" | "websocket" | "grpc_relay";
+  transport: "batch" | "deferred" | "websocket" | "grpc_relay" | "local_companion";
   languages: ("ru" | "en" | "detect")[];
   diarization: boolean;
   dictionaries: boolean;
@@ -57,7 +57,7 @@ export function parseSttProviderCatalog(value: unknown): SttProviderCapability[]
     if (!isRecord(rawProvider)) return null;
     const provider = rawProvider.provider;
     if (
-      (provider !== "elevenlabs" && provider !== "yandex" && provider !== "tbank" && provider !== "mistral" && provider !== "gemini") ||
+      (provider !== "elevenlabs" && provider !== "yandex" && provider !== "tbank" && provider !== "mistral" && provider !== "gemini" && provider !== "nemotron") ||
       typeof rawProvider.display_name !== "string" ||
       !rawProvider.display_name.trim() ||
       typeof rawProvider.byok_enabled !== "boolean" ||
@@ -76,7 +76,7 @@ export function parseSttProviderCatalog(value: unknown): SttProviderCapability[]
       const retryAfter = rawMode.health.retry_after_seconds;
       if (
         !["economic", "standard", "premium", "realtime"].includes(String(mode)) ||
-        !["batch", "deferred", "websocket", "grpc_relay"].includes(String(transport)) ||
+        !["batch", "deferred", "websocket", "grpc_relay", "local_companion"].includes(String(transport)) ||
         typeof rawMode.model !== "string" ||
         !rawMode.model ||
         !Array.isArray(rawMode.languages) ||
@@ -138,7 +138,7 @@ export function parseSttProviderCatalog(value: unknown): SttProviderCapability[]
 }
 
 export async function requestSttProviderCatalog(signal?: AbortSignal) {
-  const providers = parseSttProviderCatalog(await api<unknown>("/stt/providers", { signal }));
+  const providers = parseSttProviderCatalog(await api<unknown>("/stt/providers?include_local=true", { signal }));
   if (!providers) throw new Error("invalid_stt_provider_catalog");
   return providers;
 }
@@ -246,7 +246,7 @@ export function sttModeExplanation(mode: SttModeCapability) {
     mode.dictionaries ? "пользовательские словари" : null,
   ].filter(Boolean);
   return `${mode.model} · обработка: ${
-    mode.transport === "deferred" ? "в очереди провайдера" : "обычная"
+    mode.transport === "local_companion" ? "на выбранном компьютере" : mode.transport === "deferred" ? "в очереди провайдера" : "обычная"
   } · до ${durationMinutes} мин.${
     features.length ? ` · поддерживает ${features.join(" и ")}` : ""
   }`;

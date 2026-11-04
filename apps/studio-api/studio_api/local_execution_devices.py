@@ -66,9 +66,18 @@ def pair_device(db, *, owner_user_id, label, creation_key, now):
 def owned_device(db, *, owner_user_id, device_id, lock=False):
     query = select(LocalExecutionDevice).where(LocalExecutionDevice.id == device_id,
         LocalExecutionDevice.owner_user_id == owner_user_id)
-    row = db.scalar(query.with_for_update() if lock else query)
+    row = db.scalar((query.with_for_update() if lock else query).execution_options(populate_existing=True))
     if row is None:
         raise HTTPException(404, "Не найдено")
+    return row
+
+
+def require_ready_device(db, *, owner_user_id, device_id, now, lock=False):
+    if not device_id:
+        raise HTTPException(422, detail={"reason": "local_device_required"})
+    row = owned_device(db, owner_user_id=owner_user_id, device_id=device_id, lock=lock)
+    if not device_payload(row, now=now)["ready"]:
+        raise HTTPException(409, detail={"reason": "local_device_not_ready"})
     return row
 
 

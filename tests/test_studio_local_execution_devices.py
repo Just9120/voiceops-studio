@@ -567,3 +567,92 @@ def test_missing_accepted_local_checkpoint_never_dispatches_a_cloud_provider(loc
                 lease_owner_id=lease.lease_owner_id, lease_generation=lease.lease_generation, settings=settings, clock=lambda: now):
                 pytest.fail("Missing local text cannot be returned as a successful transcript")
         assert failure.value.reason.value == "prerequisites_unavailable"
+
+
+def test_local_capabilities_are_opt_in_so_existing_pwa_catalog_contract_stays_valid(local_app):
+    client, *_ = local_app
+    legacy = client.get("/api/stt/providers")
+    assert legacy.status_code == 200 and len(legacy.json()["providers"]) == 5
+    assert all(row["provider"] != "nemotron" for row in legacy.json()["providers"])
+    expanded = client.get("/api/stt/providers?include_local=true")
+    assert expanded.status_code == 200 and len(expanded.json()["providers"]) == 6
+    local = next(row for row in expanded.json()["providers"] if row["provider"] == "nemotron")
+    assert len(local["modes"]) == 1
+    capability = local["modes"][0]
+    assert capability["transport"] == "local_companion" and capability["languages"] == ["ru", "en"]
+    assert capability["file_constraints"]["max_duration_seconds"] == 3600
+    assert capability["diarization"] and not capability["dictionaries"]
+
+
+def local_batch_fixture(client, maker, owner_id, monkeypatch):
+    from studio_api import main
+    from studio_api.models import Project, Source, SourceType, SourceUploadStatus
+    from studio_api.job_output_folder_selection import VerifiedOutputFolderSelection
+    device_id, headers = prepare_pc(client)
+    with maker() as db:
+        project = Project(owner_user_id=owner_id, title="Synthetic local batch")
+        db.add(project); db.flush()
+        source = Source(project_id=project.id, source_type=SourceType.local_upload, upload_status=SourceUploadStatus.uploaded,
+            original_filename="synthetic.wav", mime_type="audio/wav", size_bytes=32044, s3_bucket="synthetic", s3_object_key="synthetic-source")
+        db.add(source); db.commit()
+        project_id, source_id = project.id, source.id
+    monkeypatch.setattr(main, "refreshed_google_drive_access_token", lambda *_: "synthetic-token")
+    monkeypatch.setattr(main, "verify_output_folder_selection", lambda *_: VerifiedOutputFolderSelection(
+        "synthetic-folder", "Synthetic output", "https://drive.google.com/drive/folders/synthetic-folder", datetime.now(timezone.utc)))
+    body = {"provider": "nemotron", "local_device_id": device_id, "language": "ru", "options": {"diarize": False},
+            "items": [{"source_id": source_id, "output_folder_id": "synthetic-folder", "title": "Synthetic local result"}]}
+    return project_id, device_id, headers, body
+
+
+def test_batch_creation_persists_explicit_local_target_and_model_without_cloud_key(local_app, monkeypatch):
+    from studio_api.models import TranscriptionJob
+    client, maker, _, (owner_id, _) = local_app
+    project_id, device_id, _, body = local_batch_fixture(client, maker, owner_id, monkeypatch)
+    preflight = client.post(f"/api/projects/{project_id}/jobs/batch/preflight", headers=OWNER_HEADERS, json=body)
+    assert preflight.status_code == 200, preflight.text
+    assert preflight.json()["model"] == NEMOTRON_MODEL
+    key = str(uuid4())
+    response = client.post(f"/api/projects/{project_id}/jobs/batch", headers={**OWNER_HEADERS, "Idempotency-Key": key}, json=body)
+    assert response.status_code == 200, response.text
+    row = response.json()["jobs"][0]
+    assert row["provider"] == "nemotron" and row["local_execution"]["device_id"] == device_id
+    assert row["local_execution"]["device_name"] == "Synthetic PC"
+    assert "provider_credential_id" not in row
+    with maker() as db:
+        import json
+        saved = db.get(TranscriptionJob, row["id"])
+        assert saved.local_device_id == device_id and saved.provider_credential_id is None
+        assert json.loads(saved.options_json)["_stt_model"] == NEMOTRON_MODEL
+    replay = client.post(f"/api/projects/{project_id}/jobs/batch", headers={**OWNER_HEADERS, "Idempotency-Key": key}, json=body)
+    assert replay.status_code == 200 and replay.json()["replayed"]
+    second_id, _ = prepare_pc(client)
+    changed = client.post(f"/api/projects/{project_id}/jobs/batch", headers={**OWNER_HEADERS, "Idempotency-Key": key},
+        json={**body, "local_device_id": second_id})
+    assert changed.status_code == 409
+    legacy = client.get(f"/api/projects/{project_id}/transcription-analytics").json()["configuration"]["provider_model"]
+    expanded = client.get(f"/api/projects/{project_id}/transcription-analytics?include_local=true").json()["configuration"]["provider_model"]
+    assert "nemotron_35_transcribe_local" not in legacy and legacy["unknown"] == 1
+    assert expanded["nemotron_35_transcribe_local"] == 1 and expanded["unknown"] == 0
+
+
+@pytest.mark.parametrize("invalid", ["no_device", "cloud_key", "other_owner", "offline", "detect", "dictionaries", "cloud_with_device"])
+def test_local_batch_negative_admission_never_reaches_cloud_stt(local_app, monkeypatch, invalid):
+    from studio_api import main
+    from studio_api.models import LocalExecutionDevice, ProviderCredential, TranscriptionJob
+    client, maker, settings, (owner_id, other_id) = local_app
+    project_id, device_id, _, body = local_batch_fixture(client, maker, owner_id, monkeypatch)
+    if invalid == "no_device": body.pop("local_device_id")
+    elif invalid == "cloud_key": body["provider_credential_id"] = str(uuid4())
+    elif invalid == "cloud_with_device": body["provider"] = "elevenlabs"
+    elif invalid == "detect": body["language"] = "detect"
+    elif invalid == "dictionaries": body["options"]["dictionary_ids"] = [str(uuid4())]
+    else:
+        with maker() as db:
+            device = db.get(LocalExecutionDevice, device_id)
+            if invalid == "other_owner": device.owner_user_id = other_id
+            else: device.last_seen_at = datetime.now(timezone.utc) - timedelta(minutes=3)
+            db.commit()
+    reply = client.post(f"/api/projects/{project_id}/jobs/batch", headers={**OWNER_HEADERS, "Idempotency-Key": str(uuid4())}, json=body)
+    assert reply.status_code in {404, 409, 422}, reply.text
+    with maker() as db:
+        assert db.scalar(select(TranscriptionJob)) is None and db.scalar(select(ProviderCredential)) is None
