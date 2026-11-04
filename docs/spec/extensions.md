@@ -1,5 +1,18 @@
 # AC: Studio: расширение согласованных сценариев
 
+### Эпик `PERSONAL-LOCAL-NEMOTRON-01` — распознавание на компьютере владельца
+
+Основание: актуальный согласованный source snapshot04Nov2026, paragraphs382..386, и поручение включить локальную Nemotron в общую personal Goal. Это отдельный local runtime владельца, а не браузерная подготовка аудио и не перенос серверного worker. Новая модель не требует API-ключа облачного STT; возможности языка/диаризации/таймкодов определяются выбранным runtime и явно показываются.
+
+| AC | Критерий и проверка |
+|---|---|
+| `NEM-01` | В personal владелец явно выбирает local NVIDIA Nemotron Transcribe для аудиофайла; выбранный execution target и модель сохраняются, другой provider не подставляется. Проверка: UI/capability/API и dispatch tests, отсутствие cloud transport при local выборе. |
+| `NEM-02` | Из Studio доступны запуск, измеряемые этапы либо честно неизвестный progress и отмена локальной задачи; состояния связаны с конкретными owner/device/job, устаревший результат отменённой или переполученной lease не принимается. Проверка: synthetic companion/API/lease/cancel и UI tests; доступный проверенный local runtime проверяется отдельно без платных сервисов. |
+| `NEM-03` | Локальный результат проходит общие owner-scoped правила истории, оформления, original timeline, хранения и экспорта документов; успех подтверждается полным результатом, recovery не требует повторного cloud STT. Проверка: интеграционные fixtures, format/export/history и idempotency/partial-result regressions. |
+| `NEM-04` | При offline компьютере, отсутствующей модели или неготовом runtime Studio показывает понятное unavailable/recovery состояние; платный provider используется только после явного нового выбора владельца. Проверка: no-dispatch/offline/reconnect и отрицательные API/UI cases. |
+
+Границы: personal компьютер владельца; массовая установка моделей и проверка компьютеров commercial пользователей не входят. Связи: AQP/MC/PS original clock и preparation contracts, owner/credential isolation и source lifecycle. Статусы и Evidence — в [реестре](../delivery/extensions.md).
+
 ### Эпик `AUDIO-QUALITY-PROGRESS-TRIM-01` — провайдеры, прогресс и обрезка
 
 Основание: решение владельца28Oct2026 и scoped update исходного Google Doc (провайдеры, подготовка файлов, очередь/прогресс). Существующие AP/PS/PUX criteria сохраняют ID; следующие AC покрывают новые условия. Один interval обрезки подготовки не заменяет несколько transcription fragments. Код/TEST/CI состояния находятся в [реестре](../delivery/extensions.md). Commercial, F62, старые документы, live новых providers и платные эксперименты вне этой Goal.

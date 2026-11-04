@@ -1,5 +1,7 @@
 # Трассировка согласованных требований
 
+`REQ-NEM-20261104`: source revision `AHj4eMTdRm7gefk2vCviWXeK8o36nn2SvkJeIW7sgf4xr1XpeJeHg6WsooV4fitSj5xi4OQlXos9MvChLEfrnqX5DLeD7mUMO9LYi_-Tl3o`, полный snapshot397 paragraphs, локальная транскрибация personal в paragraphs382..386 → NEM-01..04 в [расширениях](extensions.md#эпик-personal-local-nemotron-01--распознавание-на-компьютере-владельца). Исторические Q/S ID не переиспользуются как номера нового snapshot. Explicit local выбор, управление из Studio, общие результат/история/экспорт и offline/no-cloud-fallback покрыты отдельно; коммерческая установка local model исключена исходным требованием.
+
 Решение `OWNER-AQP-20261028`: согласованы пять STT providers, подробный измеряемый progress и visual single-interval trim; Google Doc обновлён точечно с revision guard/readback28Oct. Новые условия трассируются в AQP-01..14, прежние Q/AP/PS ID не перенумеровываются. Поддержка новых providers не означает оплаченный benchmark или live calls; voice identity и commercial не возвращаются в scope.
 
 Часть [canonical spec](../project-spec.md). Google Doc ID `1uaYvnqpbns_iyHTtQDZYjNYygT4ikUhmhuhRDWySrzI`; targeted native read/edit/readback25Oct2026: отменена voice identity, task notifications только Telegram, сохранены остальные paragraphs/styles. Q001..Q308 сохраняют стабильные исторические ID; отменённые пункты не перенумеровываются и не являются действующими обязательствами. Более ранний полный snapshot10Oct/S001..S289 сохранён для трассировки. Статусы и ограничения Evidence — [delivery dashboard](../delivery-plan.md).

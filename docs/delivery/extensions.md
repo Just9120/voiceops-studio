@@ -1,5 +1,16 @@
 # Реестр AC: Studio: расширение согласованных сценариев
 
+### `PERSONAL-LOCAL-NEMOTRON-01`
+
+Source snapshot04Nov2026 paragraphs382..386 восстановлен в NEM-01..04 без перенумерации прежних AC. Ни прежний local feasibility probe, ни наличие модели на PC не доказывают интеграцию со Studio. Denominator/current main readiness пересчитывается в F42; неподтверждённая интеграция не включается в READY.
+
+| AC | Состояние | CODE | TEST | CI | Остаток / Evidence |
+|---|---|---|---|---|---|
+| `NEM-01` | BACKLOG | PENDING | PENDING | PENDING | Явный local execution target, сохранённые model/device и no-cloud dispatch; прежний CPU probe проверял только модель отдельно от приложения. |
+| `NEM-02` | BACKLOG | PENDING | PENDING | PENDING | Owner/device auth boundary, start/progress/cancel, lease/result fencing и local companion; endpoint на PC не открыт наружу. |
+| `NEM-03` | IN_PROGRESS | PARTIAL | PARTIAL | PENDING | Native result normalizer использует общие revocable words и prepared clock, не раскрывает local path/confidence как метаданные; synthetic negative tests и два сохранённых native outputs PASS. History/format/timeline/export/recovery через Studio ещё не интегрированы. |
+| `NEM-04` | BACKLOG | PENDING | PENDING | PENDING | Offline/missing model/runtime, reconnect и явное отсутствие платного fallback. |
+
 ### `AUDIO-QUALITY-PROGRESS-TRIM-01`
 
 Baseline28Oct2026 main4fb10e2: новые критерии0/14; unmerged candidate14/14 CODE READY по реализации и применимым локальным tests, обязательные CI/CD PENDING; существующие waveform/fragments/worker transport переиспользуются, но не доказывают новые условия.
