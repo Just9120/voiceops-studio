@@ -835,6 +835,21 @@ code {
   gap: 1rem;
   align-items: flex-start;
 }
+.local-device-list {
+  list-style: none;
+  padding: 0;
+  min-width: 0;
+}
+.local-device-list > li {
+  flex-direction: row;
+  margin-block: 0.75rem;
+  min-width: 0;
+}
+.local-device-list > li > div:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

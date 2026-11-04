@@ -1847,9 +1847,10 @@ describe("Studio PWA", () => {
     ).toBeInTheDocument();
     expect(screen.getAllByRole("tab")).toHaveLength(6);
     await userEvent.click(screen.getByRole("tab", { name: "Подключения" }));
-    expect(
-      screen.getByText(/профили ElevenLabs и Yandex SpeechKit/i),
-    ).toBeInTheDocument();
+    const providerGuidance = screen.getByText(/Обычная транскрибация поддерживает включённые оператором профили/i);
+    for (const provider of ["ElevenLabs", "Yandex SpeechKit", "Т-Банк VoiceKit", "Mistral Voxtral", "Google Gemini"])
+      expect(providerGuidance).toHaveTextContent(provider);
+    expect(providerGuidance).toHaveTextContent(/Live доступен для ElevenLabs и Yandex SpeechKit/);
 
     const accountTab = screen.getByRole("tab", { name: "Аккаунт" });
     accountTab.focus();
