@@ -9,7 +9,8 @@ describe("measured long-recording estimate", () => {
   });
   it("shows source versus requested duration and never calls the estimate a debit", () => {
     const quote = parseLongMediaPreflight(known)!;
-    expect(longMediaEstimate(quote)).toContain("исходника: 300 мин; выбранная часть: 60 мин");
+    expect(longMediaEstimate(quote)).toContain("исходника: 300 мин; итоговая выбранная запись: 60 мин");
+    expect(longMediaEstimate(quote)).toContain("Лимит итоговой записи после подготовки: 720 мин");
     expect(longMediaEstimate(quote)).toContain("Номинальная оценка: 0,22 USD");
     expect(longMediaEstimate(quote)).toContain("а не фактическое списание");
   });

@@ -1,4 +1,4 @@
-"""Safe nominal quote for an unpaid whole-source duration warning.
+"""Safe nominal quote for an unpaid final-recording duration warning.
 
 This is a duration/rate estimate, never an invoice or provider debit. No media,
 tokens, storage identities or document content is persisted here.
@@ -29,8 +29,8 @@ def record_long_media_preflight(db, *, job_id, relation_id, duration, settings, 
         or job.lease_owner_id != owner or job.lease_generation != generation or not is_lease_active(job, now)
         or job.cancel_requested_at is not None):
         raise RuntimeError("long_media_preflight_context_invalid")
-    # The measured whole source is checked before any clipping/splitting. Quote
-    # the requested part while displaying both durations explicitly.
+    # Quote the final requested recording before provider splitting. The original
+    # measurement and unchanged interval still bind confirmation to this source.
     from .media_clip import normalize_media_clip_range
     clip = normalize_media_clip_range(job.media_clip_start_seconds, job.media_clip_end_seconds)
     start = clip.start_seconds or 0
