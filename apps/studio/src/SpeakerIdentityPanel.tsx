@@ -196,7 +196,7 @@ export function SpeakerIdentityPanel({
 
   return (
     <section className="speaker-identity-panel" aria-label={`Идентификация спикеров ${job.id}`}>
-      <h5>Идентификация спикеров</h5>
+      <h3 className="job-detail-subheading">Идентификация спикеров</h3>
       {!open ? (
         <button type="button" className="secondary" onClick={() => setOpen(true)}>
           Настроить имена спикеров

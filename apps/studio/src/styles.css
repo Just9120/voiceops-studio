@@ -586,6 +586,9 @@ h4,
 h5 {
   margin-top: 0;
 }
+.job-detail-subheading {
+  font-size: 0.83em;
+}
 code {
   display: inline-block;
   max-width: 100%;

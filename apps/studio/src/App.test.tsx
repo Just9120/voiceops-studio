@@ -1852,6 +1852,30 @@ describe("Studio PWA", () => {
     expect(document.body.textContent).not.toContain("______");
   });
 
+  it("offers a non-destructive check for expired remnants when the active source list is empty", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const defaultFetch = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (/^\/api\/projects\/p1\/sources(?:\?|$)/.test(url) && !init?.method) {
+        return json({ sources: [], next_cursor: null, page_size: 50 });
+      }
+      if (url === "/api/projects/p1/sources/bulk-deletion/preview" && !init?.method) {
+        return json({ preview_token: "b".repeat(64), eligible_count: 1, listed_count: 0,
+          hidden_expired_count: 1, eligible_bytes: 1024, eligible_unknown_size_count: 0,
+          blocked_count: 0, blocked_bytes: 0, blocked_unknown_size_count: 0,
+          blocked_reasons: {}, google_drive_files_deleted: 0 });
+      }
+      return defaultFetch?.(url, init) ?? json({ ok: true });
+    });
+    renderApp();
+    await openSettingsSection("Файлы и хранилище");
+    const check = await screen.findByRole("button", { name: "Проверить остатки файлов" });
+    expect(check).not.toHaveClass("danger");
+    await userEvent.click(check);
+    expect(await screen.findByRole("region", { name: "План очистки файлов Studio" })).toHaveTextContent("Сейчас в списке файлов: 0");
+    expect(fetchMock.mock.calls.some(([url, init]) => url === "/api/projects/p1/sources/bulk-deletion" && init?.method === "POST")).toBe(false);
+  });
+
   it("previews and confirms a Studio-only bulk file cleanup", async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     const defaultFetch = fetchMock.getMockImplementation();

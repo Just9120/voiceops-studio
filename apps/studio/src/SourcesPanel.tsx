@@ -406,14 +406,20 @@ export function SourcesPanel({
         <h3>Сохранённые файлы Studio</h3>
         <button
           type="button"
-          className="danger"
+          className={sources.items.length > 0 ? "danger" : "secondary"}
           disabled={bulkPending || Boolean(bulkPreview)}
           aria-busy={bulkPending || undefined}
           onClick={() => void previewBulkDeletion()}
         >
-          {bulkPending ? "Проверяем…" : "Очистить все файлы"}
+          {bulkPending ? "Проверяем…" : sources.items.length > 0 ? "Очистить все файлы" : "Проверить остатки файлов"}
         </button>
       </div>
+      {sources.loaded && sources.items.length === 0 && (
+        <p className="muted">
+          Активных файлов нет. Проверка остатков ничего не удаляет: она покажет,
+          остались ли истёкшие копии. Очистка потребует отдельного подтверждения.
+        </p>
+      )}
       {sources.items.length > 0 && <div className="bulk-selection-actions" aria-label="Выбор файлов">
         <button type="button" disabled={bulkPending || Boolean(bulkPreview)} onClick={() => setSelectedIds(new Set(sources.items.slice(0,50).map((source) => source.id)))}>Выбрать загруженные файлы (до 50)</button>
         {selectedSources.length > 0 && <><span>Выбрано: {selectedSources.length}</span><button className="danger" type="button" disabled={bulkPending || Boolean(bulkPreview) || pendingDeletionIds.size > 0} onClick={() => void previewBulkDeletion(selectedSources.map((source) => source.id))}>{`Убрать выбранные (${selectedSources.length})`}</button><button type="button" disabled={bulkPending || Boolean(bulkPreview)} onClick={() => setSelectedIds(new Set())}>Снять выбор</button></>}

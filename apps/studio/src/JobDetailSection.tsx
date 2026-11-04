@@ -48,9 +48,9 @@ export function JobDetailSection({
       <p>
         Разделение спикеров: {job.diarization_enabled ? "Включено" : "Выключено"}
       </p>
-      <h5>Расход сервиса распознавания</h5>
+      <h3 className="job-detail-subheading">Расход сервиса распознавания</h3>
       <JobUsageCostSummary usageCost={job.usage_cost} />
-      <h5>Папка результата</h5>
+      <h3 className="job-detail-subheading">Папка результата</h3>
       {job.output_folder ? (
         <p>
           {job.output_folder.name || "Папка результата"}{" "}
@@ -133,7 +133,7 @@ export function JobDetailSection({
           {retry?.error && <span className="error">{retry.error}</span>}
         </div>
       )}
-      <h5>Файлы задачи</h5>
+      <h3 className="job-detail-subheading">Файлы задачи</h3>
       {safeJobSources(job).map((source) => (
         <article className="source-card" key={`${job.id}-${source.id}`}>
           <b>

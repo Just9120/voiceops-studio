@@ -8895,8 +8895,10 @@ function SettingsPage({
           <h3>Ключи провайдеров</h3>
           <p className="notice">
             Ключи не сохраняются в браузере и никогда не отображаются обратно.
-            Обычная и Live-транскрибации поддерживают включённые оператором
-            профили ElevenLabs и Yandex SpeechKit. OpenAI key можно безопасно
+            Обычная транскрибация поддерживает включённые оператором профили
+            ElevenLabs, Yandex SpeechKit, Т-Банк VoiceKit, Mistral Voxtral и Google Gemini.
+            Live доступен для ElevenLabs и Yandex SpeechKit. Для запуска нужен
+            активный ключ выбранного сервиса. OpenAI key можно безопасно
             хранить для будущих интеграций, но текущий execution flow его не
             использует.
           </p>
@@ -9882,7 +9884,7 @@ function DiagnosticsSettings({
             <dl className="meta">
               <dt>Встроенный мониторинг</dt>
               <dd>{alertSignalLabel(system.alerts?.incident_monitoring)}</dd>
-              <dt>Telegram</dt>
+              <dt>Telegram для операторских предупреждений</dt>
               <dd>{alertTransportLabel(system.alerts?.telegram)}</dd>
               <dt>Email</dt>
               <dd>{alertTransportLabel(system.alerts?.email ?? system.health?.email?.status)}</dd>
@@ -9891,6 +9893,10 @@ function DiagnosticsSettings({
               <dt>Остаток API credits</dt>
               <dd>{alertSignalLabel(system.alerts?.api_limit)}</dd>
             </dl>
+            <p className="muted">
+              Это каналы технических предупреждений оператору. Telegram-уведомления
+              о готовности ваших задач настраиваются отдельно в разделе «Уведомления».
+            </p>
             {(system.alerts?.incidents ?? []).filter((incident) => incident.status !== "resolved").length === 0 ? (
               <p className="notice" role="status">Активных системных предупреждений нет.</p>
             ) : (
