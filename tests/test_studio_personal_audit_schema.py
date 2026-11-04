@@ -23,6 +23,9 @@ def test_source_version_migration_preserves_legacy_identity_and_guards_rollback(
     engine = sa.create_engine("sqlite://")
     with engine.begin() as connection:
         Base.metadata.create_all(connection)
+        with Operations(MigrationContext.configure(connection)).batch_alter_table("stt_provider_operations") as batch:
+            batch.drop_constraint("ck_stt_provider_operations_provider", type_="check")
+            batch.create_check_constraint("ck_stt_provider_operations_provider", "provider IN ('yandex','gemini')")
         with Operations(MigrationContext.configure(connection)).batch_alter_table("transcription_jobs") as batch:
             batch.drop_constraint("fk_transcription_jobs_local_device", type_="foreignkey")
             for column in ("local_device_id", "local_input_receipt_json", "local_result_ready_at", "local_result_digest", "local_result_generation"):
@@ -45,6 +48,7 @@ def test_source_version_migration_preserves_legacy_identity_and_guards_rollback(
         try:
             revision.module.upgrade()
             assert "local_execution_devices" in sa.inspect(connection).get_table_names()
+            assert "nemotron" in next(c["sqltext"] for c in sa.inspect(connection).get_check_constraints("stt_provider_operations") if c["name"] == "ck_stt_provider_operations_provider")
             job_columns = {column["name"]: column for column in sa.inspect(connection).get_columns("transcription_jobs")}
             for name in ("local_device_id", "local_input_receipt_json", "local_result_ready_at", "local_result_digest", "local_result_generation"):
                 assert job_columns[name]["nullable"] and job_columns[name]["default"] is None
@@ -66,6 +70,7 @@ def test_source_version_migration_preserves_legacy_identity_and_guards_rollback(
             assert connection.execute(sa.text("SELECT drive_revision_id FROM sources")).scalar_one() == "v1"
             connection.execute(sa.text("UPDATE sources SET drive_revision_id=NULL"))
             revision.module.downgrade()
+            assert "nemotron" not in next(c["sqltext"] for c in sa.inspect(connection).get_check_constraints("stt_provider_operations") if c["name"] == "ck_stt_provider_operations_provider")
             assert not {"drive_revision_id", "drive_md5_checksum", "drive_sha256_checksum"} & {c["name"] for c in sa.inspect(connection).get_columns("sources")}
             revision.module.upgrade()
         finally:

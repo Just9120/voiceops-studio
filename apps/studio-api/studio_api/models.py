@@ -864,7 +864,7 @@ class SttProviderOperation(Base):
         UniqueConstraint("job_source_id","attempt_number",name="uq_stt_provider_operations_source_attempt"),
         UniqueConstraint("provider","operation_id",name="uq_stt_provider_operations_provider_operation"),
         CheckConstraint("attempt_number >= 1", name="ck_stt_provider_operations_attempt_positive"),
-        CheckConstraint("provider IN ('yandex','gemini')", name="ck_stt_provider_operations_provider"),
+        CheckConstraint("provider IN ('yandex','gemini','nemotron')", name="ck_stt_provider_operations_provider"),
         CheckConstraint("operating_mode IN ('economic','standard','premium')", name="ck_stt_provider_operations_mode"),
         CheckConstraint("status IN ('pending','completed','failed')", name="ck_stt_provider_operations_status"),
         CheckConstraint("((result_ciphertext IS NULL AND result_nonce IS NULL AND result_key_id IS NULL AND result_hmac IS NULL) OR (result_ciphertext IS NOT NULL AND result_nonce IS NOT NULL AND result_key_id IS NOT NULL AND length(result_hmac) = 64))", name="ck_stt_provider_operations_result_shape"),

@@ -8,6 +8,7 @@ import json
 import math
 import re
 import zlib
+from uuid import uuid4
 from time import monotonic
 from types import SimpleNamespace
 
@@ -23,9 +24,9 @@ from .job_retry_recovery import classify_source_attempt_failure, mark_attempt_pr
 from .job_source_materialization import materialize_processing_job_source
 from .local_execution_devices import authenticate_device
 from .local_execution_jobs import _scope
-from .models import JobSourceStatus, JobStatus, Project, TranscriptionJob
+from .models import JobSourceStatus, JobStatus, Project, TranscriptionJob, SttProviderOperation
 from .nemotron_local_result import NEMOTRON_MAX_DURATION_SECONDS, NEMOTRON_MODEL, normalize_nemotron_local_result
-from .provider_part_checkpoints import save_provider_part_checkpoint
+from .provider_result_cache import persist_operation_result
 from .security import utcnow
 from .transcript_timeline import TranscriptClockSelection, persist_transcript_clock, select_transcript_clock
 from .transcription_options import job_diarization_enabled
@@ -241,8 +242,15 @@ def accept_local_result(db, *, device, job_id, envelope, digest, settings, now):
     try:
         mark_attempt_provider_started(db, job_id=job.id, job_source_id=relation.id,
             lease_owner_id="local:" + device.id, lease_generation=generation, now=now, total_parts=1)
-        save_provider_part_checkpoint(db, job_id=job.id, job_source_id=relation.id, part_index=0, total_parts=1,
-            timeline_offset_seconds=0, duration_seconds=receipt["prepared_duration_seconds"], result=result, settings=settings, now=now)
+        # API may write operation-cache rows, but cannot modify worker-only part
+        # checkpoints. Keep that database boundary; no broader API grant is needed.
+        operation = SttProviderOperation(id=str(uuid4()), owner_user_id=job.owner_user_id,
+            project_id=job.project_id, job_id=job.id, job_source_id=relation.id,
+            attempt_number=int(job.attempt_count), provider="nemotron", operating_mode=job.operating_mode,
+            model=NEMOTRON_MODEL, operation_id=f"local:{job.id}:{device.id}:{generation}:{digest}",
+            status="pending", submitted_at=now, created_at=now, updated_at=now)
+        db.add(operation)
+        persist_operation_result(db, operation, result, settings=settings, now=now, commit=False)
         mark_attempt_provider_returned(db, job_id=job.id, job_source_id=relation.id,
             lease_owner_id="local:" + device.id, lease_generation=generation, now=now)
     except Exception:

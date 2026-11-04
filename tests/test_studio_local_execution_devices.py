@@ -453,8 +453,10 @@ def test_complete_local_result_is_encrypted_idempotent_and_exported_without_inpu
     with maker() as db:
         job = db.get(TranscriptionJob, job_id)
         assert job.status == JobStatus.queued and job.lease_owner_id is None and job.local_result_generation == generation
-        checkpoints = db.scalars(select(TranscriptionProviderPartCheckpoint)).all()
-        assert len(checkpoints) == 1 and b"Synthetic transcript" not in checkpoints[0].ciphertext
+        from studio_api.models import SttProviderOperation
+        assert db.scalar(select(TranscriptionProviderPartCheckpoint)) is None
+        checkpoints = db.scalars(select(SttProviderOperation)).all()
+        assert len(checkpoints) == 1 and b"Synthetic transcript" not in checkpoints[0].result_ciphertext
         # No source bytes/key are needed to export the complete accepted text.
         source = job.sources[0].source
         source.upload_status = SourceUploadStatus.expired
@@ -477,7 +479,8 @@ def test_complete_local_result_is_encrypted_idempotent_and_exported_without_inpu
     changed["result"]["text"] = "Different result"
     assert post_native(client, headers, job_id, changed).status_code == 409
     with maker() as db:
-        assert len(db.scalars(select(TranscriptionProviderPartCheckpoint)).all()) == 1
+        assert db.scalar(select(TranscriptionProviderPartCheckpoint)) is None
+        assert len(db.scalars(select(SttProviderOperation)).all()) == 1
 
 
 @pytest.mark.parametrize("failure", ["wrong_sha", "stale_generation", "cancelled", "changed_source", "partial_result", "wrong_duration"])
@@ -520,16 +523,20 @@ def test_local_result_gzip_is_bounded_and_rejects_duplicate_keys_and_unparseable
         assert error.value.status_code == 422 and error.value.detail == {"reason": "local_result_invalid"}
 
 
-def test_result_persistence_failure_rolls_back_and_same_full_payload_can_be_retried(local_app, monkeypatch):
+@pytest.mark.parametrize("after_flush", [False, True])
+def test_result_persistence_failure_rolls_back_and_same_full_payload_can_be_retried(local_app, monkeypatch, after_flush):
     from studio_api import local_execution_transfer as transfer
     from studio_api.models import JobStatus, TranscriptionJob, TranscriptionJobSourceAttempt, TranscriptionProviderPartCheckpoint, SourceAttemptStage
     client, maker, _, (owner_id, _) = local_app
     _, headers, job_id, generation, sha = stage_local_input(client, maker, owner_id, monkeypatch)
     envelope = native_envelope(generation, sha)
-    save = transfer.save_provider_part_checkpoint
+    save = transfer.persist_operation_result
     def unavailable(*args, **kwargs):
+        if after_flush:
+            assert kwargs["commit"] is False
+            save(*args, **kwargs)
         raise RuntimeError("synthetic private persistence diagnostic")
-    monkeypatch.setattr(transfer, "save_provider_part_checkpoint", unavailable)
+    monkeypatch.setattr(transfer, "persist_operation_result", unavailable)
     failed = post_native(client, headers, job_id, envelope)
     assert failed.status_code == 503 and failed.json()["detail"]["reason"] == "local_result_persistence_unavailable"
     assert "private" not in failed.text
@@ -537,9 +544,33 @@ def test_result_persistence_failure_rolls_back_and_same_full_payload_can_be_retr
         job = db.get(TranscriptionJob, job_id)
         assert job.status == JobStatus.processing and job.local_result_ready_at is None
         assert db.scalar(select(TranscriptionProviderPartCheckpoint)) is None
+        from studio_api.models import SttProviderOperation
+        assert db.scalar(select(SttProviderOperation)) is None
         assert db.scalar(select(TranscriptionJobSourceAttempt)).stage == SourceAttemptStage.prepared
-    monkeypatch.setattr(transfer, "save_provider_part_checkpoint", save)
+    monkeypatch.setattr(transfer, "persist_operation_result", save)
     assert post_native(client, headers, job_id, envelope).status_code == 200
+
+
+def test_same_native_content_on_two_jobs_has_distinct_atomic_cache_identity(local_app, monkeypatch):
+    import hashlib
+    from studio_api.models import SttProviderOperation
+    client, maker, _, (owner_id, _) = local_app
+    raw, _ = input_fixture(monkeypatch)
+    sha = hashlib.sha256(raw).hexdigest()
+    device_id, headers = prepare_pc(client)
+    jobs = seed_local_jobs(maker, owner_id, device_id, count=2)
+    for job_id in jobs:
+        claimed = client.post(BASE + "/companion/claim", headers=headers).json()["job"]
+        assert claimed["id"] == job_id
+        generation = claimed["lease_generation"]
+        assert client.get(f"{BASE}/companion/jobs/{job_id}/source", params={"generation": generation}, headers=headers).status_code == 200
+        assert client.post(f"{BASE}/companion/jobs/{job_id}/prepare", headers=headers,
+            json={"generation": generation, "source_sha256": sha, "source_duration_seconds": 1}).status_code == 200
+        assert post_native(client, headers, job_id, native_envelope(generation, sha)).status_code == 200
+    with maker() as db:
+        operations = db.scalars(select(SttProviderOperation)).all()
+        assert len(operations) == 2 and len({row.operation_id for row in operations}) == 2
+        assert {row.job_id for row in operations} == set(jobs)
 
 
 def test_missing_accepted_local_checkpoint_never_dispatches_a_cloud_provider(local_app, monkeypatch):

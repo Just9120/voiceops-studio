@@ -10,6 +10,9 @@ release_safety = "additive"
 
 
 def upgrade():
+    with op.batch_alter_table("stt_provider_operations") as batch:
+        batch.drop_constraint("ck_stt_provider_operations_provider", type_="check")
+        batch.create_check_constraint("ck_stt_provider_operations_provider", "provider IN ('yandex','gemini','nemotron')")
     if "local_execution_devices" not in sa.inspect(op.get_bind()).get_table_names():
         op.create_table("local_execution_devices",
             sa.Column("id", sa.String(36), primary_key=True),
@@ -73,6 +76,8 @@ def upgrade():
 
 
 def downgrade():
+    if op.get_bind().execute(sa.text("SELECT COUNT(*) FROM stt_provider_operations WHERE provider='nemotron'")).scalar():
+        raise RuntimeError("Local accepted operation cache requires forward recovery")
     if op.get_bind().execute(sa.text("SELECT COUNT(*) FROM local_execution_devices")).scalar():
         raise RuntimeError("Local execution capabilities require forward recovery")
     if op.get_bind().execute(sa.text("SELECT COUNT(*) FROM transcription_jobs WHERE local_device_id IS NOT NULL "
@@ -115,3 +120,6 @@ def downgrade():
         for column in ("local_device_id", "local_input_receipt_json", "local_result_ready_at", "local_result_digest", "local_result_generation"):
             batch.drop_column(column)
     op.drop_table("local_execution_devices")
+    with op.batch_alter_table("stt_provider_operations") as batch:
+        batch.drop_constraint("ck_stt_provider_operations_provider", type_="check")
+        batch.create_check_constraint("ck_stt_provider_operations_provider", "provider IN ('yandex','gemini')")

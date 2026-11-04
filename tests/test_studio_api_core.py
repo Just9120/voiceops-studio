@@ -170,6 +170,97 @@ def test_database_role_manifest_lets_real_migrator_extend_existing_enum(tmp_path
             ).scalar_one() == 1
 
 
+def test_local_result_handoff_uses_api_grants_without_worker_checkpoint_write(monkeypatch):
+    """Real login + real manifest; SQLite cannot prove this permission boundary."""
+    import gzip
+    import hashlib
+    import io
+    from sqlalchemy.orm import Session, sessionmaker
+    from studio_api.local_execution_devices import pair_device
+    from studio_api.local_execution_jobs import claim_local_job
+    from studio_api.local_execution_transfer import open_local_input, prepare_local_input, decode_local_result, accept_local_result
+    from studio_api.job_source_materialization import MaterializedJobSource, MaterializedSourceIdentity
+    from studio_api.models import LocalExecutionDevice, SttProviderOperation, TranscriptionProviderPartCheckpoint
+    from studio_api.nemotron_local_result import NEMOTRON_MODEL
+    from studio_api.job_cached_transcript import completed_yandex_result
+
+    suffix = uuid.uuid4().hex
+    roles = {name: f"{name}_test_{suffix}" for name in ("studio_api", "studio_migrator", "studio_owner")}
+    api_engine = None
+    try:
+        with isolated_migration_database("studio_local_grants") as (temp_engine, env):
+            run_alembic("head", env=env)
+            manifest = (ROOT / "deploy/studio/database-roles.sql").read_text(encoding="utf-8")
+            manifest = manifest.replace("ON DATABASE studio TO", f'ON DATABASE "{temp_engine.url.database}" TO')
+            for name, replacement in roles.items():
+                manifest = re.sub(r"\b" + name + r"\b", replacement, manifest)
+            password = "synthetic-" + suffix
+            with temp_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+                conn.exec_driver_sql(manifest, execution_options={"no_parameters": True})
+                conn.exec_driver_sql(f"ALTER ROLE {roles['studio_api']} LOGIN PASSWORD '{password}'")
+            api_engine = create_engine(temp_engine.url.set(username=roles["studio_api"], password=password))
+            settings = Settings(database_url=api_engine.url.render_as_string(hide_password=False))
+            monkeypatch.setattr(Settings, "master_key_b64", lambda _self: base64.b64encode(b"n" * 32).decode())
+            maker = sessionmaker(api_engine, expire_on_commit=False)
+            now = datetime.now(timezone.utc)
+            with maker() as db:
+                assert db.execute(text("SELECT current_user")).scalar_one() == roles["studio_api"]
+                assert db.execute(text("SELECT has_table_privilege(current_user, 'transcription_provider_part_checkpoints', 'INSERT')")).scalar_one() is False
+                owner = User(email=f"local-role-{suffix}@example.test", status=UserStatus.active)
+                db.add(owner); db.flush()
+                device, raw_token = pair_device(db, owner_user_id=owner.id, label="Synthetic PC", creation_key=str(uuid.uuid4()), now=now)
+                device.runtime_status, device.model, device.runtime_version, device.last_seen_at = "ready", NEMOTRON_MODEL, "0.2.0", now
+                project = Project(owner_user_id=owner.id, title="Local role test")
+                db.add(project); db.flush()
+                source = Source(project_id=project.id, source_type=SourceType.local_upload, original_filename="synthetic.wav",
+                    upload_status=SourceUploadStatus.uploaded, s3_bucket="synthetic", s3_object_key="synthetic", expires_at=now+timedelta(days=3))
+                db.add(source); db.flush()
+                job = TranscriptionJob(owner_user_id=owner.id, project_id=project.id, status=JobStatus.queued,
+                    provider="nemotron", operating_mode="standard", language="en", local_device_id=device.id, media_timeline_version=2,
+                    output_drive_folder_id="synthetic-folder", options_json=json.dumps({"_stt_model": NEMOTRON_MODEL, "diarize": False}))
+                db.add(job); db.flush()
+                relation = TranscriptionJobSource(job_id=job.id, source_id=source.id, position=0)
+                db.add(relation); db.commit()
+                claimed = claim_local_job(db, device=device, now=now)
+                assert claimed.id == job.id
+                generation, job_id, device_id, relation_id = claimed.lease_generation, job.id, device.id, relation.id
+                db.commit()
+
+                raw = b"synthetic input bytes"
+                @contextmanager
+                def materialize(*_args, **_kwargs):
+                    with io.BytesIO(raw) as stream:
+                        yield MaterializedJobSource(identity=MaterializedSourceIdentity(job_id, relation_id, source.id), position=0,
+                            original_filename="synthetic.wav", mime_type="audio/wav", byte_count=len(raw), stream=stream)
+                with open_local_input(db, device=device, raw_token=raw_token, job_id=job_id, generation=generation,
+                        settings=settings, clock=lambda: now, materializer=materialize) as (chunks, receipt):
+                    assert b"".join(chunks) == raw
+                digest = hashlib.sha256(raw).hexdigest()
+                prepare_local_input(db, device=device, job_id=job_id, generation=generation, source_sha256=digest,
+                    source_duration_seconds=1, settings=settings, now=now)
+                db.commit()
+                value = {"generation": generation, "source_sha256": digest, "result": {"text": "Synthetic speech.",
+                    "duration": 1, "languages": ["en"], "words": [{"word": "Synthetic", "start": 0, "end": .5},
+                        {"word": "speech.", "start": .5, "end": 1}]}}
+                envelope, result_digest = decode_local_result(gzip.compress(json.dumps(value).encode()))
+                assert accept_local_result(db, device=device, job_id=job_id, envelope=envelope, digest=result_digest,
+                    settings=settings, now=now) == {"accepted": True, "already_accepted": False}
+                db.commit()
+                assert db.scalar(select(TranscriptionProviderPartCheckpoint)) is None
+                operation = db.scalar(select(SttProviderOperation))
+                assert operation.provider == "nemotron" and operation.status == "completed"
+                assert b"Synthetic speech" not in operation.result_ciphertext
+                assert completed_yandex_result(db, db.get(TranscriptionJob, job_id), relation_id).id == operation.id
+                assert db.get(LocalExecutionDevice, device_id).revoked_at is None
+            api_engine.dispose(); api_engine = None
+    finally:
+        if api_engine is not None:
+            api_engine.dispose()
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            for name in ("studio_api", "studio_migrator", "studio_owner"):
+                conn.exec_driver_sql(f"DROP ROLE IF EXISTS {roles[name]}")
+
+
 def admin(email="a@example.com", password="correct horse battery"):
     db = SessionLocal()
     u = User(email=email, role=UserRole.admin, status=UserStatus.active)

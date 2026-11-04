@@ -57,7 +57,7 @@ def transcribe_processing_job_source(
     if job is None:
         raise JobElevenLabsTranscriptionError(JobElevenLabsTranscriptionReason.prerequisites_unavailable)
     provider = (job.provider or "elevenlabs").strip().lower()
-    if provider in {"yandex", "gemini"}:
+    if provider in {"yandex", "gemini", "nemotron"}:
         from .job_cached_transcript import completed_yandex_result, restore_cached_yandex_transcript
         if completed_yandex_result(db, job, job_source_id) is not None:
             with restore_cached_yandex_transcript(db, job_id=job_id, job_source_id=job_source_id,
@@ -65,7 +65,7 @@ def transcribe_processing_job_source(
                     now=clock()) as restored:
                 yield restored
             return
-    if provider in {"elevenlabs", "mistral", "tbank", "nemotron"}:
+    if provider in {"elevenlabs", "mistral", "tbank"}:
         from .job_cached_transcript import fully_cached_relation, restore_cached_transcript
         if fully_cached_relation(db, job, job_source_id, clock()):
             with restore_cached_transcript(db, job_id=job_id, job_source_id=job_source_id,
