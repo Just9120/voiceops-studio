@@ -134,7 +134,7 @@ def test_ready_requires_bound_model_identity_and_heartbeat_freshness(local_app):
     assert rejected.status_code == 422 and "wrong-model" not in rejected.text and "private-path" not in rejected.text
     unavailable = client.post(BASE + "/companion/heartbeat", headers=pc_headers(token), json={"runtime_status": "model_missing"})
     assert unavailable.status_code == 200 and not unavailable.json()["device"]["ready"]
-    for state in ("loading_model", "insufficient_memory"):
+    for state in ("loading_model",):
         reply = client.post(BASE + "/companion/heartbeat", headers=pc_headers(token), json={"runtime_status": state})
         assert reply.status_code == 200 and not reply.json()["device"]["ready"]
         assert reply.json()["device"]["runtime_status"] == state
@@ -214,6 +214,7 @@ def seed_local_jobs(maker, owner_id, device_id, count=1, **overrides):
         project = Project(owner_user_id=owner_id, title="Synthetic local jobs")
         db.add(project); db.flush()
         ids = []
+        created = datetime.now(timezone.utc)
         for index in range(count):
             source = Source(project_id=project.id, source_type=SourceType.local_upload,
                 upload_status=SourceUploadStatus.uploaded, original_filename=f"synthetic-{index}.wav",
@@ -222,6 +223,7 @@ def seed_local_jobs(maker, owner_id, device_id, count=1, **overrides):
             fields = {"project_id": project.id, "owner_user_id": owner_id, "provider": "nemotron",
                 "local_device_id": device_id, "status": JobStatus.queued, "output_drive_folder_id": "synthetic-folder",
                 "media_timeline_version": 2,
+                "created_at": created + timedelta(microseconds=index),
                 "options_json": json.dumps({"_stt_model": NEMOTRON_MODEL, "diarize": False}), **overrides}
             job = TranscriptionJob(**fields)
             db.add(job); db.flush()

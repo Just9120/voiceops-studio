@@ -13,20 +13,6 @@ import time
 from .protocol import WorkerError
 
 
-def memory_headroom():
-    """Keep the owner's desktop responsive while a large native model loads."""
-    if os.name != "nt":
-        return
-    class Memory(ctypes.Structure):
-        _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong)] + [
-            (name, ctypes.c_ulonglong) for name in ("total", "available", "page_total", "page_available",
-                                                   "virtual_total", "virtual_available", "extended")]
-    state = Memory()
-    state.length = ctypes.sizeof(state)
-    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(state)) or state.available < 4 * 1024**3:
-        raise WorkerError("local_memory_unavailable")
-
-
 class WindowsJob:
     def __init__(self, process):
         self.handle = None

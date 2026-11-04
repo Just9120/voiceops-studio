@@ -10,7 +10,7 @@ import threading
 import time
 
 from .native import NativePaths, NativeServer, prepare_audio, probe_audio, verify_installation
-from .process import memory_headroom, owned_scratch, recovered_workspace, single_instance
+from .process import owned_scratch, recovered_workspace, single_instance
 from .protocol import APIError, MAX_RESULT_BYTES, Stopped, StudioClient, WorkerError, checked_job, response_bytes
 
 
@@ -39,7 +39,6 @@ class DevicePulse:
                 return
 
     def check(self):
-        memory_headroom()
         if self.failure is not None:
             raise self.failure
         if time.monotonic() - self.last_success > 60:
@@ -212,8 +211,7 @@ def run(profile, *, root, notice=print):
             paths = NativePaths.from_dict(profile["paths"])
             verify_installation(paths, check=device.check, verified_files=profile["verified_files"])
         except WorkerError as error:
-            client.heartbeat("model_missing" if error.code == "local_model_unavailable" else
-                             "insufficient_memory" if error.code == "local_memory_unavailable" else "runtime_missing")
+            client.heartbeat("model_missing" if error.code == "local_model_unavailable" else "runtime_missing")
             raise
         with NativeServer(paths, directory) as server:
             while True:
@@ -225,7 +223,7 @@ def run(profile, *, root, notice=print):
                     try:
                         server.start(device.check)
                     except WorkerError as error:
-                        client.heartbeat("insufficient_memory" if error.code == "local_memory_unavailable" else "runtime_error")
+                        client.heartbeat("runtime_error")
                         raise
                     device.status = "ready"
                     client.heartbeat("ready")
@@ -255,15 +253,11 @@ def run(profile, *, root, notice=print):
                 except WorkerError as error:
                     try:
                         client.json(f"/jobs/{job['id']}/failure", {"generation": job["generation"], "reason":
-                            "local_memory_unavailable" if error.code == "local_memory_unavailable"
-                            else "local_input_unavailable" if error.code in {"local_input_unavailable", "local_disk_space_unavailable"}
+                            "local_input_unavailable" if error.code in {"local_input_unavailable", "local_disk_space_unavailable"}
                             else "local_result_invalid" if error.code in {"local_result_incomplete", "local_result_invalid"}
                             else "local_runtime_unavailable" if error.code == "local_runtime_unavailable" else "local_processing_failed"})
                     except APIError:
                         pass  # Owner cancellation/accepted result/expired lease already has authority.
                     notice("Не удалось завершить локальную задачу. Проверьте её состояние в Studio.")
-                    if error.code == "local_memory_unavailable":
-                        client.heartbeat("insufficient_memory")
-                        raise
                     if server.process is not None and server.process.process.poll() is not None:
                         server.close()

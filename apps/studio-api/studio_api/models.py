@@ -65,7 +65,7 @@ class LocalExecutionDevice(Base):
     __table_args__ = (
         UniqueConstraint("owner_user_id", "creation_key", name="uq_local_execution_device_creation"),
         CheckConstraint("credential_revision >= 1", name="ck_local_execution_device_revision"),
-        CheckConstraint("runtime_status IN ('unknown','loading_model','ready','model_missing','runtime_missing','runtime_error','insufficient_memory')", name="ck_local_execution_device_status"),
+        CheckConstraint("runtime_status IN ('unknown','loading_model','ready','model_missing','runtime_missing','runtime_error')", name="ck_local_execution_device_status"),
         CheckConstraint("length(trim(label)) > 0", name="ck_local_execution_device_label"),
     )
 

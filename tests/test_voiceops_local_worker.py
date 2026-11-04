@@ -345,15 +345,6 @@ def test_stale_cleanup_removes_only_recognized_dead_runs_and_preserves_active_or
     assert (changed / "keep.txt").read_text() == "unknown user data"
 
 
-def test_memory_pressure_stops_owned_execution_instead_of_claiming_a_ready_device(monkeypatch):
-    from local_worker.protocol import Stopped
-    pulse = worker.DevicePulse(None)
-    def low_memory(): raise WorkerError("local_memory_unavailable")
-    monkeypatch.setattr(worker, "memory_headroom", low_memory)
-    with pytest.raises(WorkerError, match="local_memory_unavailable"):
-        pulse.check()
-
-
 def test_truncated_commit_reply_is_reconciled_by_reusing_the_same_complete_upload(monkeypatch):
     import http.client
     class Truncated(Body):
