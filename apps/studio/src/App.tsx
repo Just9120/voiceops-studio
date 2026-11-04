@@ -1704,6 +1704,7 @@ function PreparationPanel({
       notice.panelId !== localUploadPanelId,
   );
   const [rows, setRows] = useState<ComposerRow[]>(() => [newComposerRow()]);
+  const [segmentCountDrafts, setSegmentCountDrafts] = useState<Record<string, string>>({});
   const [selectedProvider, setSelectedProvider] =
     useState<SttProvider>("elevenlabs");
   const [operatingMode, setOperatingMode] =
@@ -2160,8 +2161,17 @@ function PreparationPanel({
     driveSourcePickerEnabled && sourceUploadPolicy,
   );
 
+  const invalidSegmentCountRowIds = new Set(rows.filter((row) => {
+    const draft = segmentCountDrafts[row.id];
+    if (!row.segmentation_enabled || draft === undefined) return false;
+    const count = Number(draft);
+    return !/^\d+$/.test(draft) || !Number.isInteger(count) || count < 1 || count > MAX_BATCH_ITEMS;
+  }).map((row) => row.id));
   const rowReadinessResults = rows.map((row, index) => {
     const rowNumber = index + 1;
+    if (invalidSegmentCountRowIds.has(row.id)) {
+      return { ready: false, reason: `Задача ${rowNumber}: введите целое число фрагментов от 1 до ${MAX_BATCH_ITEMS}` };
+    }
     if (!row.source_id) {
       return { ready: false, reason: `Задача ${rowNumber}: выберите источник` };
     }
@@ -5224,10 +5234,15 @@ function PreparationPanel({
                         type="number"
                         min={1}
                         max={MAX_BATCH_ITEMS}
-                        value={row.segments.length}
+                        value={segmentCountDrafts[row.id] ?? row.segments.length}
+                        aria-invalid={invalidSegmentCountRowIds.has(row.id) || undefined}
+                        aria-describedby={invalidSegmentCountRowIds.has(row.id) ? `segment-count-error-${row.id}` : undefined}
                         onChange={(event) => {
-                          const count = Number(event.target.value);
+                          const draft = event.target.value;
+                          setSegmentCountDrafts((current) => ({ ...current, [row.id]: draft }));
+                          const count = Number(draft);
                           if (
+                            /^\d+$/.test(draft) &&
                             Number.isInteger(count) &&
                             count >= 1 &&
                             count <= MAX_BATCH_ITEMS
@@ -5240,8 +5255,22 @@ function PreparationPanel({
                             });
                           }
                         }}
+                        onBlur={() => {
+                          if (!invalidSegmentCountRowIds.has(row.id)) {
+                            setSegmentCountDrafts((current) => {
+                              const next = { ...current };
+                              delete next[row.id];
+                              return next;
+                            });
+                          }
+                        }}
                         aria-label={`Количество фрагментов задачи ${index + 1}`}
                       />
+                      {invalidSegmentCountRowIds.has(row.id) && (
+                        <small id={`segment-count-error-${row.id}`} className="error">
+                          Введите целое число от 1 до {MAX_BATCH_ITEMS}.
+                        </small>
+                      )}
                       <small className="muted">
                         Общая папка используется по умолчанию; ниже можно выбрать
                         отдельную папку. Максимум: {MAX_BATCH_ITEMS}.

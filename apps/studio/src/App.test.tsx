@@ -5545,6 +5545,32 @@ describe("Studio PWA", () => {
     expect(localStorage.getItem("studio-accent-preference")).toBeNull();
   });
 
+  it("allows replacing the fragment count and blocks incomplete or out-of-range drafts", async () => {
+    renderApp();
+    await openProjectsPage();
+    await chooseExistingSource(1, "Лекция 1");
+    await chooseResultFolder(1, "folder-segments");
+    await userEvent.click(screen.getByRole("checkbox", { name: /Разделить файл на фрагменты/ }));
+    const count = screen.getByLabelText("Количество фрагментов задачи 1");
+    await userEvent.clear(count);
+    expect(count).toHaveValue(null);
+    expect(count).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("button", { name: "Проверить задачи (1)" })).toBeDisabled();
+    await userEvent.type(count, "3");
+    expect(count).toHaveValue(3);
+    expect(count).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByLabelText("Начало фрагмента 13 задачи 1")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Начало фрагмента 3 задачи 1")).toBeInTheDocument();
+    for (const invalid of ["0", "51", "1.5"]) {
+      fireEvent.change(count, { target: { value: invalid } });
+      expect(count).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByRole("button", { name: "Проверить задачи (3)" })).toBeDisabled();
+    }
+    fireEvent.change(count, { target: { value: "1" } });
+    expect(count).not.toHaveAttribute("aria-invalid");
+    expect(screen.getByRole("button", { name: "Проверить задачи (1)" })).toBeEnabled();
+  });
+
   it("builds arbitrary ordered segment jobs from one source", async () => {
     renderApp();
     await openProjectsPage();

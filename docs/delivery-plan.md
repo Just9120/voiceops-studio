@@ -2,6 +2,35 @@
 
 ## Current work и checkpoint
 
+### PERSONAL-AUDIT-CLOSURE-20261104 — IN_PROGRESS
+
+Основание: владелец04Nov2026 поручил все оставшиеся personal findings и AC последнего аудита единой Goal; один основной PR и штатная поставка на Contabo. Источник требований повторно проверен: revision `AHj4eMTdRm7gefk2vCviWXeK8o36nn2SvkJeIW7sgf4xr1XpeJeHg6WsooV4fitSj5xi4OQlXos9MvChLEfrnqX5DLeD7mUMO9LYi_-Tl3o`,397 абзацев. Разрешены необходимые изменения code/spec/plan/procedures; платные STT/Live/scans не запускаются. Built-in Goal ACTIVE.
+
+Base/main `597443b63e02a7848b06163497ca0c98e043f879`, clean branch `codex/personal-audit-findings-20261104`, основной worktree. Fresh fetch: divergence0/0, open PR0. GitHub CLI401 и integration protection-read403 — ограничения доступа; действующие required `ci-required`, protected migration approval и delivery runbooks сохраняются. Runtime API/web/worker `0f098f0f1d46543637b00e00cbf3e1748af27722`, schema0044; PR345 поставлен, PR346 host TLS hook установлен отдельно. Старые pre-merge checkpoints ниже не возобновляют завершённые Goal.
+
+Scope: F02/F10/F12/F17/F19/F42/F69/F78/F81/F82/F83/F84 и UXR33..37. Затронутые существующие AC: MC-03/04,PS-03/04,UXN-05,AP-16/23,STORAG-06,AQP-13,PR-12,RS-01/03,YD-03,REC-01/03/04/06; связанные PM-06/PS-01/02/technical criteria квалифицируются по реальному impact. Local Nemotron получает стабильные NEM-01..04 из согласованного источника, не из произвольного finding. F42 включает source↔AC reconciliation и исправление завышенного READY, с сохранением IDs/истории. Подробные отчёты/скриншоты остаются вне repository.
+
+**Коррекция F85:**04Nov Cloudflare readback обнаружил уже действующее enabled exact-host правило `studio_exact_host_tls_strict`, rule`fde9e701012d413580768ea913717c22`, ruleset version10 от01Nov2026, expression `(http.host eq "studio.cloud-nodes.net")`, ssl`strict`. Предыдущая оценка только zone-level`full` была ложноположительной. F85 CLOSED / FALSE_POSITIVE / no_change, confidence HIGH. Zone default, корневой домен и соседние hostname rules не меняются. Дальнейший TLS smoke проверяет только Studio.
+
+Non-goals: commercial F09; F62 lecture/cleaned experiment; F66/SECX-06 system mail; automatic voice identity F08 WITHDRAWN; изменения старых транскриптов, чужих проектов/CloudKeep jobs, перенос worker в Cloudflare, массовое удаление пользовательских данных, новый paid benchmark. Local model installation для commercial не добавляется. Root-domain TLS и другие subdomains вне scope.
+
+Порядок локальных commits одного PR: (1) исходники/version/recipe, final duration и original timeline + безопасный fragment input; (2) Live sessions/active clear и lifecycle; (3) Yandex recursion, UX/docs и совместимые dependency patches; (4) personal local Nemotron с authenticated device boundary и synthetic integration; (5) source/AC reconciliation и CloudKeep isolated recovery evidence. Связанные изменения могут объединяться по проверяемости; новый основной PR до завершения этого scope не создаётся.
+
+DoD: исправления имеют meaningful regressions и совместимые schema/legacy recovery, текущие AC квалифицированы по реализации; актуальные required CI/review → merge → additive migration/API/web/worker delivery по runbook с exact revision/image/schema/health и безопасным прикладным smoke. CloudKeep конкретная backup identity/retention/RPO/RTO проверены на явно изолированном target; production restore запрещён. Неопределённая owner policy не выдумывается. Local model отсутствие в сети не вызывает платный cloud fallback. Не создавать follow-up PR только ради delivery metadata.
+
+| Validation Plan / риск | Команда/tool, cwd, environment и ожидаемый результат | Этап / обязательность |
+|---|---|---|
+| Duration/timeline/version/input | Root focused existing media/preflight/catalog/source/audio tests, synthetic files/fake transports; web affected composer/waveform tests. Final clip bounds/consent/version changes, sameID+sameSize mutation, concat/silence map и empty count обнаруживаются | REQUIRED local + applicable Linux CI |
+| Live/lifecycle | Root draft/source deletion tests и web Live/drafts tests: independent sessions/tabs, clear-generation fencing, quotas/owner isolation, idle preview vs real active lease, TTL3/7/30 | REQUIRED local + CI |
+| Disk recursion/UX | Existing Disk/picker component/API suites: nested/empty/limits/permissions/cancel, true counts/exclusions; keyboard/focus/390/768 layout по affected сценариям | REQUIRED local + current CI browser |
+| Dependency/security | Existing constrained update procedure, current lock/constraints; targeted regression/typecheck/build, advisory checks. Security boundary/compatibility read-only review по fix-finding skill; no paid scans | REQUIRED before push + current CI |
+| Nemotron | Synthetic companion/API/device-auth/owner/cancel/offline/result contracts, no real cloud calls; local availability проверяется отдельно и не скрывает unconfigured device | REQUIRED local + CI; реальный CPU canary только при установленной проверенной модели/доступном ресурсе |
+| Backup/recovery | Contabo/CloudKeep read-only job+retention records, разрешённый конкретный dump на isolated target с decrypt/app/quarantine/deletion checks, measured elapsed/loss и cleanup | REQUIRED scoped recovery; policy unknown блокирует только зависимый результат |
+| Repository/docs | Root `python scripts/ci_checks.py`, `git diff --check`; web ESLint/TypeScript и affected tests/build; AC IDs/source trace/readiness self-review | REQUIRED before initial push |
+| Delivery | Runbook exact-main CI→merge→protected single additive successor/API→compatible worker, web; reviewer gate сохраняется; Studio-only TLS read-only smoke | REQUIRED after merge; paid/external document mutation canaries не входят |
+
+Checkpoint04Nov: Goal активирована, источники/repo/base проверены, ветка создана. F85 признан false positive по первичному ruleset readback. Реализация остальных17 findings и новых/уточнённых AC ещё не завершена. Текущий процент UNSET до F42; исторические468/473 не перенесены как новый PASS. Следующий шаг — regression count input и общий source/version/timeline contract.
+
 ### AUDIO-QUALITY-PROGRESS-TRIM-20261028 — IN_PROGRESS
 
 Основание: явное поручение владельца28Oct2026 — сначала точечно обновить исходный Google Doc, затем реализовать согласованные новые требования единой Goal. Doc `1uaYvnqpbns_iyHTtQDZYjNYygT4ikUhmhuhRDWySrzI` обновлён с revision guard; readback подтвердил все3 изменённых раздела (провайдеры, визуальная обрезка, прогресс), остальные разделы сохранены. Revision `AHj4eMTtyuH0DJOk9_16Rda3GchxdZw-YldmFAyfJ7mRCpj5_hnttmoD6Mrll45uIVkd2zGLQakvZCLw-QOvOdF_xfF53H7bcvLPvTSkw80`.
