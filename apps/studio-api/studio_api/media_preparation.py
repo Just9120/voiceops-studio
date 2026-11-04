@@ -70,6 +70,7 @@ class PreparedMediaInput:
     timeline_offset_seconds: float = 0.0
     duration_seconds: float | None = None
     source_created_at: datetime | None = None
+    source_duration_seconds: float | None = None
 
     def __repr__(self) -> str:
         return (
@@ -114,6 +115,7 @@ def prepare_elevenlabs_media_input(
     runner: Callable[..., object] = subprocess.run,
     temporary_directory: str | None = None,
     probe_source_creation_time: bool = False,
+    video_interval_selector: Callable[[float], tuple[float, float] | None] | None = None,
 ) -> Iterator[PreparedMediaInput]:
     runner = controlled_runner(runner)
     if not requires_video_audio_extraction(mime_type):
@@ -156,7 +158,19 @@ def prepare_elevenlabs_media_input(
                 if probe_source_creation_time
                 else None
             )
-            _run_ffmpeg(runner, input_path, output_path)
+            source_duration = None
+            if video_interval_selector is not None:
+                source_duration = _probe_duration_seconds(runner, input_path)
+                interval = video_interval_selector(source_duration)
+                if interval is not None:
+                    start, end = interval
+                    output_path = root / "manual-clip.m4a"
+                    _create_manual_clip(runner=runner, prepared_path=input_path, output_path=output_path,
+                        start_seconds=start, duration_seconds=end-start, max_output_bytes=max_output_bytes)
+                else:
+                    _run_ffmpeg(runner, input_path, output_path)
+            else:
+                _run_ffmpeg(runner, input_path, output_path)
             prepared_size = _validated_output_size(output_path, max_output_bytes)
             prepared_name = f"{_safe_stem(original_filename)}.m4a"
             prepared_stream = output_path.open("rb")
@@ -174,6 +188,7 @@ def prepare_elevenlabs_media_input(
                 stream=prepared_stream,
                 audio_extracted=True,
                 source_created_at=source_created_at,
+                source_duration_seconds=source_duration,
             )
         finally:
             prepared_stream.close()
@@ -199,6 +214,16 @@ def prepare_elevenlabs_media_parts(
     prefer_whole_recording: bool = False,
 ) -> Iterator[PreparedMediaBatch]:
     runner = controlled_runner(runner)
+    clip_requested = media_clip_start_seconds is not None or media_clip_end_seconds is not None
+
+    def select_video_interval(source_duration):
+        start, end = _validated_manual_clip_bounds(start_seconds=media_clip_start_seconds,
+            end_seconds=media_clip_end_seconds, source_duration_seconds=source_duration)
+        _validate_whole_source_duration(end-start, max_duration_seconds, duration_warning_seconds,
+            long_duration_confirmed and (confirmed_source_duration_seconds is None
+                or round(source_duration, 3) == confirmed_source_duration_seconds), source_duration_seconds=source_duration)
+        return (start, end) if clip_requested else None
+
     with prepare_elevenlabs_media_input(
         stream=stream,
         original_filename=original_filename,
@@ -208,6 +233,7 @@ def prepare_elevenlabs_media_parts(
         runner=runner,
         temporary_directory=temporary_directory,
         probe_source_creation_time=probe_source_creation_time,
+        video_interval_selector=select_video_interval,
     ) as prepared:
         with TemporaryDirectory(
             prefix="studio-parts-",
@@ -220,7 +246,7 @@ def prepare_elevenlabs_media_parts(
                 _copy_input(prepared.stream, prepared_path)
                 prepared_size = _validated_output_size(prepared_path, max_output_bytes)
                 duration = _probe_duration_seconds(runner, prepared_path)
-                source_duration = duration
+                source_duration = prepared.source_duration_seconds or duration
                 clip_start, clip_end = _validated_manual_clip_bounds(
                     start_seconds=media_clip_start_seconds, end_seconds=media_clip_end_seconds,
                     source_duration_seconds=source_duration,
@@ -234,7 +260,7 @@ def prepare_elevenlabs_media_parts(
                     media_clip_start_seconds is not None
                     or media_clip_end_seconds is not None
                 )
-                if clip_requested:
+                if clip_requested and prepared.source_duration_seconds is None:
                     clip_start, clip_end = _validated_manual_clip_bounds(
                         start_seconds=media_clip_start_seconds,
                         end_seconds=media_clip_end_seconds,
@@ -251,6 +277,11 @@ def prepare_elevenlabs_media_parts(
                     )
                     prepared_path = clip_path
                     duration = _probe_duration_seconds(runner, prepared_path)
+                    _validate_whole_source_duration(duration, max_duration_seconds, duration_warning_seconds,
+                        long_duration_confirmed and (confirmed_source_duration_seconds is None
+                            or round(source_duration, 3) == confirmed_source_duration_seconds),
+                        source_duration_seconds=source_duration)
+                elif prepared.source_duration_seconds is not None:
                     _validate_whole_source_duration(duration, max_duration_seconds, duration_warning_seconds,
                         long_duration_confirmed and (confirmed_source_duration_seconds is None
                             or round(source_duration, 3) == confirmed_source_duration_seconds),
