@@ -4,9 +4,11 @@ import type { LocalExecutionDevice } from "./localExecutionContracts";
 
 type CatalogItem = {
   id: string; source_url: string; hub_revision: string | null; license: string | null;
+  access?: "public" | "gated" | "unknown";
   languages: string[]; downloads: number | null; likes: number | null;
   studio: { name: string; model: string; revision: string; languages: string[]; diarization: boolean;
-    word_timestamps: boolean; download_bytes: number } | null;
+    word_timestamps: boolean; download_bytes: number; weights_url?: string;
+    platform?: string; execution?: string; min_ram_bytes?: number | null; max_audio_seconds?: number | null } | null;
 };
 type CatalogPage = { items: CatalogItem[]; next_cursor: string | null };
 type CatalogQuery = { key: string; parameters: string; supported: boolean; speakers: boolean; timestamps: boolean; compatible: boolean };
@@ -160,6 +162,14 @@ export function LocalModelCatalog({ devices, csrf, onCsrf }: {
       {item.studio && device && !verified && <button type="button"
         disabled={installPending} onClick={() => { if (item.studio) void requestInstall(item.studio); }}>Установить на выбранном ПК</button>}
       <p>Языки {((item.studio?.languages ?? item.languages).join(", ")) || "не указаны"} · Лицензия {item.license ?? "не указана"}</p>
+      <p>Доступ на Hugging Face: {item.access === "public" ? "открытый"
+        : item.access === "gated" ? "по запросу или после принятия условий" : "не подтверждён"}.</p>
+      {item.studio && <p>Требования: {item.studio.platform ?? "платформа не указана"} · {item.studio.execution ?? "режим не указан"} ·
+        RAM {gib(item.studio.min_ram_bytes ?? null)} · предел записи {item.studio.max_audio_seconds == null
+          ? "не указан" : `${item.studio.max_audio_seconds / 60} мин`}.</p>}
+      {item.studio?.weights_url && <p><a href={item.studio.weights_url} target="_blank" rel="noreferrer">
+        Файлы закреплённой ревизии и условия использования
+      </a></p>}
       <p>Таймкоды {item.studio ? (item.studio.word_timestamps ? "есть" : "нет") : "не проверены"} · Разделение спикеров {item.studio ? (item.studio.diarization ? "есть" : "нет") : "не проверено"}</p>
       <p>Размер загрузки {item.studio ? `${(item.studio.download_bytes / 1073741824).toFixed(2)} ГиБ` : "не указан"} · Версия {(item.studio?.revision ?? item.hub_revision)?.slice(0, 12) ?? "не указана"}</p>
     </li>;

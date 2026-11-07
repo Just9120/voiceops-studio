@@ -123,8 +123,10 @@ def test_hub_catalog_paginates_without_trusting_external_navigation(local_app, m
         linked_host = "untrusted.example" if ("cursor", "opaque=") in params else "huggingface.co"
         yield httpx.Response(200, request=httpx.Request("GET", url),
             headers={"link": f'<https://{linked_host}/api/models?cursor=opaque%3D>; rel="next"'},
-            json=[{"id": "nvidia/parakeet-tdt-0.6b-v3", "tags": ["ru", "license:cc-by-4.0"]},
-                  {"id": "other/model", "tags": ["ru"], "likes": 10},
+            json=[{"id": "nvidia/parakeet-tdt-0.6b-v3", "tags": ["ru", "license:cc-by-4.0"], "pipeline_tag": catalog.TASK, "gated": False},
+                  {"id": "other/model", "tags": ["ru"], "likes": 10, "pipeline_tag": catalog.TASK, "gated": "manual"},
+                  {"id": "other/diarization", "pipeline_tag": "audio-to-audio", "tags": ["speaker-diarization", catalog.TASK]},
+                  {"id": "other/unknown", "tags": ["ru", "speaker-diarization"]},
                   {"id": "https://unexpected.test"}])
 
     monkeypatch.setattr(catalog.httpx, "stream", stream)
@@ -135,10 +137,48 @@ def test_hub_catalog_paginates_without_trusting_external_navigation(local_app, m
         first = client.get(query).json()
         assert [item["id"] for item in first["items"]] == ["nvidia/parakeet-tdt-0.6b-v3", "other/model"]
         assert first["items"][0]["studio"]["download_bytes"] == 713975456
+        assert first["items"][0]["access"] == "public"
+        assert first["items"][1]["access"] == "gated"
         assert first["items"][1]["studio"] is None and first["next_cursor"] == "opaque="
         assert client.get(query + "&cursor=opaque%3D").json()["next_cursor"] is None
     finally:
         catalog._page.cache_clear()
+
+
+def test_studio_catalog_sorts_current_metrics_and_links_exact_weights(monkeypatch):
+    from studio_api import local_model_catalog as catalog
+    supported_ids = list(catalog.STUDIO_PROFILES)
+    nemotron_id, parakeet_id = supported_ids
+    nemotron = catalog.STUDIO_PROFILES[nemotron_id]
+    parakeet = catalog.STUDIO_PROFILES[parakeet_id]
+    metrics = {
+        nemotron["weights_repository"]: (100, 10),
+        parakeet["weights_repository"]: (20, 50),
+    }
+
+    def hub_json(url, params):
+        repo = url.removeprefix(catalog.HUB_MODELS + "/")
+        assert ("expand", "gated") in params
+        downloads, likes = metrics[repo]
+        return {"id": repo, "pipeline_tag": catalog.TASK, "gated": False,
+                "downloads": downloads, "likes": likes, "sha": "b" * 40}, ""
+
+    monkeypatch.setattr(catalog, "_hub_json", hub_json)
+    catalog._studio_profile_item.cache_clear()
+    try:
+        downloads = catalog.catalog_page(search="", language="ru", sort="downloads", cursor="", supported=True)["items"]
+        likes = catalog.catalog_page(search="", language="ru", sort="likes", cursor="", supported=True)["items"]
+        assert [item["id"] for item in downloads] == supported_ids
+        assert [item["id"] for item in likes] == supported_ids[::-1]
+        for item, profile in zip(downloads, (nemotron, parakeet), strict=True):
+            assert item["studio"]["weights_url"] == (
+                f"https://huggingface.co/{profile['weights_repository']}/tree/{profile['revision']}"
+            )
+            assert item["studio"]["min_ram_bytes"] is None
+        assert downloads[0]["hub_revision"] is None
+        assert downloads[1]["studio"]["max_audio_seconds"] == 1440
+    finally:
+        catalog._studio_profile_item.cache_clear()
 
 
 def test_inventory_is_only_readable_by_owner_and_rotated_with_capability(local_app, monkeypatch):
