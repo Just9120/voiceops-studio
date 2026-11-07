@@ -100,6 +100,7 @@ class LocalInventoryIn(BaseModel):
     disk_free_bytes: StrictInt | None = Field(default=None, ge=0, le=2**60)
     execution: list[Literal["cpu"]] = Field(max_length=1)
     installed: list[Literal[NEMOTRON_MODEL, PARAKEET_MODEL]] = Field(max_length=2)
+    verified_installations: list[Literal[NEMOTRON_MODEL, PARAKEET_MODEL]] = Field(default_factory=list, max_length=2)
     probes: list[LocalModelProbeIn] = Field(default_factory=list, max_length=2)
 
 

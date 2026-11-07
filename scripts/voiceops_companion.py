@@ -264,23 +264,31 @@ class CompanionWindow:
         if identity and not (self.inventory_thread and self.inventory_thread.is_alive()):
             def report():
                 installed = []
+                verified_installations = []
                 effective_disk = disk
                 for model in (MODEL, PARAKEET_MODEL):
                     try:
                         profile = read_profile(self.model_path(model))
+                        if legacy_identity(profile) != identity:
+                            continue
                         decoder = Path(profile["paths"]["decoder"])
-                        info = decoder.stat()
-                        stamp = [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns]
-                        if legacy_identity(profile) == identity and profile["verified_files"].get("decoder", {}).get("stat") == stamp:
-                            installed.append(model)
-                            effective_disk = effective_disk or decoder.parent
+                        if not decoder.is_file():
+                            continue
+                        installed.append(model)
+                        effective_disk = effective_disk or decoder.parent
+                        verify_installation(
+                            NativePaths.from_dict(profile["paths"], model=model), model=model,
+                            verified_files=profile["verified_files"], cached_only=True,
+                        )
+                        verified_installations.append(model)
                     except (OSError, WorkerError):
                         continue
                 try:
                     client = StudioClient(identity["origin"], identity["token"])
                     client.json("/inventory", {
                         **hardware_inventory(effective_disk), "installed": installed,
-                        "probes": [probe for probe in probes if probe["model"] in installed],
+                        "verified_installations": verified_installations,
+                        "probes": [probe for probe in probes if probe["model"] in verified_installations],
                     })
                     pending = client.json("/model-install-request", {"request_id": answered}).get("request")
                     if isinstance(pending, dict) and MODEL_REVISIONS.get(pending.get("model")) == pending.get("revision"):

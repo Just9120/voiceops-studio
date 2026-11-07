@@ -247,6 +247,17 @@ def test_verified_weight_cache_reuses_only_unchanged_identity_and_executable_is_
     hashes.clear()
     native.verify_installation(paths, verified_files=proof)
     assert hashes == ["runtime"]
+    hashes.clear()
+    native.verify_installation(paths, verified_files=proof, cached_only=True)
+    assert not hashes
+    paths.encoder.unlink()
+    with pytest.raises(WorkerError, match="local_model_unavailable"):
+        native.verify_installation(paths, verified_files=proof, cached_only=True)
+    paths.encoder.write_bytes(b"corrupted")
+    with pytest.raises(WorkerError, match="local_model_unavailable"):
+        native.verify_installation(paths, verified_files=proof, cached_only=True)
+    assert not hashes
+    paths.encoder.write_bytes(b"synthetic")
     paths.decoder.write_bytes(b"corrupted")
     with pytest.raises(WorkerError, match="local_model_unavailable"):
         native.verify_installation(paths, verified_files=proof)

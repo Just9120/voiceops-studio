@@ -13,6 +13,7 @@ type CatalogPage = { items: CatalogItem[]; next_cursor: string | null };
 type Inventory = {
   cpu: string; cpu_threads: number | null; ram_bytes: number | null; disk_free_bytes: number | null;
   gpus: { name: string; vram_bytes: number | null }[]; installed: string[]; execution: string[];
+  verified_installations?: string[];
   probes: { model: string; audio_seconds: number; elapsed_seconds: number }[];
 };
 
@@ -23,10 +24,16 @@ function gib(bytes: number | null) {
 function suitability(item: CatalogItem, inventory: Inventory | null) {
   if (!item.studio) return "Недостаточно данных";
   if (!inventory) return "Недостаточно данных";
-  if (inventory.probes.some(probe => probe.model === item.studio?.model)) return "Подходит по короткой пробе";
-  if (inventory.installed.includes(item.studio.model)) return "С ограничениями · скорость не измерена";
+  if (isVerifiedInstallation(inventory, item.studio.model)) {
+    return inventory.probes.some(probe => probe.model === item.studio?.model)
+      ? "Подходит по короткой пробе" : "С ограничениями · скорость не измерена";
+  }
   if (inventory.disk_free_bytes !== null && inventory.disk_free_bytes < item.studio.download_bytes) return "Не подходит · недостаточно места";
   return "Недостаточно данных · требуется проба на ПК";
+}
+
+function isVerifiedInstallation(inventory: Inventory | null, model: string) {
+  return inventory?.installed.includes(model) && inventory.verified_installations?.includes(model);
 }
 
 export function LocalModelCatalog({ devices, csrf, onCsrf }: {
@@ -129,17 +136,20 @@ export function LocalModelCatalog({ devices, csrf, onCsrf }: {
     {installStatus && <p role="status">{installStatus}</p>}
     {!pending && visible?.length === 0 && <p>На этой странице нет моделей по заданным фильтрам.</p>}
     {visible && <ul className="local-device-list">{visible.map(item => {
-      const probe = inventory?.probes.find(value => value.model === item.studio?.model);
+      const model = item.studio?.model;
+      const verified = model && isVerifiedInstallation(inventory, model);
+      const probe = verified ? inventory?.probes.find(value => value.model === model) : undefined;
+      const installationLabel = !inventory ? "нет данных" : verified ? "файлы проверены"
+        : model && inventory.installed.includes(model) ? "файлы обнаружены, проверка не подтверждена" : "не подтверждена";
       return <li key={item.id}>
       <p><a href={item.source_url} target="_blank" rel="noreferrer">{item.studio?.name ?? item.id}</a></p>
       <p>{item.studio ? "Есть профиль Studio" : "Запуск в Studio пока не поддерживается"}</p>
-      {item.studio && <p>Совместимость: {suitability(item, inventory)}. Установка: {inventory
-        ? (inventory.installed.includes(item.studio.model) ? "файлы проверены" : "не подтверждена") : "нет данных"}.</p>}
+      {item.studio && <p>Совместимость: {suitability(item, inventory)}. Установка: {installationLabel}.</p>}
       {item.studio && <p className="muted">Профиль использует CPU. {item.studio.diarization
         ? "Nemotron требует больше ресурсов и поддерживает разделение спикеров."
         : "Parakeet занимает меньше места. Этот профиль без разделения спикеров."}</p>}
       {probe && <p>Проба с холодным запуском: {probe.audio_seconds.toFixed(1)} с записи за {probe.elapsed_seconds.toFixed(1)} с.</p>}
-      {item.studio && device && !inventory?.installed.includes(item.studio.model) && <button type="button"
+      {item.studio && device && !verified && <button type="button"
         disabled={installPending} onClick={() => { if (item.studio) void requestInstall(item.studio); }}>Установить на выбранном ПК</button>}
       <p>Языки {((item.studio?.languages ?? item.languages).join(", ")) || "не указаны"} · Лицензия {item.license ?? "не указана"}</p>
       <p>Таймкоды {item.studio ? (item.studio.word_timestamps ? "есть" : "нет") : "не проверены"} · Разделение спикеров {item.studio ? (item.studio.diarization ? "есть" : "нет") : "не проверено"}</p>

@@ -54,7 +54,7 @@ class NativePaths:
             raise WorkerError("local_runtime_missing") from None
 
 
-def verify_installation(paths, *, check=lambda: None, verified_files=None, model=MODEL):
+def verify_installation(paths, *, check=lambda: None, verified_files=None, model=MODEL, cached_only=False):
     verified_files = verified_files if isinstance(verified_files, dict) else {}
     verified = {}
     files = PINNED_FILES if model == MODEL else {"runtime": PINNED_FILES["runtime"], "decoder": (PARAKEET_BYTES, PARAKEET_SHA256)}
@@ -66,9 +66,10 @@ def verify_installation(paths, *, check=lambda: None, verified_files=None, model
             saved = verified_files.get(field)
             # Only a current-user sealed proof can skip rereading unchanged
             # multi-gigabyte weights. The small executable is hashed every run.
-            cached = (field != "runtime" and before.st_ino > 0 and isinstance(saved, dict)
+            cached = ((field != "runtime" or cached_only) and before.st_ino > 0 and isinstance(saved, dict)
                       and saved.get("sha256") == digest and saved.get("stat") == stamp)
-            if not path.is_file() or before.st_size != size or (not cached and file_sha256(path, check) != digest):
+            if (not path.is_file() or before.st_size != size
+                    or (not cached and (cached_only or file_sha256(path, check) != digest))):
                 raise ValueError()
             after = path.stat()
             if stamp != [after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns]:

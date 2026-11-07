@@ -158,6 +158,10 @@ def test_inventory_is_only_readable_by_owner_and_rotated_with_capability(local_a
     assert client.get(reader).json() == {"inventory": None}
     assert client.post(BASE + "/companion/inventory", headers=headers, json=inventory).status_code == 200
     assert client.get(reader).json()["inventory"]["installed"] == [PARAKEET_MODEL]
+    assert client.get(reader).json()["inventory"]["verified_installations"] == []
+    inventory["verified_installations"] = [PARAKEET_MODEL]
+    assert client.post(BASE + "/companion/inventory", headers=headers, json=inventory).status_code == 200
+    assert client.get(reader).json()["inventory"]["verified_installations"] == [PARAKEET_MODEL]
     client.cookies.set(settings.cookie_name, "other-session")
     assert client.get(reader).status_code == 404
     client.cookies.set(settings.cookie_name, "owner-session")
