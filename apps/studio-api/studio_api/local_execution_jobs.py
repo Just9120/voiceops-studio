@@ -3,7 +3,7 @@ from datetime import timedelta
 import json
 
 from fastapi import HTTPException
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, tuple_
 
 from .job_claim_lease import acquire_job_lease, is_lease_active, renew_job_lease
 from .job_claim_readiness import build_claim_readiness
@@ -14,6 +14,7 @@ from .models import JobSourceStatus, JobStatus, Project, TranscriptionJob
 from .local_model_identity import job_model_identity
 
 LOCAL_LEASE_TTL = timedelta(seconds=90)
+LOCAL_CLAIM_PAGE_SIZE = 50
 LOCAL_STAGES = ("source_download", "media_processing", "local_transcription", "local_result_upload")
 LOCAL_FAILURES = frozenset({"local_input_unavailable", "local_model_unavailable", "local_runtime_unavailable",
                             "local_processing_failed", "local_worker_interrupted", "local_result_invalid"})
@@ -84,31 +85,48 @@ def claim_local_job(db, *, device, now):
                 lease_generation=active.lease_generation, now=now, retire_part_checkpoints=False)
             return None
         return active
-    jobs = db.scalars(select(TranscriptionJob).join(Project, Project.id == TranscriptionJob.project_id).where(
+    candidates = select(TranscriptionJob).join(Project, Project.id == TranscriptionJob.project_id).where(
         TranscriptionJob.local_device_id == device.id, TranscriptionJob.owner_user_id == device.owner_user_id,
         Project.owner_user_id == device.owner_user_id, Project.archived_at.is_(None),
         TranscriptionJob.provider == "nemotron", TranscriptionJob.local_result_ready_at.is_(None),
+        TranscriptionJob.media_timeline_version == 2,
         TranscriptionJob.status == JobStatus.queued, TranscriptionJob.cancel_requested_at.is_(None),
         or_(TranscriptionJob.lease_expires_at.is_(None), TranscriptionJob.lease_expires_at <= now),
         or_(TranscriptionJob.retry_not_before_at.is_(None), TranscriptionJob.retry_not_before_at <= now),
-    ).order_by(TranscriptionJob.created_at, TranscriptionJob.id).limit(50).with_for_update(skip_locked=True)).all()
-    for job in jobs:
-        if (job_model_identity(job.options_json)[0] != device.model or job.media_timeline_version != 2
-                or not build_claim_readiness(job, now=now)["ready_for_future_claim"]):
-            continue
-        relations = [relation for relation in job.sources if relation.status != JobSourceStatus.skipped]
-        if len(relations) != 1:
-            continue
-        lease = acquire_job_lease(db, job_id=job.id, lease_owner_id="local:" + device.id,
-            local_device_id=device.id, now=now, lease_ttl=LOCAL_LEASE_TTL)
-        begin_job_processing(db, job_id=job.id, lease_owner_id=lease.lease_owner_id,
-            lease_generation=lease.lease_generation, now=now)
-        prepare_current_attempt_sources(db, job_id=job.id, lease_owner_id=lease.lease_owner_id,
-            lease_generation=lease.lease_generation, now=now)
-        job.local_input_receipt_json = None
-        job.work_progress_json = None
-        return job
-    return None
+    )
+    queue_order = (TranscriptionJob.created_at, TranscriptionJob.id)
+    page = candidates.order_by(*queue_order).limit(LOCAL_CLAIM_PAGE_SIZE)
+    while True:
+        jobs = db.scalars(page).all()
+        if not jobs:
+            return None
+        for job in jobs:
+            if not _matches_local_claim(job, device, now):
+                continue
+            # Lock and refresh only the candidate that could be claimed. A
+            # cancellation or another transition may have changed it during the scan.
+            locked_job = db.scalar(candidates.where(TranscriptionJob.id == job.id)
+                .with_for_update(of=TranscriptionJob, skip_locked=True)
+                .execution_options(populate_existing=True))
+            if locked_job is None or not _matches_local_claim(locked_job, device, now):
+                continue
+            lease = acquire_job_lease(db, job_id=locked_job.id, lease_owner_id="local:" + device.id,
+                local_device_id=device.id, now=now, lease_ttl=LOCAL_LEASE_TTL)
+            begin_job_processing(db, job_id=locked_job.id, lease_owner_id=lease.lease_owner_id,
+                lease_generation=lease.lease_generation, now=now)
+            prepare_current_attempt_sources(db, job_id=locked_job.id, lease_owner_id=lease.lease_owner_id,
+                lease_generation=lease.lease_generation, now=now)
+            locked_job.local_input_receipt_json = None
+            locked_job.work_progress_json = None
+            return locked_job
+        last = jobs[-1]
+        page = candidates.where(tuple_(*queue_order) > (last.created_at, last.id)).order_by(*queue_order).limit(LOCAL_CLAIM_PAGE_SIZE)
+
+
+def _matches_local_claim(job, device, now):
+    return (job_model_identity(job.options_json)[0] == device.model
+            and sum(relation.status != JobSourceStatus.skipped for relation in job.sources) == 1
+            and build_claim_readiness(job, now=now)["ready_for_future_claim"])
 
 
 def heartbeat_local_job(db, *, device, job_id, generation, stage, sequence, completed, total, unit, now):

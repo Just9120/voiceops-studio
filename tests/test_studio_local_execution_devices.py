@@ -468,6 +468,34 @@ def test_only_assigned_pc_can_claim_and_vps_cannot_seize_inference(local_app):
         assert db.get(TranscriptionJob, job_ids[0]).source_access_started_at is not None
 
 
+@pytest.mark.parametrize("blocked_by", ["other_model", "expired_source"])
+def test_local_claim_finds_ready_job_after_full_page_of_ineligible_jobs(local_app, blocked_by):
+    import json
+    from studio_api.models import JobStatus, TranscriptionJob
+
+    client, maker, _, (owner_id, _) = local_app
+    device_id, headers = prepare_pc(client)
+    blocked_ids = seed_local_jobs(maker, owner_id, device_id, count=50)
+    ready_id = seed_local_jobs(maker, owner_id, device_id)[0]
+
+    with maker() as db:
+        for job_id in blocked_ids:
+            job = db.get(TranscriptionJob, job_id)
+            if blocked_by == "other_model":
+                job.options_json = json.dumps({"_stt_model": PARAKEET_MODEL,
+                    "_local_model_revision": MODEL_REVISIONS[PARAKEET_MODEL]})
+            else:
+                job.sources[0].source.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+        db.commit()
+
+    response = client.post(BASE + "/companion/claim", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["job"]["id"] == ready_id
+    assert client.post(BASE + "/companion/claim", headers=headers).json() == response.json()
+    with maker() as db:
+        assert all(db.get(TranscriptionJob, job_id).status == JobStatus.queued for job_id in blocked_ids)
+
+
 def test_local_progress_is_fenced_monotone_and_liveness_does_not_invent_advancement(local_app):
     import json
     from studio_api.models import TranscriptionJob
