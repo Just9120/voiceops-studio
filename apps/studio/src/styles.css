@@ -13,7 +13,7 @@
   --studio-secondary-bg: #eef2ff;
   --studio-secondary-text: #1e293b;
   --studio-input-bg: #ffffff;
-  --studio-input-border: #cbd5e1;
+  --studio-input-border: #74839a;
   --studio-code-bg: #111827;
   --studio-code-text: #bfdbfe;
   --studio-sidebar-bg: #111827;
@@ -27,7 +27,7 @@
   --studio-notice-bg: #eef2ff;
   --studio-error: #b91c1c;
   --studio-accent: #6d28d9;
-  --studio-focus: rgba(49, 94, 251, 0.35);
+  --studio-focus: var(--studio-primary);
   --studio-focus-inverse: rgba(255, 255, 255, 0.95);
   --studio-focus-shadow: rgba(49, 94, 251, 0.45);
   --studio-active-bg: #eef2ff;
@@ -104,7 +104,7 @@
   --studio-secondary-bg: #1e293b;
   --studio-secondary-text: #e2e8f0;
   --studio-input-bg: #0f172a;
-  --studio-input-border: #475569;
+  --studio-input-border: #72839c;
   --studio-code-bg: #020617;
   --studio-sidebar-bg: #020617;
   --studio-nav-active: #3730a3;
@@ -114,7 +114,6 @@
   --studio-notice-bg: #172554;
   --studio-error: #fca5a5;
   --studio-accent: #c4b5fd;
-  --studio-focus: rgba(109, 140, 255, 0.55);
   --studio-active-bg: #1e293b;
   --studio-active-shadow: rgba(109, 140, 255, 0.2);
   --studio-panel-border: #334155;
@@ -141,7 +140,6 @@
   --studio-primary: #7c3aed;
   --studio-primary-dark: #5b21b6;
   --studio-accent: #6d28d9;
-  --studio-focus: rgba(124, 58, 237, 0.35);
   --studio-focus-shadow: rgba(124, 58, 237, 0.45);
   --studio-active-bg: #f3e8ff;
   --studio-active-shadow: rgba(124, 58, 237, 0.12);
@@ -154,7 +152,6 @@
   --studio-primary: #0f766e;
   --studio-primary-dark: #115e59;
   --studio-accent: #0f766e;
-  --studio-focus: rgba(13, 148, 136, 0.35);
   --studio-focus-shadow: rgba(13, 148, 136, 0.45);
   --studio-active-bg: #ccfbf1;
   --studio-active-shadow: rgba(13, 148, 136, 0.12);
@@ -167,7 +164,6 @@
   --studio-primary: #be123c;
   --studio-primary-dark: #9f1239;
   --studio-accent: #be123c;
-  --studio-focus: rgba(225, 29, 72, 0.35);
   --studio-focus-shadow: rgba(225, 29, 72, 0.45);
   --studio-active-bg: #ffe4e6;
   --studio-active-shadow: rgba(225, 29, 72, 0.12);
