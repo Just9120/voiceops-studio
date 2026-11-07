@@ -9,6 +9,7 @@ type CatalogItem = {
     word_timestamps: boolean; download_bytes: number } | null;
 };
 type CatalogPage = { items: CatalogItem[]; next_cursor: string | null };
+type CatalogQuery = { key: string; parameters: string; supported: boolean; speakers: boolean; timestamps: boolean; compatible: boolean };
 
 type Inventory = {
   cpu: string; cpu_threads: number | null; ram_bytes: number | null; disk_free_bytes: number | null;
@@ -54,8 +55,14 @@ export function LocalModelCatalog({ devices, csrf, onCsrf }: {
   const [pending, setPending] = useState(false);
   const [installPending, setInstallPending] = useState(false);
   const [installStatus, setInstallStatus] = useState("");
-  const lastQuery = useRef("");
+  const [appliedQuery, setAppliedQuery] = useState<CatalogQuery | null>(null);
   const busy = useRef(false);
+  const parameters = new URLSearchParams({
+    search: search.trim(), language, sort, supported: String(supported || speakers || timestamps || compatible),
+  }).toString();
+  const draftQuery = { parameters, supported, speakers, timestamps, compatible,
+    key: JSON.stringify([parameters, supported, speakers, timestamps, compatible]) };
+  const queryChanged = appliedQuery !== null && appliedQuery.key !== draftQuery.key;
   async function requestInstall(profile: NonNullable<CatalogItem["studio"]>) {
     if (!device || installPending) return;
     setInstallPending(true); setInstallStatus("");
@@ -88,14 +95,14 @@ export function LocalModelCatalog({ devices, csrf, onCsrf }: {
   }, [device]);
 
   async function load(cursor?: string) {
-    if (busy.current) return;
+    const requested = cursor ? appliedQuery : draftQuery;
+    if (busy.current || !requested || (cursor && queryChanged)) return;
     busy.current = true; setPending(true); setError("");
-    const query = cursor ? new URLSearchParams(lastQuery.current)
-      : new URLSearchParams({ search: search.trim(), language, sort, supported: String(supported || speakers || timestamps || compatible) });
+    const query = new URLSearchParams(requested.parameters);
     if (cursor) query.set("cursor", cursor);
     try {
       const page = await api<CatalogPage>(`/local-execution/catalog?${query}`);
-      if (!cursor) lastQuery.current = query.toString();
+      if (!cursor) setAppliedQuery(requested);
       setItems(previous => cursor ? [...(previous ?? []), ...page.items.filter(item => !previous?.some(row => row.id === item.id))] : page.items);
       setNext(page.next_cursor);
     } catch {
@@ -104,9 +111,9 @@ export function LocalModelCatalog({ devices, csrf, onCsrf }: {
       busy.current = false; setPending(false);
     }
   }
-  const visible = items?.filter(item => (!supported || item.studio)
-    && (!speakers || item.studio?.diarization) && (!timestamps || item.studio?.word_timestamps)
-    && (!compatible || suitability(item, inventory).startsWith("Подходит")));
+  const visible = items?.filter(item => (!appliedQuery?.supported || item.studio)
+    && (!appliedQuery?.speakers || item.studio?.diarization) && (!appliedQuery?.timestamps || item.studio?.word_timestamps)
+    && (!appliedQuery?.compatible || suitability(item, inventory).startsWith("Подходит")));
   return <details>
     <summary>Каталог локальных речевых моделей</summary>
     <p>Поиск по всем моделям распознавания речи Hugging Face. Запуск в Studio доступен для поддерживаемых профилей.</p>
@@ -134,6 +141,7 @@ export function LocalModelCatalog({ devices, csrf, onCsrf }: {
     {pending && <p role="status">Загружаем каталог…</p>}
     {error && <p role="alert">{error}</p>}
     {installStatus && <p role="status">{installStatus}</p>}
+    {queryChanged && <p>Показаны результаты предыдущего поиска. Нажмите «Найти модели», чтобы применить новые параметры.</p>}
     {!pending && visible?.length === 0 && <p>На этой странице нет моделей по заданным фильтрам.</p>}
     {visible && <ul className="local-device-list">{visible.map(item => {
       const model = item.studio?.model;
@@ -156,6 +164,6 @@ export function LocalModelCatalog({ devices, csrf, onCsrf }: {
       <p>Размер загрузки {item.studio ? `${(item.studio.download_bytes / 1073741824).toFixed(2)} ГиБ` : "не указан"} · Версия {(item.studio?.revision ?? item.hub_revision)?.slice(0, 12) ?? "не указана"}</p>
     </li>;
     })}</ul>}
-    {next && <button type="button" disabled={pending} onClick={() => void load(next)}>Показать ещё модели</button>}
+    {next && <button type="button" disabled={pending || queryChanged} onClick={() => void load(next)}>Показать ещё модели</button>}
   </details>;
 }

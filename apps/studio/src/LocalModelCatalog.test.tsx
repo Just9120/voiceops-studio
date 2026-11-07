@@ -42,3 +42,30 @@ it.each([false, true])("labels an installation according to complete file eviden
     expect(screen.queryByText(/Проба с холодным запуском/)).not.toBeInTheDocument();
   }
 });
+
+it("keeps the cursor bound to the applied search until the draft is submitted", async () => {
+  const request = vi.mocked(api);
+  request.mockReset();
+  request.mockResolvedValue({ items: [], next_cursor: "opaque=" });
+  render(<LocalModelCatalog devices={[]} csrf="synthetic" onCsrf={vi.fn()} />);
+  fireEvent.click(screen.getByText("Каталог локальных речевых моделей"));
+  const search = screen.getByLabelText("Название модели");
+  fireEvent.change(search, { target: { value: "first" } });
+  fireEvent.click(screen.getByRole("button", { name: "Найти модели" }));
+  const next = await screen.findByRole("button", { name: "Показать ещё модели" });
+  expect(next).toBeEnabled();
+
+  fireEvent.change(search, { target: { value: "second" } });
+  expect(next).toBeDisabled();
+  expect(screen.getByText(/Показаны результаты предыдущего поиска/)).toBeInTheDocument();
+  fireEvent.click(next);
+  expect(request).toHaveBeenCalledTimes(1);
+
+  fireEvent.click(screen.getByRole("button", { name: "Найти модели" }));
+  await screen.findByText(/На этой странице нет моделей/);
+  fireEvent.click(screen.getByRole("button", { name: "Показать ещё модели" }));
+  const urls = request.mock.calls.map(([path]) => new URL(path, "https://studio.example.test").searchParams);
+  expect(urls.map(query => [query.get("search"), query.get("cursor")])).toEqual([
+    ["first", null], ["second", null], ["second", "opaque="],
+  ]);
+});
