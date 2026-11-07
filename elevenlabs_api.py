@@ -5476,6 +5476,7 @@ def upsert_transcript_document(
             segment_label=(segment_metadata or {}).get("label"),
             segment_time_range=(segment_metadata or {}).get("range_label"),
             original_source_name=(segment_metadata or {}).get("original_source_name"),
+            omit_unknown_created_at=True,
         )
         return build_structured_transcript_document_text(
             document_title=doc_title,

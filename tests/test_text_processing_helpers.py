@@ -23,6 +23,7 @@ from contextlib import contextmanager, nullcontext
 from typing import Optional
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,6 +51,7 @@ HELPER_NAMES = {
     "build_startup_timing_summary",
     "build_timing_analysis",
     "build_transcript_metadata_lines",
+    "upsert_transcript_document",
     "localize_transcript_speaker_labels",
     "build_structured_transcript_document_text",
     "find_structured_transcript_section_indices",
@@ -863,6 +865,44 @@ def test_new_transcript_output_never_uses_job_time_as_source_creation_time() -> 
     assert "created_at=utc_now_iso()" not in function_block
     assert source.count('source_created_at=source_meta.get("source_created_at", "unknown")') == 6
     assert 'source_created_at=segment_meta.get("source_created_at", "unknown")' in source
+
+
+@pytest.mark.parametrize(
+    ("created_at", "expected_date"),
+    [("unknown", None), ("2026-06-03 11:46 UTC", "2026-06-03 11:46 UTC")],
+)
+def test_new_colab_document_only_displays_known_recording_date(
+    monkeypatch, created_at, expected_date
+) -> None:
+    upsert = HELPERS["upsert_transcript_document"]
+    doc = {"id": "synthetic", "name": "Call", "webViewLink": ""}
+    writes = []
+    for name, helper in {
+        "get_single_existing_doc_match": lambda *_: None,
+        "get_source_mode_label": lambda mode: mode,
+        "get_unique_name": lambda _folder, name, _mime: name,
+        "create_google_doc": lambda *_: doc,
+        "write_title_and_text_to_doc": lambda **request: writes.append(request),
+        "add_doc_record_to_index": lambda *_: None,
+    }.items():
+        monkeypatch.setitem(HELPERS, name, helper)
+    options = SimpleNamespace(
+        language_label="Русский",
+        language_code="ru",
+        provider_label="ElevenLabs",
+        provider_model_label="scribe_v2",
+        separate_speakers=False,
+    )
+
+    result = upsert("Call", "Реплика.", "folder", {}, "skip", "Call.wav", "drive", options, created_at)
+
+    assert result["action"] == "created"
+    body = writes[0]["transcript_text"]
+    assert "Реплика." in body
+    if expected_date is None:
+        assert "Created at:" not in body
+    else:
+        assert f"Created at: {expected_date}" in body
 
 
 def test_format_visible_transcript_timestamp_handles_iso_and_visible_values() -> None:
