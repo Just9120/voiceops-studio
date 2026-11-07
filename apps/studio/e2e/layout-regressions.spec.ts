@@ -474,8 +474,14 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
     await expect(confirm).toBeVisible(); await noHorizontalOverflow(page);
     await page.keyboard.press('Escape'); await expect(confirm).not.toBeVisible();
     await expect(actions).toBeFocused();
-    await panel.getByLabel('Название компьютера',{exact:true}).fill('Тестовый компьютер');
-    await panel.getByRole('button',{name:'Подключить компьютер',exact:true}).click();
+    const computerName = panel.getByLabel('Название компьютера',{exact:true});
+    await expect(computerName).toBeHidden();
+    const manualSetup = panel.getByText('Ручная настройка существующего обработчика',{exact:true});
+    await manualSetup.focus();
+    await page.keyboard.press('Enter');
+    await expect(computerName).toBeVisible();
+    await computerName.fill('Тестовый компьютер');
+    await panel.getByRole('button',{name:'Создать ключ для ручного подключения',exact:true}).click();
     const secret = panel.getByLabel('Ключ подключения',{exact:true});
     await expect(secret).toHaveAttribute('type','password'); await expect(secret).toHaveValue(token);
     await noHorizontalOverflow(page);
