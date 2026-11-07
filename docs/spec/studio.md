@@ -469,7 +469,7 @@ Q009,Q089..092: отложено до отдельного решения вла
 | `JOBREL-10` | Critical job/queue/service events имеют guaranteed-delivery mechanism. |
 | `JOBREL-11` | Queued transcription можно отменить. |
 | `JOBREL-12` | Для running transcription можно запросить cancel; она останавливается на safe boundaries. |
-| `JOBREL-13` | Server job продолжается после закрытия PWA пользователем. |
+| `JOBREL-13` | Закрытие PWA не отменяет отложенное задание. Локальному заданию требуется доступный ПК и запущенный обработчик. При повторном открытии Studio показывает фактическое состояние и доступный результат. Q098, NEM-02/04, LSTT-14. |
 | `JOBREL-14` | UI показывает текущую processing stage. |
 | `JOBREL-15` | Source availability проверяется до provider dispatch. |
 | `JOBREL-16` | Target write readiness проверяется до provider dispatch. |

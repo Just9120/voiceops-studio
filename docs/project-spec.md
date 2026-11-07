@@ -22,6 +22,8 @@ Canonical требования и атомарные AC — здесь и в и�
 
 Решения25Oct2026 синхронизированы scoped native Google Doc edits с requiredRevisionId/readback: voice identity исключена, task notifications только Telegram, personal recovery через authorized VPS console, регулярные backups через Cloudkeep; На25Oct RPO новой цепочки оставался UNSET; решение04Nov установило RPO4days, RTO4h сохранён. System mail F66 и lecture/cleaned procedure F62 отложены. Stable IDs/отменённые критерии не удаляются.
 
+Сверка редакции от 5 ноября: 345 пунктов требований. Изоляция включает независимый откат, оценка длинной записи явно указывает вид расхода, а закрытие PWA сохраняет задание с учётом доступности локального ПК. Каталог, установщик и управление моделями выделены в Windows-этап personal. Базовая готовность NEM-01…04 учитывается отдельно. Связи с Q и AC указаны в [source trace](spec/source-trace.md#обновление-от-5-ноября-2026).
+
 ## Бизнес-правила и интерфейсы/данные
 
 1. Навигация: обзор, подготовка аудио, транскрибации, настройки. Отдельной пользовательской сущности Project нет; технический legacy Project ID не создаёт продуктового обязательства.
@@ -44,7 +46,7 @@ Canonical требования и атомарные AC — здесь и в и�
 | [Live/exports, Yandex Disk, media/recovery](spec/extensions.md) | [Реестр](delivery/extensions.md) |
 | [Будущая commercial реализация и общие interfaces](spec/commercial.md) | [Реестр](delivery/commercial.md) |
 
-READY = исполняемый код и подходящие автоматические проверки; ручной acceptance процент не используется. Current personal включает Colab/Studio/extensions и общие technical EVC-33..48/50. SP-01..05 и VID-01..04 отложены Q009 и исключены только из current personal; commercial — будущий scope. ALIAS/SUPERSEDED исключены из всех denominators, ID сохранены. Полный roadmap дополнительно включает будущие commercial/voice AC. Числа находятся в плане; новая Goal scope не сокращает spec.
+READY = исполняемый код и подходящие автоматические проверки; ручной acceptance процент не используется. Базовый personal включает Colab/Studio/extensions и общие technical EVC-33..48/50. LSTT-01…16 учитываются отдельно как Windows-этап; NEM-01…04 остаются в базовом personal. SP-01..05 и VID-01..04 отложены Q009 и исключены из базового personal; commercial — будущий scope. ALIAS/SUPERSEDED исключены из всех denominators, ID сохранены. Числа находятся в плане; новая Goal scope не сокращает spec.
 
 ## NFR, архитектура и зависимости
 

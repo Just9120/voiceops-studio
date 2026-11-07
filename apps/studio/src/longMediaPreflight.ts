@@ -25,8 +25,15 @@ export function parseLongMediaPreflight(value: unknown): LongMediaPreflight | nu
 }
 
 export function longMediaEstimate(p: LongMediaPreflight) {
+  const providers: Record<LongMediaPreflight["provider"], string> = {
+    elevenlabs: "ElevenLabs",
+    yandex: "Yandex SpeechKit",
+    tbank: "Т-Банк VoiceKit",
+    mistral: "Mistral Voxtral",
+    gemini: "Google Gemini",
+  };
   const minutes = (value: number) => `${(value / 60).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} мин`;
   const price = p.nominal_cost !== null ? `Номинальная оценка: ${Number(p.nominal_cost).toLocaleString("ru-RU", { maximumFractionDigits: 6 })} ${p.currency} по сохранённому тарифу ${p.rate_per_hour} ${p.currency}/ч (${p.effective_date}).`
     : "Денежная оценка неизвестна: тариф не настроен. Это не означает бесплатную обработку.";
-  return `Измеренная длительность исходника: ${minutes(p.source_duration_seconds)}; итоговая выбранная запись: ${minutes(p.selected_duration_seconds)}. Лимит итоговой записи после подготовки: ${minutes(p.maximum_seconds_per_source)}. ${price} Это оценка без учёта стыков разбиения, подписки и квоты, а не фактическое списание.${p.additional_source_count ? ` Ещё исходников в задаче: ${p.additional_source_count}; их итоговая длительность и расход пока не определены.` : ""}`;
+  return `Вид расхода — облачное распознавание (${providers[p.provider]}). Измеренная длительность исходника: ${minutes(p.source_duration_seconds)}; итоговая выбранная запись: ${minutes(p.selected_duration_seconds)}. Лимит итоговой записи после подготовки: ${minutes(p.maximum_seconds_per_source)}. ${price} Это оценка без учёта стыков разбиения, подписки и квоты, а не фактическое списание.${p.additional_source_count ? ` Ещё исходников в задаче: ${p.additional_source_count}; их итоговая длительность и расход пока не определены.` : ""}`;
 }

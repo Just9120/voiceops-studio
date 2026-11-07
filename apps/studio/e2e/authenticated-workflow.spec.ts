@@ -1145,6 +1145,27 @@ test('progress refresh keeps the last confirmed checkpoint after a temporary fai
   ).toContainText('Ожидает');
   await expect(progress.getByText('Готово файлов: 0 из 1')).toBeVisible();
   expect(integrationRequests).toEqual([]);
+
+  const context = page.context();
+  const transcriptionsUrl = page.url();
+  await page.close();
+  const reopened = await context.newPage();
+  const reopenedMutations = trackExternalOrJobMutations(reopened);
+  const confirmedProgress = reopened.waitForResponse(
+    (response) => isJobProgressUrl(response.url()) && response.status() === 200,
+  );
+  await reopened.goto(transcriptionsUrl);
+  const confirmed = await (await confirmedProgress).json();
+  expect(confirmed.jobs).toContainEqual(expect.objectContaining({
+    job_id: processingProgress.job_id,
+    job_status: 'processing',
+    current_stage: 'provider_processing',
+  }));
+  const reopenedProgress = reopened.getByRole('region', {
+    name: `Прогресс задачи ${processingProgress.job_id}`,
+  });
+  await expect(reopenedProgress.getByText('Распознавание речи').locator('..')).toContainText('Выполняется');
+  expect(reopenedMutations).toEqual([]);
 });
 
 test('processing cancellation records a request without claiming completion', async ({

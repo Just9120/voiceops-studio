@@ -11,6 +11,29 @@ Source snapshot04Nov2026 paragraphs382..386 восстановлен в NEM-01..
 | `NEM-03` | READY | PASS | PASS | PENDING | Verified source SHA/immutable original clock and full bounded native result persist atomically as encrypted operation cache; duplicate replay/rollback/cancellation/missing cache cannot invoke cloud STT. Current local/output/catalog/format fixtures PASS and actual isolated PostgreSQL API-role accept/cancel probe PASS without worker checkpoint write grants.33855ab/add5563. Required current Linux CI/release and single PR/delivery remain PENDING. |
 | `NEM-04` | READY | PASS | PASS | PENDING | Fresh device readiness required at admission and under claim lock; offline/missing model/runtime preserves explicit PC choice and blocks fallback. Current negative API/component tests and actual390/768/1280 browser statuses/menu/pair/secret-not-stored/reload PASS. Idle child exit withdraws ready before next claim. aedb1f7/add5563. Required current Linux CI/release and single PR/delivery remain PENDING. |
 
+### `PERSONAL-WINDOWS-STT-02`
+
+Отдельный Windows-этап. Базовая поставка PR347 закрывает NEM-01…04 в исходном scope. Проверки нового мастера, каталога и второй модели учитываются здесь.
+
+| AC | Состояние | PR | Evidence / следующий шаг |
+|---|---|---|---|
+| `LSTT-01` | BACKLOG | PR3 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
+| `LSTT-02` | BACKLOG | PR3 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
+| `LSTT-03` | BACKLOG | PR3 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
+| `LSTT-04` | BACKLOG | PR3–4 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
+| `LSTT-05` | BACKLOG | PR3 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
+| `LSTT-06` | BACKLOG | PR2–3 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
+| `LSTT-07` | BACKLOG | PR2 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
+| `LSTT-08` | BACKLOG | PR2 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
+| `LSTT-09` | BACKLOG | PR3 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
+| `LSTT-10` | BACKLOG | PR3 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
+| `LSTT-11` | BACKLOG | PR3–4 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
+| `LSTT-12` | BACKLOG | PR2–4 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
+| `LSTT-13` | BACKLOG | PR4 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
+| `LSTT-14` | BACKLOG | PR4 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
+| `LSTT-15` | BACKLOG | PR4 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
+| `LSTT-16` | BACKLOG | PR1–4 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
+
 ### `AUDIO-QUALITY-PROGRESS-TRIM-01`
 
 Baseline28Oct2026 main4fb10e2: новые критерии0/14; unmerged candidate14/14 CODE READY по реализации и применимым локальным tests, обязательные CI/CD PENDING; существующие waveform/fragments/worker transport переиспользуются, но не доказывают новые условия.
