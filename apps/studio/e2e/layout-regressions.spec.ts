@@ -399,6 +399,10 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
       makeDevice(3,'Без обработчика','runtime_missing'), makeDevice(4,'Отключённый ПК','unknown',false)];
     const token = `vs-local.00000000-0000-4000-8000-000000000005.${'A'.repeat(43)}`;
     let pairings = 0;
+    const installerDigest = '1'.repeat(64);
+    await page.route('**/api/local-execution/companion-release', route => route.fulfill({
+      json: {version:'0.1.2',sha256:installerDigest,bytes:137883537,signed:false},
+    }));
     await page.route('**/api/local-execution/devices', async route => {
       if (route.request().method() === 'POST') {
         pairings++;
@@ -411,7 +415,10 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
       } else await route.fulfill({json:{devices}});
     });
     await page.goto('/settings/connections');
-    const panel = page.getByRole('article').filter({has:page.getByRole('heading',{name:'Локальный компьютер · NVIDIA Nemotron'})});
+    const panel = page.getByRole('article').filter({has:page.getByRole('heading',{name:'Локальные модели на Windows'})});
+    await expect(panel.getByRole('link',{name:'Скачать установщик Windows'})).toHaveAttribute(
+      'href', `/api/local-execution/companion-release/${installerDigest}/download`);
+    await expect(panel.getByText(installerDigest,{exact:true})).toBeVisible();
     await expect(panel.getByText('Готов к работе',{exact:true})).toBeVisible();
     await expect(panel.getByText('Файлы модели не найдены',{exact:true})).toBeVisible();
     await expect(panel.getByText('Обработчик не найден',{exact:true})).toBeVisible();
@@ -435,7 +442,7 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
     await panel.getByRole('button',{name:'Скрыть ключ',exact:true}).click();
     await expect(secret).toHaveCount(0);
     await page.reload();
-    await expect(panel.getByText('Тестовый компьютер',{exact:true})).toBeVisible();
+    await expect(panel.getByRole('button',{name:'Действия компьютера Тестовый компьютер',exact:true})).toBeVisible();
     await expect(secret).toHaveCount(0); expect(pairings).toBe(1);
     await noHorizontalOverflow(page);
   });
