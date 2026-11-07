@@ -10,7 +10,15 @@ release_safety = "additive"
 
 
 def upgrade():
-    op.add_column("local_execution_devices", sa.Column("model_revision", sa.String(40), nullable=True))
+    # The initial migration creates tables from live ORM metadata. A fresh
+    # bootstrap can therefore already have the column before reaching 0046.
+    columns = sa.inspect(op.get_bind()).get_columns("local_execution_devices")
+    existing = next((column for column in columns if column["name"] == "model_revision"), None)
+    if existing is None:
+        op.add_column("local_execution_devices", sa.Column("model_revision", sa.String(40), nullable=True))
+    elif (not isinstance(existing["type"], sa.String) or existing["type"].length != 40
+            or not existing["nullable"] or existing["default"] is not None):
+        raise RuntimeError("Existing local_execution_devices.model_revision has an incompatible definition")
 
 
 def downgrade():

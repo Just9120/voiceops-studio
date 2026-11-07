@@ -28,3 +28,20 @@ def test_model_revision_upgrade_keeps_legacy_devices_and_protects_downgrade():
             revision.module.downgrade()
             assert {column["name"] for column in sa.inspect(db).get_columns("local_execution_devices")} == {"id", "model"}
             assert db.exec_driver_sql("SELECT id FROM local_execution_devices").scalar_one() == 1
+
+
+@pytest.mark.parametrize("definition", ["VARCHAR(40)", "VARCHAR(24)", "VARCHAR(40) NOT NULL"])
+def test_model_revision_upgrade_handles_a_precreated_column(definition):
+    scripts = ScriptDirectory.from_config(Config("apps/studio-api/alembic.ini"))
+    revision = scripts.get_revision("0046_local_model_revision")
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as db:
+        db.exec_driver_sql(f"CREATE TABLE local_execution_devices (id INTEGER PRIMARY KEY, model_revision {definition})")
+        db.execute(sa.text("INSERT INTO local_execution_devices VALUES (1, :revision)"), {"revision": "legacy"})
+        with Operations.context(MigrationContext.configure(db)):
+            if definition == "VARCHAR(40)":
+                revision.module.upgrade()
+                assert db.exec_driver_sql("SELECT model_revision FROM local_execution_devices").scalar_one() == "legacy"
+            else:
+                with pytest.raises(RuntimeError, match="incompatible definition"):
+                    revision.module.upgrade()
