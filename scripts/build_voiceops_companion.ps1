@@ -1,6 +1,5 @@
 param(
     [Parameter(Mandatory)] [string] $NemoArchive,
-    [Parameter(Mandatory)] [string] $FfmpegArchive,
     [Parameter(Mandatory)] [string] $Iscc,
     [Parameter(Mandatory)] [string] $OutputDirectory,
     [Parameter(Mandatory)] [ValidatePattern('^\d+\.\d+\.\d+$')] [string] $Version,
@@ -10,23 +9,16 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $nemoHash = 'A43F373BD78B2B4AB90167BC838C6C4C7F1A0AE526BFB3BC237E46B01165C8DE'
-$ffmpegHash = 'B8CDEFAB5F50590A076C27C2B56B0294A0E6154FADED28BA1BA05EBC4F801F57'
 if ((Get-FileHash -LiteralPath $NemoArchive -Algorithm SHA256).Hash -ne $nemoHash) { throw 'Unexpected NeMo archive' }
-if ((Get-FileHash -LiteralPath $FfmpegArchive -Algorithm SHA256).Hash -ne $ffmpegHash) { throw 'Unexpected FFmpeg archive' }
 if (Test-Path -LiteralPath $OutputDirectory) { throw 'Use a new output directory' }
 $output = (New-Item -ItemType Directory -Path $OutputDirectory).FullName
 $work = Join-Path $output 'work'
 $assets = Join-Path $work 'assets'
 New-Item -ItemType Directory -Path $assets | Out-Null
 Expand-Archive -LiteralPath $NemoArchive -DestinationPath (Join-Path $work 'nemo')
-Expand-Archive -LiteralPath $FfmpegArchive -DestinationPath (Join-Path $work 'ffmpeg')
 $nemoRoot = Join-Path $work 'nemo/nemo-speech-nightly-windows-x86_64-cpu'
-$ffmpegRoot = Join-Path $work 'ffmpeg/ffmpeg-8.1.2-full_build'
 Copy-Item -LiteralPath (Join-Path $nemoRoot 'bin') -Destination (Join-Path $assets 'nemo') -Recurse
 Copy-Item -LiteralPath (Join-Path $nemoRoot 'share') -Destination (Join-Path $assets 'nemo-notices') -Recurse
-Copy-Item -LiteralPath (Join-Path $ffmpegRoot 'bin/ffmpeg.exe'), (Join-Path $ffmpegRoot 'bin/ffprobe.exe') -Destination $assets
-Copy-Item -LiteralPath (Join-Path $ffmpegRoot 'LICENSE') -Destination (Join-Path $assets 'FFmpeg-LICENSE.txt')
-Copy-Item -LiteralPath (Join-Path $ffmpegRoot 'README.txt') -Destination (Join-Path $assets 'FFmpeg-README.txt')
 Add-Type -AssemblyName System.Speech
 $voice = [System.Speech.Synthesis.SpeechSynthesizer]::new()
 try {
