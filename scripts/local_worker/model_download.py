@@ -127,10 +127,12 @@ def install_profile(profile_id, root, *, check, progress):
             _download(opener, f"https://huggingface.co/{profile.repo}/resolve/{profile.revision}/{spec.name}",
                       partial, spec.size, offset, check=check, progress=lambda current: progress(completed + current, total))
             if file_sha256(partial, check) != spec.sha256:
-                # A bad partial is never promoted or resumed. It is retained as
-                # evidence so another attempt cannot overwrite unknown files.
+                # Retain at most one rejected download. Every bad partial must
+                # leave the resumable slot free for the next attempt.
                 rejected = partial.with_suffix(".invalid")
-                if not rejected.exists():
+                if rejected.exists() or rejected.is_symlink():
+                    partial.unlink()
+                else:
                     partial.rename(rejected)
                 raise WorkerError("local_model_file_invalid")
             partial.rename(final)

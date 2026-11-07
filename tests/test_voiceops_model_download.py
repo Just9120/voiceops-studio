@@ -47,6 +47,45 @@ def test_resumed_profile_requires_correct_range_and_digest(tmp_path, monkeypatch
         models.install_profile(profile_id, tmp_path, check=lambda: None, progress=lambda *_: None)
 
 
+def test_repeated_corrupt_downloads_leave_a_fresh_retry(tmp_path, monkeypatch):
+    content = b"model-good"
+    first_corrupt = b"model-bad1"
+    second_corrupt = b"model-bad2"
+    spec = models.ModelFile("test.gguf", len(content), hashlib.sha256(content).hexdigest())
+    revision = "a" * 40
+    monkeypatch.setitem(models.PROFILES, "synthetic", models.ModelProfile(
+        "Synthetic", "nvidia/test", revision, (spec,)))
+    directory = tmp_path / "VoiceOpsModels" / "synthetic" / revision
+    replies = iter((first_corrupt, second_corrupt, content))
+    calls = []
+
+    class Reply(io.BytesIO):
+        status = 200
+        headers = {"Content-Length": str(len(content))}
+
+        def geturl(self):
+            return "https://cas-bridge.xethub.hf.co/synthetic"
+
+    class Opener:
+        def open(self, request, *, timeout):
+            calls.append(request.get_header("Range"))
+            return Reply(next(replies))
+
+    monkeypatch.setattr(models, "build_opener", lambda _redirect: Opener())
+    partial = directory / "test.gguf.part"
+    rejected = directory / "test.gguf.invalid"
+    for _ in range(2):
+        with pytest.raises(WorkerError, match="local_model_file_invalid"):
+            models.install_profile("synthetic", tmp_path, check=lambda: None, progress=lambda *_: None)
+        assert not partial.exists()
+        assert rejected.read_bytes() == first_corrupt
+
+    assert models.install_profile("synthetic", tmp_path, check=lambda: None, progress=lambda *_: None) == directory
+    assert (directory / spec.name).read_bytes() == content
+    assert rejected.read_bytes() == first_corrupt
+    assert calls == [None, None, None]
+
+
 @pytest.mark.parametrize("url", ["http://huggingface.co/test", "https://evil.example/test",
                                  "https://huggingface.co@evil.example/test", "https://huggingface.co:444/test"])
 def test_model_download_rejects_untrusted_redirects(url):
