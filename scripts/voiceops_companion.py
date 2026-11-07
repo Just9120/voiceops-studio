@@ -613,8 +613,12 @@ class CompanionWindow:
 
 
 def self_test():
-    import pystray  # noqa: F401
+    import pystray
     from PIL import Image  # noqa: F401
+    if getattr(sys, "frozen", False):
+        external_tray = Path(sys._MEIPASS) / "pystray" / "__init__.py"
+        if not external_tray.is_file() or Path(pystray.__file__).resolve() != external_tray.resolve():
+            return 1
     probe = b"voiceops-companion-smoke"
     if protect(protect(probe), decrypt=True) != probe:
         return 1

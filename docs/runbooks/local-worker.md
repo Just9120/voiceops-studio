@@ -32,7 +32,8 @@
 | --- | --- |
 | FFmpeg и FFprobe | Скачиваются при установке. Версия, URL, SHA-256 и устанавливаемые файлы закреплены в [сценарии Inno Setup](../../deploy/companion/voiceops-companion.iss). |
 | NeMo-Speech.cpp Windows x64 CPU, ggml/llama и DLL | Ревизия `66d50d91b75a406becd95fbaf39d2c9c13e95d7c`. SHA-256 архива зафиксирован в [скрипте сборки](../../scripts/build_voiceops_companion.ps1). Notices оригинального архива устанавливаются в `_internal/voiceops-tools/nemo-notices`. Наличие компонента в общем upstream notice само по себе не доказывает, что он вошёл в DLL. |
-| CPython, Tcl/Tk и зависимости Python | Точные версии wheel dependencies задаёт [Windows lockfile](../../deploy/companion/requirements-build-win-x64.txt). Проверяйте отдельно происхождение и notices для Python и его DLL, а также условия `pystray`, которую PyInstaller включает в приложение. |
+| CPython, Tcl/Tk и зависимости Python | Точные версии wheel dependencies задаёт [Windows lockfile](../../deploy/companion/requirements-build-win-x64.txt). Сборка включает `CPython-LICENSE.txt` из используемого Python, поставляемый файл условий Tk и лицензионные metadata Pillow, six и PyInstaller. Сверяйте DLL с конкретным Windows build. |
+| `pystray 0.19.5` | Исходники ревизии `1907f8681d6d421517c63d94f425f9cdd74d0034` и SHA-256 входного архива закреплены в [скрипте сборки](../../scripts/build_voiceops_companion.ps1). Модуль установлен в `_internal/pystray` отдельными `.py` файлами. Пользователь может заменить библиотеку в этой папке без пересборки приложения. Полный исходный архив, LGPLv3 и GPLv3 устанавливаются в `_internal/licenses`. `--self-test` проверяет загрузку библиотеки из этой папки. |
 
 ### Ручное подключение существующего обработчика
 
