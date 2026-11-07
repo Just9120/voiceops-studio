@@ -9,6 +9,7 @@ describe("measured long-recording estimate", () => {
   });
   it("shows source versus requested duration and never calls the estimate a debit", () => {
     const quote = parseLongMediaPreflight(known)!;
+    expect(longMediaEstimate(quote)).toContain("облачное распознавание (ElevenLabs)");
     expect(longMediaEstimate(quote)).toContain("исходника: 300 мин; итоговая выбранная запись: 60 мин");
     expect(longMediaEstimate(quote)).toContain("Лимит итоговой записи после подготовки: 720 мин");
     expect(longMediaEstimate(quote)).toContain("Номинальная оценка: 0,22 USD");
@@ -16,7 +17,9 @@ describe("measured long-recording estimate", () => {
   });
   it("preserves unknown tariff and rejects missing, mixed and nonfinite price data", () => {
     const unknown = { ...known, nominal_cost: null, currency: null, rate_per_hour: null, effective_date: null, source: null };
-    expect(longMediaEstimate(parseLongMediaPreflight(unknown)!)).toContain("не означает бесплатную обработку");
+    const unknownGemini = longMediaEstimate(parseLongMediaPreflight({ ...unknown, provider: "gemini" })!);
+    expect(unknownGemini).toContain("облачное распознавание (Google Gemini)");
+    expect(unknownGemini).toContain("Денежная оценка неизвестна");
     expect(parseLongMediaPreflight({ ...known, source_duration_seconds: NaN })).toBeNull();
     expect(parseLongMediaPreflight({ ...known, nominal_cost: null })).toBeNull();
     expect(parseLongMediaPreflight({ ...known, confirmation_token: "stale" })).toBeNull();

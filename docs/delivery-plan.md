@@ -2,7 +2,32 @@
 
 ## Current work и checkpoint
 
-### PERSONAL-AUDIT-CLOSURE-20261104 — IN_PROGRESS
+### PERSONAL-WINDOWS-STT-20261107 — IN_PROGRESS
+
+Основание: владелец поручил реализовать согласованный план завершения personal и локальных моделей на Windows по редакции требований от 5 ноября. База первого PR — `56b744797551116f0ecf7ff7aaa8af996e3fc485`, ветка `codex/personal-local-stt-contract`. GitHub подтвердил merge PR347 на эту revision и обязательный strict `ci-required`. Последняя проверенная поставка этой базы: web41911520863, API/migration41912714415, worker41931215621.
+
+Порядок независимо поставляемых PR:
+
+1. Уточнения `MC-03`, `JOBREL-13`, трассировка новых требований. Результат — расход и условия продолжения задачи видны в Studio, существующее подтверждение и ограничения моделей сохранены.
+2. Установщик Windows x64, привязка через браузер, запуск и остановка компонента, импорт действующей привязки. Результат — пользователь может подключить ПК без терминала.
+3. Каталог Hugging Face, конфигурация ПК, профили Nemotron/Parakeet и управление версиями. Результат — подходящую модель можно найти и установить или импортировать с проверкой целостности.
+4. Выбор версии в задании, полный локальный результат и выпуск. Результат — обе модели проходят путь от установки до экспорта на синтетической записи.
+
+Зависимости: закреплённый NeMo-Speech.cpp, проверяемые веса и права на поставку артефактов, доступ к Windows x64 для чистой установки, штатные gates GitHub и VPS. Commercial, macOS/Linux, TTS, полностью офлайн-путь, F62 и системная почта personal вне этапа. Внешние платные STT не используются.
+
+| Этап | Риск / AC | Проверка и ожидаемый результат | Среда / обязательность |
+|---|---|---|---|
+| PR1 до push | MC-03, JOBREL-13 | `npm ci`, targeted Vitest, `npm run build` из `apps/studio`. Из root — portable тесты локальных устройств и просроченной lease. Действующие quotes, consent и fallback-инварианты сохранены. | Изолированные Node и Python с synthetic config, REQUIRED |
+| PR1 CI и delivery | JOBREL-13 и изменение web | `ci-required` и browser E2E, включая повторное открытие PWA. Exact merge revision, web health и build identity по [operations](runbooks/studio-platform-ops.md). | GitHub/Linux и personal VPS, REQUIRED |
+| PR2–4 до выпуска | LSTT-01…16, NEM-01…04 | Windows clean install, протоколы и UI на synthetic fixtures, проверка двух реальных локальных моделей на синтетическом аудио. Upgrade/rollback rehearsal при миграции. | Windows и Linux CI, REQUIRED по затронутому PR |
+
+DoD: все применимые AC подтверждены подходящими тестами и Evidence, все PR прошли gates, поставлены на personal, Windows-артефакт установлен на чистом ПК, обе модели дают результат через Studio. Новый функционал Windows учитывается отдельно от baseline personal. Исторические 476/476 относятся к редакции от 4 ноября на PR347.
+
+Checkpoint PR1: UI показывает тип расхода и имя облачного провайдера до согласия, включая неизвестный тариф. Выбор локального режима объясняет расход ресурсов ПК и необходимость держать обработчик запущенным. Серверный контракт согласия и лимит локальной модели 60 минут сохранены. Local Windows evidence на diff PR1: Vitest 261 PASS (`longMediaPreflight` и `App`), portable pytest 72 PASS (`test_studio_local_execution_devices`, `test_voiceops_local_worker`), lint, build и lightweight checks PASS. Проверка повторного открытия PWA добавлена в authenticated browser suite. Локально подтверждён её discovery, выполнение с PostgreSQL/Redis остаётся обязательным в CI. PR merge, web CD и проверка VPS ожидаются. Миграция/API/worker в PR1 неприменимы: изменение ограничено web, браузерным тестом и документацией.
+
+### PERSONAL-AUDIT-CLOSURE-20261104 — DONE
+
+Исторический checkpoint ниже описывает состояние до merge. Итог подтверждён PR347, CI41908628487/41910589873 и поставками 41911520863, 41912714415, 41931215621. Personal на прежней редакции — 476/476 READY на `56b7447`.
 
 Основание: владелец04Nov выбрал все18 findings аудита и затронутые AC единой Goal/одним основным PR, включая local Nemotron. Built-in Goal ACTIVE. Платные STT/Live/security проверки запрещены; F09/F62/F66 отложены, automatic voice identity исключена. Cloudflare менять разрешено только для exact Studio host; F85 оказался false positive, действующий strict override сохранён без mutation корневого домена/других hosts.
 
