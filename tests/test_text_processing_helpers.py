@@ -20,6 +20,8 @@ import uuid
 
 import pytest
 from contextlib import contextmanager, nullcontext
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Lock
 from typing import Optional
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -53,6 +55,13 @@ HELPER_NAMES = {
     "build_transcript_metadata_lines",
     "upsert_transcript_document",
     "write_title_and_text_to_doc",
+    "read_colab_stt_reservations",
+    "write_colab_stt_reservations",
+    "reserve_colab_stt",
+    "complete_colab_stt_reservation",
+    "resolve_colab_stt_reservation",
+    "transcribe_guarded_colab_source",
+    "complete_guarded_colab_source",
     "localize_transcript_speaker_labels",
     "build_structured_transcript_document_text",
     "find_structured_transcript_section_indices",
@@ -208,6 +217,8 @@ def load_text_helpers() -> dict[str, object]:
                 if isinstance(target, ast.Name) and target.id in {
                     "DOC_INSERT_CHUNK_SIZE",
                     "DOC_REPLACEMENT_MAX_BYTES",
+                    "COLAB_STT_RESERVATION_HEADER",
+                    "COLAB_STT_RESERVATION_MAX_CHARS",
                     "STRUCTURED_TRANSCRIPT_METADATA_LABEL",
                     "STRUCTURED_TRANSCRIPT_BODY_LABEL",
                     "LEGACY_STRUCTURED_TRANSCRIPT_METADATA_LABEL",
@@ -994,6 +1005,132 @@ def test_colab_oversized_replacement_stops_before_the_first_write(monkeypatch):
     monkeypatch.setitem(HELPERS, "docs_service", None)
     with pytest.raises(ValueError, match="слишком большой"):
         write_google_doc("doc", "Call", replacement, clear_first=True, edit_snapshot=snapshot)
+
+
+def test_colab_stt_reservation_allows_one_concurrent_request(monkeypatch):
+    reserve = HELPERS["reserve_colab_stt"]
+    both_read = Barrier(2)
+    lock = Lock()
+    document = {"revision": 1, "text": ""}
+
+    def read(document_id):
+        with lock:
+            snapshot = {"document_id": document_id, "revision_id": str(document["revision"]),
+                        "end_index": len(document["text"]) + 2, "text": document["text"]}
+        both_read.wait(timeout=5)
+        return snapshot
+
+    def batch_update(*, documentId, body):
+        assert documentId == "guard"
+
+        def execute():
+            with lock:
+                if body["writeControl"]["requiredRevisionId"] != str(document["revision"]):
+                    raise RuntimeError("stale revision")
+                document["text"] = body["requests"][-1]["insertText"]["text"]
+                document["revision"] += 1
+        return SimpleNamespace(execute=execute)
+
+    monkeypatch.setitem(HELPERS, "read_google_doc_for_edit", read)
+    docs = SimpleNamespace(batchUpdate=batch_update)
+    monkeypatch.setitem(HELPERS, "docs_service", SimpleNamespace(documents=lambda: docs))
+    dispatched = []
+
+    def dispatch():
+        try:
+            claim = reserve("guard", "source", "settings")
+        except RuntimeError as error:
+            return str(error)
+        dispatched.append(claim)
+        return "provider called"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert sorted(pool.map(lambda _: dispatch(), range(2))) == ["provider called", "stale revision"]
+    assert len(dispatched) == 1
+
+
+def test_colab_stt_reservation_lost_acknowledgment_blocks_automatic_retry(monkeypatch):
+    reserve = HELPERS["reserve_colab_stt"]
+    header = HELPERS["COLAB_STT_RESERVATION_HEADER"]
+    stored = {}
+    writes = []
+
+    def read(document_id):
+        return {"document_id": document_id, "revision_id": "latest", "end_index": 2,
+                "text": header + json.dumps(stored) if stored else ""}
+
+    def fail_after_write(_snapshot, records):
+        stored.update(records)
+        writes.append(1)
+        raise RuntimeError("lost acknowledgment")
+
+    monkeypatch.setitem(HELPERS, "read_google_doc_for_edit", read)
+    monkeypatch.setitem(HELPERS, "write_colab_stt_reservations", fail_after_write)
+    with pytest.raises(RuntimeError, match="lost acknowledgment"):
+        reserve("guard", "source", "settings")
+    with pytest.raises(ValueError, match="исход неизвестен"):
+        reserve("guard", "source", "settings", allow_repeat=True)
+    assert writes == [1]
+
+
+def test_colab_stt_reservation_finishes_only_the_exact_claim(monkeypatch):
+    reserve = HELPERS["reserve_colab_stt"]
+    complete = HELPERS["complete_colab_stt_reservation"]
+    header = HELPERS["COLAB_STT_RESERVATION_HEADER"]
+    stored = {}
+
+    def read(document_id):
+        return {"document_id": document_id, "revision_id": "latest", "end_index": 2,
+                "text": header + json.dumps(stored) if stored else ""}
+
+    monkeypatch.setitem(HELPERS, "read_google_doc_for_edit", read)
+    monkeypatch.setitem(HELPERS, "write_colab_stt_reservations", lambda _snap, records: stored.update(records))
+    key, token = reserve("guard", "source", "settings")
+    with pytest.raises(ValueError, match="изменился"):
+        complete("guard", key, "other-token")
+    assert stored[key]["status"] == "pending"
+    complete("guard", key, token)
+    complete("guard", key, token)
+    with pytest.raises(ValueError, match="подтверждён результат"):
+        reserve("guard", "source", "settings")
+    same_key, new_token = reserve("guard", "source", "settings", allow_repeat=True)
+    assert same_key == key and new_token != token
+
+
+@pytest.mark.parametrize("result_url", ["", "https://docs.google.com/document/d/result_12345/edit"])
+def test_colab_stt_recovery_requires_confirmation_and_does_not_dispatch(monkeypatch, result_url):
+    resolve = HELPERS["resolve_colab_stt_reservation"]
+    key = "a" * 64
+    records = {key: {"status": "pending", "token": "owner"}}
+    writes = []
+    monkeypatch.setitem(HELPERS, "read_colab_stt_reservations", lambda _doc: ({}, records.copy()))
+    monkeypatch.setitem(HELPERS, "extract_google_doc_plain_text", lambda _doc: "Recovered transcript")
+    monkeypatch.setitem(HELPERS, "write_colab_stt_reservations", lambda _snapshot, updated: writes.append(updated))
+    with pytest.raises(ValueError, match="ЗАКРЫТЬ РЕЗЕРВ"):
+        resolve("guard", key, result_url, "")
+    assert not writes
+    resolve("guard", key, result_url, "ЗАКРЫТЬ РЕЗЕРВ")
+    if result_url:
+        assert writes[0][key]["status"] == "done"
+    else:
+        assert key not in writes[0]
+
+
+def test_colab_paid_dispatch_requires_an_acknowledged_reservation(monkeypatch):
+    dispatch = HELPERS["transcribe_guarded_colab_source"]
+    ctx = SimpleNamespace(stt_reservation_doc_id="guard", ignore_manifest=True,
+                          settings_signature="settings", options=object())
+    calls = []
+
+    def reserve(*_args, **_kwargs):
+        calls.append("reserve")
+        raise RuntimeError("reservation acknowledgment lost")
+
+    monkeypatch.setitem(HELPERS, "reserve_colab_stt", reserve)
+    monkeypatch.setitem(HELPERS, "transcribe_media_path", lambda **_kwargs: calls.append("STT"))
+    with pytest.raises(RuntimeError, match="acknowledgment lost"):
+        dispatch(ctx, "source", input_path="synthetic.wav", original_filename="synthetic.wav")
+    assert calls == ["reserve"]
 
 
 def test_extract_existing_transcript_created_at_reads_current_and_legacy_metadata_only() -> None:
@@ -4297,17 +4434,20 @@ def test_user_segment_processing_passes_m4a_name_and_cleans_on_success(tmp_path)
     upsert_calls = []
     globals_dict = process_user_segments_for_source.__globals__
     originals = {name: globals_dict.get(name) for name in [
-        "get_media_duration_seconds", "create_user_segment_media_file", "transcribe_media_path",
-        "upsert_transcript_document", "mark_manifest_in_progress", "mark_manifest_done",
+        "get_media_duration_seconds", "create_user_segment_media_file", "transcribe_guarded_colab_source",
+        "upsert_transcript_document", "mark_manifest_in_progress", "complete_guarded_colab_source",
         "mark_manifest_failed", "should_skip_by_manifest", "get_single_existing_doc_match", "append_success",
         "conflict_mode_needs_existing_match_before_transcription", "report_progress_for_file", "PROGRESS_STAGES_PER_FILE",
     ]}
     globals_dict["get_media_duration_seconds"] = lambda _path: 60.0
     globals_dict["create_user_segment_media_file"] = lambda _path, _segment: str(segment_path)
-    globals_dict["transcribe_media_path"] = lambda input_path, original_filename, options, timer=None: calls.append((input_path, original_filename)) or "transcript"
+    def transcribe(_ctx, _signature, *, input_path, original_filename, timer=None):
+        calls.append((input_path, original_filename))
+        return "transcript", ("guard", "key", "token")
+    globals_dict["transcribe_guarded_colab_source"] = transcribe
     globals_dict["upsert_transcript_document"] = lambda **kwargs: upsert_calls.append(kwargs) or {"status": "success", "action": "created", "doc_name": "Doc", "link": "link"}
     globals_dict["mark_manifest_in_progress"] = lambda *_args, **_kwargs: None
-    globals_dict["mark_manifest_done"] = lambda *_args, **_kwargs: None
+    globals_dict["complete_guarded_colab_source"] = lambda *_args, **_kwargs: None
     globals_dict["mark_manifest_failed"] = lambda *_args, **_kwargs: None
     globals_dict["should_skip_by_manifest"] = lambda *_args, **_kwargs: (False, "")
     globals_dict["get_single_existing_doc_match"] = lambda *_args, **_kwargs: None
@@ -4358,13 +4498,13 @@ def test_user_segment_processing_cleans_m4a_on_provider_failure(tmp_path) -> Non
     segment_path.write_bytes(b"audio")
     globals_dict = process_user_segments_for_source.__globals__
     originals = {name: globals_dict.get(name) for name in [
-        "get_media_duration_seconds", "create_user_segment_media_file", "transcribe_media_path",
+        "get_media_duration_seconds", "create_user_segment_media_file", "transcribe_guarded_colab_source",
         "mark_manifest_in_progress", "mark_manifest_failed", "should_skip_by_manifest", "get_single_existing_doc_match",
         "conflict_mode_needs_existing_match_before_transcription", "report_progress_for_file", "PROGRESS_STAGES_PER_FILE",
     ]}
     globals_dict["get_media_duration_seconds"] = lambda _path: 60.0
     globals_dict["create_user_segment_media_file"] = lambda _path, _segment: str(segment_path)
-    globals_dict["transcribe_media_path"] = lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("provider failed"))
+    globals_dict["transcribe_guarded_colab_source"] = lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("provider failed"))
     globals_dict["mark_manifest_in_progress"] = lambda *_args, **_kwargs: None
     globals_dict["mark_manifest_failed"] = lambda *_args, **_kwargs: None
     globals_dict["should_skip_by_manifest"] = lambda *_args, **_kwargs: (False, "")
@@ -4436,7 +4576,9 @@ def test_user_segmented_and_non_segmented_paths_are_separate_static() -> None:
     runtime_block = source.split("def process_user_segments_for_source", 1)[1].split("# =========================\n# 5) OUTPUT FOLDER PICKER", 1)[0]
     assert "mark_manifest_in_progress(" not in runtime_block
     assert "mark_manifest_failed(" not in runtime_block
-    assert runtime_block.count("mark_manifest_done(") == 7
+    assert runtime_block.count("transcribe_guarded_colab_source(") == 7
+    assert runtime_block.count("complete_guarded_colab_source(") == 7
+    assert "transcribe_media_path(" not in runtime_block
 
 
 
@@ -4447,7 +4589,7 @@ def test_user_segment_failures_do_not_persist_source_before_google_docs_output_s
     assert "segment_signature = build_user_segment_source_signature" in segment_block
     assert "mark_manifest_in_progress(" not in segment_block
     assert "mark_manifest_failed(" not in segment_block
-    assert segment_block.index("upsert_transcript_document(") < segment_block.index("mark_manifest_done(")
+    assert segment_block.index("upsert_transcript_document(") < segment_block.index("complete_guarded_colab_source(")
 
 
 def test_user_segment_source_check_uses_safe_branch_before_detailed_identifiers() -> None:
