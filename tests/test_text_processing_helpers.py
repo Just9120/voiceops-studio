@@ -52,6 +52,7 @@ HELPER_NAMES = {
     "build_timing_analysis",
     "build_transcript_metadata_lines",
     "upsert_transcript_document",
+    "write_title_and_text_to_doc",
     "localize_transcript_speaker_labels",
     "build_structured_transcript_document_text",
     "find_structured_transcript_section_indices",
@@ -206,6 +207,7 @@ def load_text_helpers() -> dict[str, object]:
             for target in node.targets:
                 if isinstance(target, ast.Name) and target.id in {
                     "DOC_INSERT_CHUNK_SIZE",
+                    "DOC_REPLACEMENT_MAX_BYTES",
                     "STRUCTURED_TRANSCRIPT_METADATA_LABEL",
                     "STRUCTURED_TRANSCRIPT_BODY_LABEL",
                     "LEGACY_STRUCTURED_TRANSCRIPT_METADATA_LABEL",
@@ -320,10 +322,18 @@ def load_text_helpers() -> dict[str, object]:
         "utc_now_iso": lambda: "2026-06-01T00:00:00+00:00",
     }
     exec(compile(helper_module, str(CANONICAL_SOURCE), "exec"), namespace)
+    namespace["read_google_doc_for_edit"] = lambda document_id: {
+        "document_id": document_id,
+        "revision_id": "fixture-revision",
+        "end_index": 20,
+        "text": namespace["extract_google_doc_plain_text"](document_id),
+    }
     return namespace
 
 
 HELPERS = load_text_helpers()
+write_google_doc = HELPERS["write_title_and_text_to_doc"]
+HELPERS["write_title_and_text_to_doc"] = lambda **_kwargs: None
 build_transcript_metadata_lines = HELPERS["build_transcript_metadata_lines"]
 localize_transcript_speaker_labels = HELPERS["localize_transcript_speaker_labels"]
 build_structured_transcript_document_text = HELPERS["build_structured_transcript_document_text"]
@@ -912,6 +922,78 @@ def test_format_visible_transcript_timestamp_handles_iso_and_visible_values() ->
     assert format_visible_transcript_timestamp("2026-06-03 11:46 UTC") == "2026-06-03 11:46 UTC"
     assert format_visible_transcript_timestamp("") == "unknown"
     assert format_visible_transcript_timestamp("  not a timestamp  ") == "not a timestamp"
+
+
+@pytest.mark.parametrize("failure", [None, "stale revision", "batch rejected"])
+def test_colab_existing_doc_replacement_is_one_revision_guarded_batch(monkeypatch, failure):
+    original = "Original recording text"
+    state = {"text": original}
+    calls = []
+    replacement = build_structured_transcript_document_text(
+        document_title="Call", transcript_text="Новая реплика.", metadata_lines=["Provider: ElevenLabs"]
+    )
+    snapshot = {
+        "document_id": "doc",
+        "revision_id": "preview-revision",
+        "end_index": len(original) + 2,
+    }
+
+    def batch_update(*, documentId, body):
+        calls.append(body)
+        assert documentId == "doc"
+        assert body["writeControl"] == {"requiredRevisionId": "preview-revision"}
+        assert body["requests"][0] == {
+            "deleteContentRange": {"range": {"startIndex": 1, "endIndex": snapshot["end_index"] - 1}}
+        }
+        assert body["requests"][1]["insertText"]["text"] == replacement
+        assert "updateParagraphStyle" in body["requests"][2]
+
+        def execute():
+            if failure:
+                raise RuntimeError(failure)
+            state["text"] = body["requests"][1]["insertText"]["text"]
+        return SimpleNamespace(execute=execute)
+
+    documents = SimpleNamespace(batchUpdate=batch_update)
+    monkeypatch.setitem(HELPERS, "docs_service", SimpleNamespace(documents=lambda: documents))
+    if failure:
+        with pytest.raises(RuntimeError, match=failure):
+            write_google_doc("doc", "Call", replacement, clear_first=True, edit_snapshot=snapshot)
+        assert state["text"] == original
+    else:
+        write_google_doc("doc", "Call", replacement, clear_first=True, edit_snapshot=snapshot)
+        assert state["text"] == replacement
+    assert len(calls) == 1
+
+
+def test_colab_folder_apply_rejects_changed_preview_without_writing(monkeypatch):
+    monkeypatch.setitem(HELPERS, "list_drive_folder_children", lambda _folder: [
+        {"id": "doc", "name": "Call", "mimeType": DOC_MIME},
+    ])
+    snapshot = {"document_id": "doc", "revision_id": "before", "end_index": 25, "text": "Call\n\nOriginal"}
+    monkeypatch.setitem(HELPERS, "read_google_doc_for_edit", lambda _doc: snapshot.copy())
+    writes = []
+    monkeypatch.setitem(HELPERS, "write_title_and_text_to_doc", lambda **request: writes.append(request))
+
+    preview = standardize_existing_google_docs_in_folder("root")
+    assert preview["preview_revisions"] == {"doc": "before"}
+    snapshot.update(revision_id="after", text="Call\n\nEdited directly")
+    applied = standardize_existing_google_docs_in_folder("root", dry_run=False,
+                                                          preview_revisions=preview["preview_revisions"])
+    assert not writes
+    assert not applied["standardized"]
+    assert "изменился" in applied["errors"][0]["reason"]
+
+
+def test_colab_oversized_replacement_stops_before_the_first_write(monkeypatch):
+    snapshot = {"document_id": "doc", "revision_id": "revision", "end_index": 5}
+    replacement = build_structured_transcript_document_text(
+        document_title="Call", transcript_text="A valid body", metadata_lines=["Provider: ElevenLabs"]
+    )
+    monkeypatch.setitem(HELPERS, "DOC_REPLACEMENT_MAX_BYTES", 1)
+    monkeypatch.setitem(HELPERS, "docs_service", None)
+    with pytest.raises(ValueError, match="слишком большой"):
+        write_google_doc("doc", "Call", replacement, clear_first=True, edit_snapshot=snapshot)
 
 
 def test_extract_existing_transcript_created_at_reads_current_and_legacy_metadata_only() -> None:

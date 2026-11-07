@@ -356,6 +356,7 @@ TEMPERATURE = 0
 TAG_AUDIO_EVENTS = False
 
 DOC_INSERT_CHUNK_SIZE = 200_000
+DOC_REPLACEMENT_MAX_BYTES = 2 * 1024 * 1024
 PREVIEW_LIMIT = 20
 LARGE_LOCAL_FILE_WARNING_MB = 300
 LOCAL_FOLDER_UPLOAD_CHUNK_BYTES = 128 * 1024
@@ -3107,6 +3108,7 @@ def standardize_existing_google_docs_in_folder(
     dry_run: bool = True,
     max_folders_scanned: int = DOCS_ONLY_STANDARDIZATION_DEFAULT_MAX_FOLDERS_SCANNED,
     max_google_docs_scanned: int = DOCS_ONLY_STANDARDIZATION_DEFAULT_MAX_GOOGLE_DOCS_SCANNED,
+    preview_revisions: Optional[dict[str, str]] = None,
 ) -> dict:
     """Standardize existing Google Docs in place without retranscription or manifest changes."""
 
@@ -3124,6 +3126,7 @@ def standardize_existing_google_docs_in_folder(
         "skipped_non_google_docs": scan["skipped_non_google_docs"],
         "already_structured": [],
         "would_standardize": [],
+        "preview_revisions": {},
         "standardized": [],
         "current_standard": 0,
         "outdated_standard": 0,
@@ -3149,7 +3152,8 @@ def standardize_existing_google_docs_in_folder(
             "link": doc.get("webViewLink", ""),
         }
         try:
-            existing_text = extract_google_doc_plain_text(doc["id"])
+            snapshot = read_google_doc_for_edit(doc["id"])
+            existing_text = snapshot["text"]
             structured_status = classify_existing_google_doc_transcript_standard(existing_text)
             if structured_status == EXISTING_GOOGLE_DOC_STRUCTURED_CURRENT:
                 if not existing_google_doc_backfill_metadata_needs_refresh(existing_text):
@@ -3177,8 +3181,11 @@ def standardize_existing_google_docs_in_folder(
 
             if dry_run:
                 report["would_standardize"].append(result_item)
+                report["preview_revisions"][doc["id"]] = snapshot["revision_id"]
                 continue
 
+            if preview_revisions is not None and preview_revisions.get(doc["id"]) != snapshot["revision_id"]:
+                raise ValueError("Документ изменился или не входил в предпросмотр. Повтори проверку папки.")
             structured_text = build_docs_only_standardized_transcript_document_text(
                 document_title=doc["name"],
                 existing_document_text=existing_text,
@@ -3193,6 +3200,7 @@ def standardize_existing_google_docs_in_folder(
                 title=doc["name"],
                 transcript_text=structured_text,
                 clear_first=True,
+                edit_snapshot=snapshot,
             )
             report["standardized"].append(result_item)
         except Exception as exc:
@@ -3792,8 +3800,12 @@ def extract_google_doc_plain_text(document_id: str) -> str:
         docs_service.documents().get(documentId=document_id),
         operation_label="docs_get",
     )
+    return google_doc_plain_text(doc.get("body", {}).get("content", []))
+
+
+def google_doc_plain_text(content: list[dict]) -> str:
     parts = []
-    for element in doc.get("body", {}).get("content", []):
+    for element in content:
         paragraph = element.get("paragraph")
         if not paragraph:
             continue
@@ -3967,12 +3979,22 @@ def chunk_text_for_docs(text: str, max_chars: int = DOC_INSERT_CHUNK_SIZE) -> li
     return chunks
 
 
-def get_document_end_index(document_id: str) -> int:
-    doc = docs_service.documents().get(documentId=document_id).execute()
+def read_google_doc_for_edit(document_id: str) -> dict:
+    doc = execute_google_request_with_retry(
+        docs_service.documents().get(documentId=document_id),
+        operation_label="docs_get",
+    )
     body = doc.get("body", {}).get("content", [])
-    if not body:
-        return 1
-    return body[-1].get("endIndex", 1)
+    revision_id = doc.get("revisionId")
+    end_index = body[-1].get("endIndex") if body else None
+    if not isinstance(revision_id, str) or not revision_id or type(end_index) is not int or end_index < 2:
+        raise ValueError("Не удалось подтвердить ревизию и границы Google Doc. Документ не изменён.")
+    return {
+        "document_id": document_id,
+        "revision_id": revision_id,
+        "end_index": end_index,
+        "text": google_doc_plain_text(body),
+    }
 
 
 def build_transcript_doc_style_requests(document_text: str) -> list[dict]:
@@ -4042,13 +4064,24 @@ def build_transcript_doc_style_requests(document_text: str) -> list[dict]:
     return requests
 
 
-def write_title_and_text_to_doc(document_id: str, title: str, transcript_text: str, clear_first: bool = False):
+def write_title_and_text_to_doc(
+    document_id: str,
+    title: str,
+    transcript_text: str,
+    clear_first: bool = False,
+    edit_snapshot: Optional[dict] = None,
+):
     prefix = f"{title}\n\n"
     document_text = transcript_text if transcript_text.startswith(prefix) else f"{prefix}{transcript_text}"
     requests_payload = []
 
     if clear_first:
-        end_index = get_document_end_index(document_id)
+        snapshot = edit_snapshot if edit_snapshot is not None else read_google_doc_for_edit(document_id)
+        revision_id = snapshot.get("revision_id")
+        end_index = snapshot.get("end_index")
+        if (snapshot.get("document_id") != document_id or not isinstance(revision_id, str)
+                or not revision_id or type(end_index) is not int or end_index < 2):
+            raise ValueError("Не удалось подтвердить ревизию и границы Google Doc. Документ не изменён.")
         if end_index > 2:
             requests_payload.append({
                 "deleteContentRange": {
@@ -4058,6 +4091,13 @@ def write_title_and_text_to_doc(document_id: str, title: str, transcript_text: s
                     }
                 }
             })
+        requests_payload.append({"insertText": {"location": {"index": 1}, "text": document_text}})
+        requests_payload.extend(build_transcript_doc_style_requests(document_text))
+        body = {"requests": requests_payload, "writeControl": {"requiredRevisionId": revision_id}}
+        if len(json.dumps(body).encode("utf-8")) > DOC_REPLACEMENT_MAX_BYTES:
+            raise ValueError("Документ слишком большой для атомарной перезаписи. Документ не изменён.")
+        docs_service.documents().batchUpdate(documentId=document_id, body=body).execute()
+        return
 
     requests_payload.extend([
         {
@@ -8629,7 +8669,11 @@ def print_standardize_existing_docs_report(report: dict):
     print(build_standardize_existing_docs_report_text(report))
 
 
+standardize_existing_docs_preview = None
+
+
 def on_standardize_existing_docs_clicked(_):
+    global standardize_existing_docs_preview
     standardize_existing_docs_button.disabled = True
     with standardize_existing_docs_output_widget:
         clear_output()
@@ -8638,11 +8682,21 @@ def on_standardize_existing_docs_clicked(_):
             if not folder_picker_state["selected_id"]:
                 raise ValueError("Сначала выбери папку назначения в блоке выше и нажми 'Выбрать текущую папку'.")
 
+            scope = (folder_picker_state["selected_id"], standardize_existing_docs_recursive_widget.value)
+            dry_run = standardize_existing_docs_dry_run_widget.value
+            preview = standardize_existing_docs_preview
+            if not dry_run and preview is not None and preview[0] != scope:
+                raise ValueError("Папка или обход подпапок изменились. Повтори предпросмотр.")
+            if dry_run:
+                standardize_existing_docs_preview = None
             report = standardize_existing_google_docs_in_folder(
-                output_folder_id=folder_picker_state["selected_id"],
-                recursive=standardize_existing_docs_recursive_widget.value,
-                dry_run=standardize_existing_docs_dry_run_widget.value,
+                output_folder_id=scope[0],
+                recursive=scope[1],
+                dry_run=dry_run,
+                preview_revisions=preview[1] if not dry_run and preview is not None else None,
             )
+            if dry_run:
+                standardize_existing_docs_preview = (scope, report["preview_revisions"])
             print_standardize_existing_docs_report(report)
 
         except Exception as e:
@@ -9448,12 +9502,17 @@ def on_deactivate_project_speaker(_):
 def on_find_speakers_clicked(_):
     with speaker_output:
         clear_output()
-        speaker_project_state.update({"doc_id": "", "doc_title": "", "doc_text": "", "doc_hash": "", "summary": None, "plan": None})
+        speaker_project_state.update({"doc_id": "", "doc_title": "", "doc_text": "", "doc_hash": "", "doc_snapshot": None, "summary": None, "plan": None})
         doc_id = parse_google_doc_url_or_id(speaker_doc_input.value)
         if not doc_id:
             print("Укажи корректный URL или ID Google Doc.")
             return
-        text = extract_google_doc_plain_text(doc_id)
+        try:
+            snapshot = read_google_doc_for_edit(doc_id)
+        except Exception as error:
+            print(f"Ошибка чтения Google Doc: {error}")
+            return
+        text = snapshot["text"]
         metadata_status = detect_speakers_metadata_value(text)
         summary = summarize_speaker_turns(text)
         if metadata_status == "no":
@@ -9469,6 +9528,7 @@ def on_find_speakers_clicked(_):
             "doc_id": doc_id,
             "doc_title": title,
             "doc_text": text,
+            "doc_snapshot": snapshot,
             "doc_hash": json_sha256({"doc_id": doc_id, "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()}),
             "metadata_status": metadata_status,
             "summary": summary,
@@ -9483,7 +9543,7 @@ def on_find_speakers_clicked(_):
 def on_preview_speaker_rename_clicked(_):
     with speaker_output:
         try:
-            if not speaker_project_state.get("doc_id") or not speaker_project_state.get("summary"):
+            if not speaker_project_state.get("doc_snapshot") or not speaker_project_state.get("summary"):
                 print("Сначала нажми «Найти спикеров» для diarized Google Doc.")
                 return
             project = selected_speaker_project()
@@ -9513,7 +9573,7 @@ def on_apply_speaker_rename_clicked(_):
     with speaker_output:
         try:
             plan = speaker_project_state.get("plan") or {}
-            if not speaker_project_state.get("doc_id") or not speaker_project_state.get("summary"):
+            if not speaker_project_state.get("doc_snapshot") or not speaker_project_state.get("summary"):
                 print("Отказ: Google Doc не загружен через «Найти спикеров».")
                 return
             if not (speaker_project_state.get("summary") or {}).get("counts"):
@@ -9547,8 +9607,10 @@ def on_apply_speaker_rename_clicked(_):
                 title=speaker_project_state["doc_title"],
                 transcript_text=renamed_text,
                 clear_first=True,
+                edit_snapshot=speaker_project_state["doc_snapshot"],
             )
             speaker_project_state["doc_text"] = renamed_text
+            speaker_project_state["doc_snapshot"] = None
             speaker_project_state["doc_hash"] = json_sha256({"doc_id": speaker_project_state["doc_id"], "text_sha256": hashlib.sha256(renamed_text.encode("utf-8")).hexdigest()})
             speaker_project_state["summary"] = summarize_speaker_turns(renamed_text)
             speaker_project_state["plan"] = None
