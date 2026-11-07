@@ -356,6 +356,9 @@ TEMPERATURE = 0
 TAG_AUDIO_EVENTS = False
 
 DOC_INSERT_CHUNK_SIZE = 200_000
+DOC_REPLACEMENT_MAX_BYTES = 2 * 1024 * 1024
+COLAB_STT_RESERVATION_HEADER = "VoiceOps Colab STT reservations v1\n"
+COLAB_STT_RESERVATION_MAX_CHARS = 200_000
 PREVIEW_LIMIT = 20
 LARGE_LOCAL_FILE_WARNING_MB = 300
 LOCAL_FOLDER_UPLOAD_CHUNK_BYTES = 128 * 1024
@@ -1023,6 +1026,7 @@ class RunExecutionContext:
     manifest: dict
     settings_signature: str
     options: TranscriptionRuntimeOptions
+    stt_reservation_doc_id: str
     user_segment_suffix_allocation_enabled: bool = False
 
 
@@ -3107,6 +3111,7 @@ def standardize_existing_google_docs_in_folder(
     dry_run: bool = True,
     max_folders_scanned: int = DOCS_ONLY_STANDARDIZATION_DEFAULT_MAX_FOLDERS_SCANNED,
     max_google_docs_scanned: int = DOCS_ONLY_STANDARDIZATION_DEFAULT_MAX_GOOGLE_DOCS_SCANNED,
+    preview_revisions: Optional[dict[str, str]] = None,
 ) -> dict:
     """Standardize existing Google Docs in place without retranscription or manifest changes."""
 
@@ -3124,6 +3129,7 @@ def standardize_existing_google_docs_in_folder(
         "skipped_non_google_docs": scan["skipped_non_google_docs"],
         "already_structured": [],
         "would_standardize": [],
+        "preview_revisions": {},
         "standardized": [],
         "current_standard": 0,
         "outdated_standard": 0,
@@ -3149,7 +3155,8 @@ def standardize_existing_google_docs_in_folder(
             "link": doc.get("webViewLink", ""),
         }
         try:
-            existing_text = extract_google_doc_plain_text(doc["id"])
+            snapshot = read_google_doc_for_edit(doc["id"])
+            existing_text = snapshot["text"]
             structured_status = classify_existing_google_doc_transcript_standard(existing_text)
             if structured_status == EXISTING_GOOGLE_DOC_STRUCTURED_CURRENT:
                 if not existing_google_doc_backfill_metadata_needs_refresh(existing_text):
@@ -3177,8 +3184,11 @@ def standardize_existing_google_docs_in_folder(
 
             if dry_run:
                 report["would_standardize"].append(result_item)
+                report["preview_revisions"][doc["id"]] = snapshot["revision_id"]
                 continue
 
+            if preview_revisions is not None and preview_revisions.get(doc["id"]) != snapshot["revision_id"]:
+                raise ValueError("Документ изменился или не входил в предпросмотр. Повтори проверку папки.")
             structured_text = build_docs_only_standardized_transcript_document_text(
                 document_title=doc["name"],
                 existing_document_text=existing_text,
@@ -3193,6 +3203,7 @@ def standardize_existing_google_docs_in_folder(
                 title=doc["name"],
                 transcript_text=structured_text,
                 clear_first=True,
+                edit_snapshot=snapshot,
             )
             report["standardized"].append(result_item)
         except Exception as exc:
@@ -3792,8 +3803,12 @@ def extract_google_doc_plain_text(document_id: str) -> str:
         docs_service.documents().get(documentId=document_id),
         operation_label="docs_get",
     )
+    return google_doc_plain_text(doc.get("body", {}).get("content", []))
+
+
+def google_doc_plain_text(content: list[dict]) -> str:
     parts = []
-    for element in doc.get("body", {}).get("content", []):
+    for element in content:
         paragraph = element.get("paragraph")
         if not paragraph:
             continue
@@ -3967,12 +3982,108 @@ def chunk_text_for_docs(text: str, max_chars: int = DOC_INSERT_CHUNK_SIZE) -> li
     return chunks
 
 
-def get_document_end_index(document_id: str) -> int:
-    doc = docs_service.documents().get(documentId=document_id).execute()
+def read_google_doc_for_edit(document_id: str) -> dict:
+    doc = execute_google_request_with_retry(
+        docs_service.documents().get(documentId=document_id),
+        operation_label="docs_get",
+    )
     body = doc.get("body", {}).get("content", [])
-    if not body:
-        return 1
-    return body[-1].get("endIndex", 1)
+    revision_id = doc.get("revisionId")
+    end_index = body[-1].get("endIndex") if body else None
+    if not isinstance(revision_id, str) or not revision_id or type(end_index) is not int or end_index < 2:
+        raise ValueError("Не удалось подтвердить ревизию и границы Google Doc. Документ не изменён.")
+    return {
+        "document_id": document_id,
+        "revision_id": revision_id,
+        "end_index": end_index,
+        "text": google_doc_plain_text(body),
+    }
+
+
+def read_colab_stt_reservations(document_id: str) -> tuple[dict, dict]:
+    snapshot = read_google_doc_for_edit(document_id)
+    text = snapshot["text"]
+    if not text:
+        return snapshot, {}
+    if not text.startswith(COLAB_STT_RESERVATION_HEADER):
+        raise ValueError("Укажи отдельный Google Doc для резерва Colab. Обычный документ не изменён.")
+    records = json.loads(text[len(COLAB_STT_RESERVATION_HEADER):])
+    if not isinstance(records, dict):
+        raise ValueError("Не удалось прочитать резерв Colab. Транскрибация не запущена.")
+    return snapshot, records
+
+
+def write_colab_stt_reservations(snapshot: dict, records: dict) -> None:
+    text = COLAB_STT_RESERVATION_HEADER + json.dumps(records, separators=(",", ":"))
+    if len(text) > COLAB_STT_RESERVATION_MAX_CHARS:
+        raise ValueError("Журнал резервов Colab достиг лимита. Транскрибация не запущена.")
+    requests_payload = []
+    if snapshot["end_index"] > 2:
+        requests_payload.append({"deleteContentRange": {
+            "range": {"startIndex": 1, "endIndex": snapshot["end_index"] - 1},
+        }})
+    requests_payload.append({"insertText": {"location": {"index": 1}, "text": text}})
+    # An ambiguous acknowledgment must not authorize a provider call.
+    docs_service.documents().batchUpdate(
+        documentId=snapshot["document_id"],
+        body={"requests": requests_payload, "writeControl": {"requiredRevisionId": snapshot["revision_id"]}},
+    ).execute()
+
+
+def reserve_colab_stt(
+    document_id: str, source_signature: str, settings_signature: str, *, allow_repeat: bool = False,
+) -> tuple[str, str]:
+    key = json_sha256([source_signature, settings_signature])
+    snapshot, records = read_colab_stt_reservations(document_id)
+    if key in records:
+        previous = records[key]
+        if not isinstance(previous, dict) or previous.get("status") not in {"pending", "done"}:
+            raise ValueError("Не удалось подтвердить состояние резерва Colab. Транскрибация не запущена.")
+        if previous["status"] == "pending":
+            raise ValueError(f"Распознавание уже запущено или его исход неизвестен. Код резерва: {key}.")
+        if not allow_repeat:
+            raise ValueError("Для этого источника и настроек уже подтверждён результат.")
+    token = uuid.uuid4().hex
+    records[key] = {"status": "pending", "token": token, "started_at": utc_now_iso()}
+    write_colab_stt_reservations(snapshot, records)
+    return key, token
+
+
+def complete_colab_stt_reservation(document_id: str, key: str, token: str) -> None:
+    snapshot, records = read_colab_stt_reservations(document_id)
+    record = records.get(key)
+    if not isinstance(record, dict) or record.get("token") != token:
+        raise ValueError("Резерв Colab изменился. Проверь сохранённый документ и журнал резервов.")
+    if record.get("status") == "done":
+        return
+    if record.get("status") != "pending":
+        raise ValueError("Не удалось подтвердить резерв Colab.")
+    records[key] = {**record, "status": "done"}
+    write_colab_stt_reservations(snapshot, records)
+
+
+def resolve_colab_stt_reservation(document_id: str, key: str, result_url: str, confirmation: str) -> None:
+    if not re.fullmatch(r"[a-f0-9]{64}", key) or confirmation.strip() != "ЗАКРЫТЬ РЕЗЕРВ":
+        raise ValueError("Укажи полный код резерва и введи ЗАКРЫТЬ РЕЗЕРВ.")
+    snapshot, records = read_colab_stt_reservations(document_id)
+    record = records.get(key)
+    if not isinstance(record, dict) or record.get("status") != "pending":
+        raise ValueError("Резерв уже закрыт или не найден.")
+    if result_url.strip():
+        result_id = parse_google_doc_url_or_id(result_url)
+        if not result_id or result_id == document_id or not extract_google_doc_plain_text(result_id):
+            raise ValueError("Не удалось прочитать готовый Google Doc. Резерв сохранён.")
+        records[key] = {**record, "status": "done"}
+    else:
+        del records[key]
+    write_colab_stt_reservations(snapshot, records)
+
+
+def colab_stt_reservation_document_id() -> str:
+    document_id = parse_google_doc_url_or_id(get_colab_secret_or_none("COLAB_STT_RESERVATION_DOC_ID") or "")
+    if not document_id:
+        raise ValueError("Укажи один общий Google Doc в COLAB_STT_RESERVATION_DOC_ID для всех сессий Colab.")
+    return document_id
 
 
 def build_transcript_doc_style_requests(document_text: str) -> list[dict]:
@@ -4042,13 +4153,24 @@ def build_transcript_doc_style_requests(document_text: str) -> list[dict]:
     return requests
 
 
-def write_title_and_text_to_doc(document_id: str, title: str, transcript_text: str, clear_first: bool = False):
+def write_title_and_text_to_doc(
+    document_id: str,
+    title: str,
+    transcript_text: str,
+    clear_first: bool = False,
+    edit_snapshot: Optional[dict] = None,
+):
     prefix = f"{title}\n\n"
     document_text = transcript_text if transcript_text.startswith(prefix) else f"{prefix}{transcript_text}"
     requests_payload = []
 
     if clear_first:
-        end_index = get_document_end_index(document_id)
+        snapshot = edit_snapshot if edit_snapshot is not None else read_google_doc_for_edit(document_id)
+        revision_id = snapshot.get("revision_id")
+        end_index = snapshot.get("end_index")
+        if (snapshot.get("document_id") != document_id or not isinstance(revision_id, str)
+                or not revision_id or type(end_index) is not int or end_index < 2):
+            raise ValueError("Не удалось подтвердить ревизию и границы Google Doc. Документ не изменён.")
         if end_index > 2:
             requests_payload.append({
                 "deleteContentRange": {
@@ -4058,6 +4180,13 @@ def write_title_and_text_to_doc(document_id: str, title: str, transcript_text: s
                     }
                 }
             })
+        requests_payload.append({"insertText": {"location": {"index": 1}, "text": document_text}})
+        requests_payload.extend(build_transcript_doc_style_requests(document_text))
+        body = {"requests": requests_payload, "writeControl": {"requiredRevisionId": revision_id}}
+        if len(json.dumps(body).encode("utf-8")) > DOC_REPLACEMENT_MAX_BYTES:
+            raise ValueError("Документ слишком большой для атомарной перезаписи. Документ не изменён.")
+        docs_service.documents().batchUpdate(documentId=document_id, body=body).execute()
+        return
 
     requests_payload.extend([
         {
@@ -5435,6 +5564,32 @@ def transcribe_media_path(
     )
 
 
+def transcribe_guarded_colab_source(run_ctx, source_signature: str, *, input_path: str,
+                                   original_filename: str, timer: Optional[RunTimer] = None):
+    document_id = run_ctx.stt_reservation_doc_id
+    if not run_ctx.ignore_manifest:
+        should_skip, reason = should_skip_by_manifest(
+            load_manifest(force_reload=True), source_signature, run_ctx.settings_signature,
+        )
+        if should_skip:
+            raise ValueError(reason)
+    key, token = reserve_colab_stt(
+        document_id, source_signature, run_ctx.settings_signature, allow_repeat=run_ctx.ignore_manifest,
+    )
+    transcript = transcribe_media_path(
+        input_path=input_path, original_filename=original_filename, options=run_ctx.options, timer=timer,
+    )
+    return transcript, (document_id, key, token)
+
+
+def complete_guarded_colab_source(run_ctx, reservation, source_signature, source_name, result, source_meta):
+    mark_manifest_done(
+        run_ctx.manifest, source_signature, run_ctx.settings_signature, source_name,
+        result["doc_name"], result["link"], source_meta,
+    )
+    complete_colab_stt_reservation(*reservation)
+
+
 def save_uploaded_bytes_to_temp(filename: str, file_bytes: bytes) -> str:
     suffix = Path(filename).suffix or ""
     tmp_path = create_project_temp_file(suffix=suffix)
@@ -5476,6 +5631,7 @@ def upsert_transcript_document(
             segment_label=(segment_metadata or {}).get("label"),
             segment_time_range=(segment_metadata or {}).get("range_label"),
             original_source_name=(segment_metadata or {}).get("original_source_name"),
+            omit_unknown_created_at=True,
         )
         return build_structured_transcript_document_text(
             document_title=doc_title,
@@ -6238,10 +6394,10 @@ def process_user_segments_for_source(
                 report_progress_for_file(progress_callback, idx, total, 1, f"Транскрибация сегмента: {segment['label']}")
                 with timer.measure("user_segment_processing") if timer else nullcontext():
                     with timer.measure("provider_transcription") if timer else nullcontext():
-                        transcript = transcribe_media_path(
+                        transcript, reservation = transcribe_guarded_colab_source(
+                            run_ctx, segment_signature,
                             input_path=segment_path,
                             original_filename=f"{segment_source_name}.m4a",
-                            options=run_ctx.options,
                             timer=timer,
                         )
                 report_progress_for_file(progress_callback, idx, total, 3, f"Запись в Google Docs: {segment['label']}")
@@ -6263,7 +6419,7 @@ def process_user_segments_for_source(
                     skipped.append({"source": segment_source_name, "reason": result["reason"]})
                 else:
                     with timer.measure("manifest_write") if timer else nullcontext():
-                        mark_manifest_done(run_ctx.manifest, segment_signature, run_ctx.settings_signature, segment_source_name, result["doc_name"], result["link"], segment_meta)
+                        complete_guarded_colab_source(run_ctx, reservation, segment_signature, segment_source_name, result, segment_meta)
                     print(f"Готово: {result['link']}")
                     append_success(successes, segment_source_name, result)
             except Exception as e:
@@ -6345,10 +6501,10 @@ def process_local_uploaded(
             report_progress_for_file(progress_callback, idx, total, 1, f"Транскрибация: {filename}")
 
             with timer.measure("provider_transcription") if timer else nullcontext():
-                transcript = transcribe_media_path(
+                transcript, reservation = transcribe_guarded_colab_source(
+                    run_ctx, source_signature,
                     input_path=temp_input_path,
                     original_filename=filename,
-                    options=run_ctx.options,
                     timer=timer,
                 )
 
@@ -6371,15 +6527,7 @@ def process_local_uploaded(
                 skipped.append({"source": filename, "reason": result["reason"]})
             else:
                 with timer.measure("manifest_write") if timer else nullcontext():
-                    mark_manifest_done(
-                        run_ctx.manifest,
-                        source_signature,
-                        run_ctx.settings_signature,
-                        display_name,
-                        result["doc_name"],
-                        result["link"],
-                        source_meta,
-                    )
+                    complete_guarded_colab_source(run_ctx, reservation, source_signature, display_name, result, source_meta)
                 print(f"Готово: {result['link']}")
                 append_success(successes, filename, result)
 
@@ -6460,11 +6608,11 @@ def process_drive_file_input(
             report_progress_for_file(progress_callback, 1, 1, 1, f"Транскрибация: {filename}")
 
             with timer.measure("provider_transcription") if timer else nullcontext():
-                transcript = transcribe_media_path(
-                input_path=file_path,
-                original_filename=filename,
-                options=run_ctx.options,
-                timer=timer,
+                transcript, reservation = transcribe_guarded_colab_source(
+                    run_ctx, source_signature,
+                    input_path=file_path,
+                    original_filename=filename,
+                    timer=timer,
                 )
 
             report_progress_for_file(progress_callback, 1, 1, 3, f"Запись в Google Docs: {filename}")
@@ -6485,7 +6633,7 @@ def process_drive_file_input(
                 print(f"Пропуск: {filename} -> {result['reason']}")
                 skipped.append({"source": filename, "reason": result["reason"]})
             else:
-                mark_manifest_done(run_ctx.manifest, source_signature, run_ctx.settings_signature, filename, result["doc_name"], result["link"], source_meta)
+                complete_guarded_colab_source(run_ctx, reservation, source_signature, filename, result, source_meta)
                 print(f"Готово: {result['link']}")
                 append_success(successes, file_path, result)
 
@@ -6557,10 +6705,10 @@ def process_drive_file_input(
         source_meta = with_source_creation_authority(source_meta, tmp_path)
         report_progress_for_file(progress_callback, 1, 1, 2, f"Транскрибация: {filename}")
 
-        transcript = transcribe_media_path(
+        transcript, reservation = transcribe_guarded_colab_source(
+            run_ctx, source_signature,
             input_path=tmp_path,
             original_filename=filename,
-            options=run_ctx.options
         )
 
         report_progress_for_file(progress_callback, 1, 1, 3, f"Запись в Google Docs: {filename}")
@@ -6580,7 +6728,7 @@ def process_drive_file_input(
             print(f"Пропуск: {filename} -> {result['reason']}")
             skipped.append({"source": filename, "reason": result["reason"]})
         else:
-            mark_manifest_done(run_ctx.manifest, source_signature, run_ctx.settings_signature, filename, result["doc_name"], result["link"], source_meta)
+            complete_guarded_colab_source(run_ctx, reservation, source_signature, filename, result, source_meta)
             print(f"Готово: {result['link']}")
             append_success(successes, resolved.get("webViewLink") or filename, result)
 
@@ -6650,10 +6798,10 @@ def process_drive_multi_input(
             report_progress_for_file(progress_callback, idx, len(selected_files), 2, f"Транскрибация: {display_name}")
 
             with timer.measure("provider_transcription") if timer else nullcontext():
-                transcript = transcribe_media_path(
+                transcript, reservation = transcribe_guarded_colab_source(
+                    run_ctx, source_signature,
                     input_path=tmp_path,
                     original_filename=filename,
-                    options=run_ctx.options,
                     timer=timer,
                 )
 
@@ -6676,7 +6824,7 @@ def process_drive_multi_input(
                 skipped.append({"source": display_name, "reason": result["reason"]})
             else:
                 with timer.measure("manifest_write") if timer else nullcontext():
-                    mark_manifest_done(run_ctx.manifest, source_signature, run_ctx.settings_signature, display_name, result["doc_name"], result["link"], source_meta)
+                    complete_guarded_colab_source(run_ctx, reservation, source_signature, display_name, result, source_meta)
                 print(f"Готово: {result['link']}")
                 append_success(successes, display_name, result)
 
@@ -6738,10 +6886,10 @@ def process_drive_folder_input(
                         continue
 
                 report_progress_for_file(progress_callback, idx, len(file_list), 1, f"Транскрибация: {filename}")
-                transcript = transcribe_media_path(
+                transcript, reservation = transcribe_guarded_colab_source(
+                    run_ctx, source_signature,
                     input_path=file_path,
                     original_filename=filename,
-                    options=run_ctx.options
                 )
 
                 report_progress_for_file(progress_callback, idx, len(file_list), 3, f"Запись в Google Docs: {filename}")
@@ -6761,7 +6909,7 @@ def process_drive_folder_input(
                     print(f"Пропуск: {filename} -> {result['reason']}")
                     skipped.append({"source": file_path, "reason": result["reason"]})
                 else:
-                    mark_manifest_done(run_ctx.manifest, source_signature, run_ctx.settings_signature, filename, result["doc_name"], result["link"], source_meta)
+                    complete_guarded_colab_source(run_ctx, reservation, source_signature, filename, result, source_meta)
                     print(f"Готово: {result['link']}")
                     append_success(successes, file_path, result)
 
@@ -6820,10 +6968,10 @@ def process_drive_folder_input(
             source_meta = with_source_creation_authority(source_meta, tmp_path)
             report_progress_for_file(progress_callback, idx, len(folder_files), 2, f"Транскрибация: {display_name}")
 
-            transcript = transcribe_media_path(
+            transcript, reservation = transcribe_guarded_colab_source(
+                run_ctx, source_signature,
                 input_path=tmp_path,
                 original_filename=filename,
-                options=run_ctx.options
             )
 
             report_progress_for_file(progress_callback, idx, len(folder_files), 3, f"Запись в Google Docs: {display_name}")
@@ -6843,7 +6991,7 @@ def process_drive_folder_input(
                 print(f"Пропуск: {display_name} -> {result['reason']}")
                 skipped.append({"source": display_name, "reason": result["reason"]})
             else:
-                mark_manifest_done(run_ctx.manifest, source_signature, run_ctx.settings_signature, display_name, result["doc_name"], result["link"], source_meta)
+                complete_guarded_colab_source(run_ctx, reservation, source_signature, display_name, result, source_meta)
                 print(f"Готово: {result['link']}")
                 append_success(successes, display_name, result)
 
@@ -8083,6 +8231,17 @@ import_output_widget = widgets.Output()
 standardize_existing_docs_output_widget = widgets.Output()
 standardize_manifest_v2_output_widget = widgets.Output()
 manifest_clear_output_widget = widgets.Output()
+stt_reservation_key_widget = widgets.Text(description="Код резерва:", layout=widgets.Layout(width="620px"))
+stt_reservation_result_widget = widgets.Text(
+    description="Google Doc:", placeholder="Ссылка на готовый транскрипт, если он есть",
+    layout=widgets.Layout(width="620px"),
+)
+stt_reservation_confirmation_widget = widgets.Text(
+    description="Подтверждение:", placeholder="ЗАКРЫТЬ РЕЗЕРВ",
+    layout=widgets.Layout(width="620px"),
+)
+stt_reservation_button = widgets.Button(description="Закрыть резерв", layout=widgets.Layout(width="260px"))
+stt_reservation_output_widget = widgets.Output()
 output_widget = widgets.Output()
 
 standardize_existing_docs_section_widget = widgets.VBox([
@@ -8123,6 +8282,17 @@ standardize_existing_docs_section_widget = widgets.VBox([
     manifest_clear_button,
     manifest_clear_help_widget,
     manifest_clear_output_widget,
+    widgets.HTML(
+        "<h4>Восстановление после неизвестного результата</h4>"
+        "<p>Останови другие запуски по этой записи и проверь папку результата. "
+        "Укажи ссылку, если готовый документ есть. Оставляй поле пустым только после проверки отсутствия документа. "
+        "Следующий запуск в этом случае может снова списать оплату.</p>"
+    ),
+    stt_reservation_key_widget,
+    stt_reservation_result_widget,
+    stt_reservation_confirmation_widget,
+    stt_reservation_button,
+    stt_reservation_output_widget,
 ])
 
 folder_picker_ui = widgets.VBox(folder_picker_core_widgets + [standardize_existing_docs_section_widget])
@@ -8628,7 +8798,11 @@ def print_standardize_existing_docs_report(report: dict):
     print(build_standardize_existing_docs_report_text(report))
 
 
+standardize_existing_docs_preview = None
+
+
 def on_standardize_existing_docs_clicked(_):
+    global standardize_existing_docs_preview
     standardize_existing_docs_button.disabled = True
     with standardize_existing_docs_output_widget:
         clear_output()
@@ -8637,11 +8811,21 @@ def on_standardize_existing_docs_clicked(_):
             if not folder_picker_state["selected_id"]:
                 raise ValueError("Сначала выбери папку назначения в блоке выше и нажми 'Выбрать текущую папку'.")
 
+            scope = (folder_picker_state["selected_id"], standardize_existing_docs_recursive_widget.value)
+            dry_run = standardize_existing_docs_dry_run_widget.value
+            preview = standardize_existing_docs_preview
+            if not dry_run and preview is not None and preview[0] != scope:
+                raise ValueError("Папка или обход подпапок изменились. Повтори предпросмотр.")
+            if dry_run:
+                standardize_existing_docs_preview = None
             report = standardize_existing_google_docs_in_folder(
-                output_folder_id=folder_picker_state["selected_id"],
-                recursive=standardize_existing_docs_recursive_widget.value,
-                dry_run=standardize_existing_docs_dry_run_widget.value,
+                output_folder_id=scope[0],
+                recursive=scope[1],
+                dry_run=dry_run,
+                preview_revisions=preview[1] if not dry_run and preview is not None else None,
             )
+            if dry_run:
+                standardize_existing_docs_preview = (scope, report["preview_revisions"])
             print_standardize_existing_docs_report(report)
 
         except Exception as e:
@@ -8861,6 +9045,23 @@ def on_manifest_clear_clicked(_):
             manifest_clear_button.disabled = False
 
 
+def on_resolve_stt_reservation_clicked(_):
+    stt_reservation_button.disabled = True
+    with stt_reservation_output_widget:
+        clear_output()
+        try:
+            resolve_colab_stt_reservation(
+                colab_stt_reservation_document_id(), stt_reservation_key_widget.value.strip(),
+                stt_reservation_result_widget.value, stt_reservation_confirmation_widget.value,
+            )
+            stt_reservation_confirmation_widget.value = ""
+            print("Резерв закрыт. Транскрибация не запускалась.")
+        except Exception as error:
+            print(f"Не удалось закрыть резерв: {error}")
+        finally:
+            stt_reservation_button.disabled = False
+
+
 def collect_runtime_options_from_ui() -> TranscriptionRuntimeOptions:
     return TranscriptionRuntimeOptions(
         provider=provider_widget.value,
@@ -8873,6 +9074,7 @@ def collect_runtime_options_from_ui() -> TranscriptionRuntimeOptions:
 
 def build_run_execution_context(output_folder_id: str, output_folder_path: str, conflict_mode: str, use_manifest: bool, options: TranscriptionRuntimeOptions) -> RunExecutionContext:
     ensure_provider_api_key(options)
+    reservation_doc_id = colab_stt_reservation_document_id()
     return RunExecutionContext(
         output_folder_id=output_folder_id,
         output_folder_path=output_folder_path,
@@ -8882,6 +9084,7 @@ def build_run_execution_context(output_folder_id: str, output_folder_path: str, 
         manifest=load_manifest(),
         settings_signature=build_settings_signature(options),
         options=options,
+        stt_reservation_doc_id=reservation_doc_id,
         user_segment_suffix_allocation_enabled=user_segment_suffix_widget.value,
     )
 
@@ -9447,12 +9650,17 @@ def on_deactivate_project_speaker(_):
 def on_find_speakers_clicked(_):
     with speaker_output:
         clear_output()
-        speaker_project_state.update({"doc_id": "", "doc_title": "", "doc_text": "", "doc_hash": "", "summary": None, "plan": None})
+        speaker_project_state.update({"doc_id": "", "doc_title": "", "doc_text": "", "doc_hash": "", "doc_snapshot": None, "summary": None, "plan": None})
         doc_id = parse_google_doc_url_or_id(speaker_doc_input.value)
         if not doc_id:
             print("Укажи корректный URL или ID Google Doc.")
             return
-        text = extract_google_doc_plain_text(doc_id)
+        try:
+            snapshot = read_google_doc_for_edit(doc_id)
+        except Exception as error:
+            print(f"Ошибка чтения Google Doc: {error}")
+            return
+        text = snapshot["text"]
         metadata_status = detect_speakers_metadata_value(text)
         summary = summarize_speaker_turns(text)
         if metadata_status == "no":
@@ -9468,6 +9676,7 @@ def on_find_speakers_clicked(_):
             "doc_id": doc_id,
             "doc_title": title,
             "doc_text": text,
+            "doc_snapshot": snapshot,
             "doc_hash": json_sha256({"doc_id": doc_id, "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()}),
             "metadata_status": metadata_status,
             "summary": summary,
@@ -9482,7 +9691,7 @@ def on_find_speakers_clicked(_):
 def on_preview_speaker_rename_clicked(_):
     with speaker_output:
         try:
-            if not speaker_project_state.get("doc_id") or not speaker_project_state.get("summary"):
+            if not speaker_project_state.get("doc_snapshot") or not speaker_project_state.get("summary"):
                 print("Сначала нажми «Найти спикеров» для diarized Google Doc.")
                 return
             project = selected_speaker_project()
@@ -9512,7 +9721,7 @@ def on_apply_speaker_rename_clicked(_):
     with speaker_output:
         try:
             plan = speaker_project_state.get("plan") or {}
-            if not speaker_project_state.get("doc_id") or not speaker_project_state.get("summary"):
+            if not speaker_project_state.get("doc_snapshot") or not speaker_project_state.get("summary"):
                 print("Отказ: Google Doc не загружен через «Найти спикеров».")
                 return
             if not (speaker_project_state.get("summary") or {}).get("counts"):
@@ -9546,8 +9755,10 @@ def on_apply_speaker_rename_clicked(_):
                 title=speaker_project_state["doc_title"],
                 transcript_text=renamed_text,
                 clear_first=True,
+                edit_snapshot=speaker_project_state["doc_snapshot"],
             )
             speaker_project_state["doc_text"] = renamed_text
+            speaker_project_state["doc_snapshot"] = None
             speaker_project_state["doc_hash"] = json_sha256({"doc_id": speaker_project_state["doc_id"], "text_sha256": hashlib.sha256(renamed_text.encode("utf-8")).hexdigest()})
             speaker_project_state["summary"] = summarize_speaker_turns(renamed_text)
             speaker_project_state["plan"] = None
@@ -9584,6 +9795,7 @@ import_existing_button.on_click(on_import_existing_clicked)
 standardize_existing_docs_button.on_click(on_standardize_existing_docs_clicked)
 standardize_manifest_v2_button.on_click(on_standardize_manifest_v2_clicked)
 manifest_clear_button.on_click(on_manifest_clear_clicked)
+stt_reservation_button.on_click(on_resolve_stt_reservation_clicked)
 start_button.on_click(on_start_clicked)
 refresh_user_segment_ui()
 
