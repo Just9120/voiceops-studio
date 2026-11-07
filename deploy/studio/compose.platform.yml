@@ -36,6 +36,8 @@ services:
       - studio-api-cache
       - studio-api-egress
     environment:
+      STUDIO_COMPANION_RELEASE_OWNER_ID: ${STUDIO_COMPANION_RELEASE_OWNER_ID:-}
+      STUDIO_COMPANION_RELEASE_SHA256: ${STUDIO_COMPANION_RELEASE_SHA256:-}
       STUDIO_DATABASE_SCHEME: postgresql+psycopg
       STUDIO_DATABASE_HOST: postgres
       STUDIO_DATABASE_PORT: "5432"
@@ -174,6 +176,7 @@ services:
       - studio_job_telegram_chat_id
     volumes:
       - studio-audio-delivery:/run/studio-audio-delivery
+      - studio-companion-release:/run/studio-companion-release:ro
     tmpfs:
       - /run/studio-runtime-secrets:mode=0711,uid=0,gid=0
     depends_on:
@@ -437,6 +440,7 @@ secrets:
   studio_job_telegram_chat_id:
     file: ${STUDIO_JOB_TELEGRAM_CHAT_ID_FILE:-./optional-empty-secret}
 volumes:
+  studio-companion-release:
   studio-postgres-data:
   studio-audio-delivery:
     driver: local

@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     credential_master_key_file: str = "/run/secrets/studio_credential_master_key"
     credential_key_id: str = "studio-v1"
     enable_api_docs: bool = False
+    companion_release_owner_id: str | None = None
+    companion_release_sha256: str | None = None
+    companion_release_directory: str = "/run/studio-companion-release"
     trusted_proxy_ip: IPvAnyAddress = IPvAnyAddress("127.0.0.1")
     source_s3_endpoint_url: str | None = None
     source_s3_region: str = "auto"

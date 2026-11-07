@@ -72,7 +72,8 @@ def build_transcription_analytics_payload(
     attempt_rows = list(attempts)
     outcomes = {status: 0 for status in JOB_STATUSES}
     provider_model = {"elevenlabs_scribe_v2": 0, "yandex_general": 0, "yandex_deferred_general": 0, "mistral_voxtral_small_transcribe_3": 0, "gemini_35_transcribe": 0, "tbank_default": 0, "unknown": 0}
-    if include_local: provider_model["nemotron_35_transcribe_local"] = 0
+    if include_local:
+        provider_model.update(nemotron_35_transcribe_local=0, parakeet_tdt_v3_local=0)
     language_mode = {"ru": 0, "en": 0, "detect": 0, "other": 0}
     diarization = {"enabled": 0, "disabled": 0}
     queue_durations: list[float] = []
@@ -219,7 +220,8 @@ def load_transcription_analytics_payload(
 
     outcomes = {status: 0 for status in JOB_STATUSES}
     provider_model = {"elevenlabs_scribe_v2": 0, "yandex_general": 0, "yandex_deferred_general": 0, "mistral_voxtral_small_transcribe_3": 0, "gemini_35_transcribe": 0, "tbank_default": 0, "unknown": 0}
-    if include_local: provider_model["nemotron_35_transcribe_local"] = 0
+    if include_local:
+        provider_model.update(nemotron_35_transcribe_local=0, parakeet_tdt_v3_local=0)
     language_mode = {"ru": 0, "en": 0, "detect": 0, "other": 0}
     diarization = {"enabled": 0, "disabled": 0}
     total_jobs = 0

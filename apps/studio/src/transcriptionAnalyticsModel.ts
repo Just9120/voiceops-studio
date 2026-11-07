@@ -32,6 +32,7 @@ export type TranscriptionAnalytics = {
       gemini_35_transcribe?: number;
       tbank_default?: number;
       nemotron_35_transcribe_local?: number;
+      parakeet_tdt_v3_local?: number;
       yandex_deferred_general?: number;
       unknown: number;
     };
@@ -126,7 +127,9 @@ export function parseTranscriptionAnalytics(
     !isRecord(value.configuration) ||
     !hasExactKeys(value.configuration, EXACT_KEYS.configuration) ||
     !(isCountRecord(value.configuration.provider_model, EXACT_KEYS.providerModel) ||
-      isCountRecord(value.configuration.provider_model, EXACT_KEYS.providerModelExtended) || isCountRecord(value.configuration.provider_model, EXACT_KEYS.providerModelExpanded) || isCountRecord(value.configuration.provider_model, EXACT_KEYS.providerModelLocal)) ||
+      isCountRecord(value.configuration.provider_model, EXACT_KEYS.providerModelExtended) || isCountRecord(value.configuration.provider_model, EXACT_KEYS.providerModelExpanded) ||
+      isCountRecord(value.configuration.provider_model, EXACT_KEYS.providerModelLocal) ||
+      isCountRecord(value.configuration.provider_model, [...EXACT_KEYS.providerModelLocal, "parakeet_tdt_v3_local"])) ||
     !isCountRecord(
       value.configuration.language_mode,
       EXACT_KEYS.languageMode,

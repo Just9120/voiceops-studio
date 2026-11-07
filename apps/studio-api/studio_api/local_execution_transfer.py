@@ -25,12 +25,12 @@ from .job_source_materialization import materialize_processing_job_source
 from .local_execution_devices import authenticate_device
 from .local_execution_jobs import _scope
 from .models import JobSourceStatus, JobStatus, Project, TranscriptionJob, SttProviderOperation
+from .local_model_identity import PARAKEET_MAX_DURATION_SECONDS, PARAKEET_MODEL, job_model_identity
 from .nemotron_local_result import NEMOTRON_MAX_DURATION_SECONDS, NEMOTRON_MODEL, normalize_nemotron_local_result
 from .provider_result_cache import persist_operation_result
 from .security import utcnow
 from .transcript_timeline import TranscriptClockSelection, persist_transcript_clock, select_transcript_clock
 from .transcription_options import job_diarization_enabled
-from .transcription_metadata import stored_model
 
 MAX_ENVELOPE_BYTES = MAX_RESPONSE_BYTES + 4096
 
@@ -145,7 +145,9 @@ def prepare_local_input(db, *, device, job_id, generation, source_sha256, source
                     else source_duration_seconds - (selection.prepared_start or 0))
     except (ValueError, AudioTimelineError):
         raise _error("local_input_duration_changed") from None
-    if not 0 < duration <= min(settings.media_max_duration_seconds, NEMOTRON_MAX_DURATION_SECONDS):
+    model, _ = job_model_identity(job.options_json)
+    model_limit = PARAKEET_MAX_DURATION_SECONDS if model == PARAKEET_MODEL else NEMOTRON_MAX_DURATION_SECONDS
+    if not 0 < duration <= min(settings.media_max_duration_seconds, model_limit):
         raise _error("media_duration_too_long", 422)
     measured = receipt.get("source_duration_seconds")
     if measured is not None and abs(measured - source_duration_seconds) > .000001:
@@ -190,9 +192,13 @@ def decode_local_result(body):
         if len(raw) > MAX_ENVELOPE_BYTES:
             raise ValueError()
         data = json.loads(raw, object_pairs_hook=unique_object, parse_constant=invalid_constant)
-        if (not isinstance(data, dict) or set(data) != {"generation", "source_sha256", "result"}
+        base = {"generation", "source_sha256", "result"}
+        if (not isinstance(data, dict) or set(data) not in (base, base | {"model", "model_revision"})
                 or type(data["generation"]) is not int or not 1 <= data["generation"] <= 2147483647
                 or not isinstance(data["source_sha256"], str) or re.fullmatch(r"[a-f0-9]{64}", data["source_sha256"]) is None):
+            raise ValueError()
+        if "model" in data and (not isinstance(data["model"], str) or len(data["model"]) > 80
+                or not isinstance(data["model_revision"], str) or not re.fullmatch(r"[a-f0-9]{40}", data["model_revision"])):
             raise ValueError()
         digest = hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False, allow_nan=False,
             separators=(",", ":")).encode()).hexdigest()
@@ -209,8 +215,9 @@ def accept_local_result(db, *, device, job_id, envelope, digest, settings, now):
     if job is None:
         raise _error("local_job_unavailable", 404)
     project = db.get(Project, job.project_id)
+    model, revision = job_model_identity(job.options_json)
     if (project is None or project.owner_user_id != device.owner_user_id or project.archived_at is not None
-            or job.provider != "nemotron" or stored_model(job.options_json) != NEMOTRON_MODEL):
+            or job.provider != "nemotron" or model is None):
         raise _error("local_job_unavailable", 404)
     if job.status == JobStatus.cancelled or job.cancel_requested_at is not None:
         raise _error("local_job_cancelled")
@@ -219,6 +226,9 @@ def accept_local_result(db, *, device, job_id, envelope, digest, settings, now):
             raise _error("local_result_changed")
         return {"accepted": True, "already_accepted": True}
     generation = envelope["generation"]
+    legacy = model == NEMOTRON_MODEL and "model" not in envelope
+    if not legacy and (envelope.get("model") != model or envelope.get("model_revision") != revision):
+        raise _error("local_result_model_changed")
     job = _scope(db, device=device, job_id=job_id, generation=generation, now=now)
     relation = _one_relation(job)
     receipt, selection = _load_receipt(job, relation, generation)
@@ -244,7 +254,7 @@ def accept_local_result(db, *, device, job_id, envelope, digest, settings, now):
         operation = SttProviderOperation(id=str(uuid4()), owner_user_id=job.owner_user_id,
             project_id=job.project_id, job_id=job.id, job_source_id=relation.id,
             attempt_number=int(job.attempt_count), provider="nemotron", operating_mode=job.operating_mode,
-            model=NEMOTRON_MODEL, operation_id=f"local:{job.id}:{device.id}:{generation}:{digest}",
+            model=model, operation_id=f"local:{job.id}:{device.id}:{generation}:{digest}",
             status="pending", submitted_at=now, created_at=now, updated_at=now)
         db.add(operation)
         persist_operation_result(db, operation, result, settings=settings, now=now, commit=False)

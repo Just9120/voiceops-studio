@@ -2,10 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { mutateWithCsrfRetry } from "./apiClient";
 import { ActionMenu } from "./ActionMenu";
 import { ConfirmClearDialog } from "./ConfirmClearDialog";
+import { CompanionRelease } from "./CompanionRelease";
+import { LocalDeviceEnrollment } from "./LocalDeviceEnrollment";
+import { LocalModelCatalog } from "./LocalModelCatalog";
 import { runBoundedRequest } from "./jobMutationRequest";
 import { localDeviceStatus, localExecutionFailure, parseLocalDevice, useLocalExecutionDevices, type LocalExecutionDevice } from "./localExecutionContracts";
 
 export function LocalExecutionPanel({ csrf, onCsrf }: { csrf: string; onCsrf: (value: string) => void }) {
+  const enrollmentId = /^#local-enrollment=([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/.exec(window.location.hash)?.[1];
   const devices = useLocalExecutionDevices();
   const [label, setLabel] = useState("");
   const [pending, setPending] = useState(false);
@@ -52,10 +56,13 @@ export function LocalExecutionPanel({ csrf, onCsrf }: { csrf: string; onCsrf: (v
     }
   }
   return <article className="card" aria-labelledby="local-execution-title">
-    <h3 id="local-execution-title">Локальный компьютер · NVIDIA Nemotron</h3>
+    <h3 id="local-execution-title">Локальные модели на Windows</h3>
+    {enrollmentId && <LocalDeviceEnrollment key={enrollmentId} requestId={enrollmentId} csrf={csrf} onCsrf={onCsrf} />}
+    <CompanionRelease />
+    <LocalModelCatalog devices={devices.items} csrf={csrf} onCsrf={onCsrf} />
     <p>Распознавание выполняется на выбранном Windows-компьютере. Обработчик должен быть запущен; Studio сохраняет результат и создаёт документ. Автоматического перехода на облачный сервис нет.</p>
-    <p className="muted">Поддерживаются русский и английский языки, записи или фрагменты до 60 минут. Скорость зависит от компьютера. Live и словари недоступны.</p>
-    <details><summary>Как подключить компьютер</summary>
+    <p className="muted">Поддерживаются русский и английский языки. Nemotron обрабатывает записи или фрагменты до 60 минут, Parakeet — до 24 минут. Скорость зависит от компьютера.</p>
+    <details><summary>Ручная настройка существующего обработчика</summary>
       <ol><li>Подготовьте локальную модель и обработчик по инструкции <code>docs/runbooks/local-worker.md</code> в проекте.</li>
         <li>Введите название компьютера ниже и создайте ключ.</li>
         <li>На компьютере запустите <code>python scripts/voiceops_local_worker.py pair</code>. Ключ вводится скрыто в запрос обработчика.</li>

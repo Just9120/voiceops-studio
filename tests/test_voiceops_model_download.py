@@ -1,0 +1,53 @@
+"""Only validated pinned bytes can become an installed profile."""
+import hashlib
+import io
+from pathlib import Path
+import sys
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+from local_worker import model_download as models
+from local_worker.protocol import WorkerError
+
+
+def test_resumed_profile_requires_correct_range_and_digest(tmp_path, monkeypatch):
+    content = b"correct-model-fixture"
+    profile_id = "synthetic"
+    spec = models.ModelFile("test.gguf", len(content), hashlib.sha256(content).hexdigest())
+    monkeypatch.setitem(models.PROFILES, profile_id, models.ModelProfile(
+        "Synthetic", "nvidia/test", "a" * 40, (spec,)))
+    directory = tmp_path / "VoiceOpsModels" / profile_id / ("a" * 40)
+    directory.mkdir(parents=True)
+    partial = directory / "test.gguf.part"
+    partial.write_bytes(content[:5])
+
+    class Reply(io.BytesIO):
+        status = 206
+        headers = {"Content-Range": f"bytes 5-{len(content)-1}/{len(content)}", "Content-Length": str(len(content)-5)}
+
+        def geturl(self):
+            return "https://cas-bridge.xethub.hf.co/synthetic"
+
+    class Opener:
+        def open(self, request, *, timeout):
+            assert request.get_header("Range") == "bytes=5-"
+            assert "a" * 40 in request.full_url
+            return Reply(content[5:])
+
+    monkeypatch.setattr(models, "build_opener", lambda _redirect: Opener())
+    progress = []
+    result = models.install_profile(profile_id, tmp_path, check=lambda: None, progress=lambda *args: progress.append(args))
+    assert result == directory and (result / spec.name).read_bytes() == content
+    assert progress[-1] == (len(content), len(content)) and not partial.exists()
+
+    (result / spec.name).write_bytes(b"X" * len(content))
+    with pytest.raises(WorkerError, match="local_model_file_invalid"):
+        models.install_profile(profile_id, tmp_path, check=lambda: None, progress=lambda *_: None)
+
+
+@pytest.mark.parametrize("url", ["http://huggingface.co/test", "https://evil.example/test",
+                                 "https://huggingface.co@evil.example/test", "https://huggingface.co:444/test"])
+def test_model_download_rejects_untrusted_redirects(url):
+    assert not models._trusted_download(url)

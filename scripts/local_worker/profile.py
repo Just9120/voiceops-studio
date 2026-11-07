@@ -6,9 +6,10 @@ import os
 from pathlib import Path
 import tempfile
 
-from .protocol import StudioClient, WorkerError, strict_json
+from .protocol import MODEL, MODEL_REVISIONS, PARAKEET_MODEL, StudioClient, WorkerError, strict_json
 
 FORMAT = "voiceops-local-worker-v1"
+IDENTITY_FORMAT = "voiceops-local-companion-identity-v1"
 ENTROPY = b"VoiceOpsStudio.local-worker.profile.v1"
 
 
@@ -48,37 +49,54 @@ def default_profile():
     return Path(os.environ["LOCALAPPDATA"]) / "VoiceOpsStudio" / "local-worker" / "profile.json"
 
 
-def read_profile(path, *, unseal=None):
+def read_profile(path, *, unseal=None, identity_only=False):
     unseal = unseal or (lambda value: protect(value, decrypt=True))
     try:
         if Path(path).stat().st_size > 65536:
             raise ValueError()
         outer = strict_json(Path(path).read_bytes())
-        if not isinstance(outer, dict) or set(outer) != {"format", "sealed"} or outer["format"] != FORMAT:
+        expected_format = IDENTITY_FORMAT if identity_only else FORMAT
+        if not isinstance(outer, dict) or set(outer) != {"format", "sealed"} or outer["format"] != expected_format:
             raise ValueError()
         raw = unseal(base64.b64decode(outer["sealed"], validate=True))
         if len(raw) > 32768:
             raise ValueError()
         data = strict_json(raw)
-        if not isinstance(data, dict) or set(data) != {"origin", "token", "paths", "verified_files"} or not isinstance(data["verified_files"], dict):
+        if identity_only:
+            if not isinstance(data, dict) or set(data) != {"origin", "token"}:
+                raise ValueError()
+            StudioClient(data["origin"], data["token"])
+            return data
+        fields = {"origin", "token", "paths", "verified_files"}
+        if (not isinstance(data, dict) or not fields <= data.keys() <= fields | {"model", "managed_root"}
+                or not isinstance(data["verified_files"], dict)):
             raise ValueError()
-        StudioClient(data["origin"], data["token"])
+        model = data.get("model", MODEL)
+        if not isinstance(model, str) or model not in MODEL_REVISIONS:
+            raise ValueError()
+        managed = data.get("managed_root")
+        if managed is not None and (not isinstance(managed, str) or not Path(managed).is_absolute()):
+            raise ValueError()
+        StudioClient(data["origin"], data["token"], model=model)
         if not isinstance(data["paths"], dict) or set(data["paths"]) != {"runtime", "decoder", "encoder", "ffmpeg", "ffprobe"}:
             raise ValueError()
-        if any(not isinstance(value, str) or not Path(value).is_absolute() for value in data["paths"].values()):
-            raise ValueError()
+        for key, value in data["paths"].items():
+            if key == "encoder" and model == PARAKEET_MODEL and value is None:
+                continue
+            if not isinstance(value, str) or not Path(value).is_absolute():
+                raise ValueError()
         return data
     except (OSError, ValueError, TypeError, KeyError, WorkerError):
         raise WorkerError("local_profile_unavailable") from None
 
 
-def write_profile(path, data, *, replace=False, seal=None, unseal=None):
+def write_profile(path, data, *, replace=False, seal=None, unseal=None, identity_only=False):
     seal = seal or protect
     path = Path(path)
     previous = None
     if path.exists():
         # Never overwrite an unrelated file or silently replace another pairing.
-        read_profile(path, unseal=unseal)
+        read_profile(path, unseal=unseal, identity_only=identity_only)
         if not replace:
             raise WorkerError("local_profile_already_exists")
         previous = path.read_bytes()
@@ -86,7 +104,8 @@ def write_profile(path, data, *, replace=False, seal=None, unseal=None):
     raw = json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
     if len(raw) > 32768:
         raise WorkerError("local_profile_unavailable")
-    outer = json.dumps({"format": FORMAT, "sealed": base64.b64encode(seal(raw)).decode()}, separators=(",", ":")).encode()
+    outer = json.dumps({"format": IDENTITY_FORMAT if identity_only else FORMAT,
+                        "sealed": base64.b64encode(seal(raw)).decode()}, separators=(",", ":")).encode()
     descriptor, temporary = tempfile.mkstemp(prefix=".pairing-", dir=path.parent)
     try:
         with os.fdopen(descriptor, "wb") as stream:
@@ -105,7 +124,7 @@ def write_profile(path, data, *, replace=False, seal=None, unseal=None):
                     os.link(temporary, path)
             except FileExistsError:
                 raise WorkerError("local_profile_changed") from None
-        if read_profile(path, unseal=unseal) != data:
+        if read_profile(path, unseal=unseal, identity_only=identity_only) != data:
             raise WorkerError("local_profile_unavailable")
     finally:
         if os.path.exists(temporary):

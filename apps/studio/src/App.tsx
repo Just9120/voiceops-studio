@@ -2,7 +2,8 @@ import { openYandexDiskPicker, diskFailureMessage, type DiskPickerMode } from ".
 import { parseProjectSourceCollection } from "./projectCollectionContracts";
 import { YandexDiskConnectionPanel } from "./YandexDiskConnectionPanel";
 import { LocalExecutionPanel } from "./LocalExecutionPanel";
-import { localDeviceReady, localDeviceStatus, localExecutionFailure, useLocalExecutionDevices } from "./localExecutionContracts";
+import { localDeviceReady, localDeviceStatus, localExecutionFailure, localModelName, LOCAL_MODEL, PARAKEET_MODEL,
+  useLocalExecutionDevices, type LocalModelSelection } from "./localExecutionContracts";
 import { auditLabel } from "./auditLabels";
 import { useFormDraft, readFormDraft, clearFormDrafts } from "./formDrafts";
 import { composerDraftRows } from "./composerDraft";
@@ -1714,6 +1715,7 @@ function PreparationPanel({
     useState<SttOperatingMode>("standard");
   const [selectedCredentialId, setSelectedCredentialId] = useState("");
   const [selectedLocalDeviceId, setSelectedLocalDeviceId] = useState("");
+  const [selectedLocalModel, setSelectedLocalModel] = useState<LocalModelSelection | null>(null);
   const localDevices = useLocalExecutionDevices(selectedProvider === "nemotron");
   const selectedLocalDevice = localDevices.items.find(row => row.id === selectedLocalDeviceId);
   const [languageMode, setLanguageMode] = useState<TranscriptionLanguageMode>(
@@ -1870,7 +1872,7 @@ function PreparationPanel({
   const [removedRow, setRemovedRow] = useState<{ row: ComposerRow; index: number } | null>(null);
   const titleBeforeEdit = useRef(new Map<string, string>());
   const [composerRestored, setComposerRestored] = useState(false);
-  useFormDraft(`batch:${project.id}`, { rows: composerDraftRows(rows), selectedProvider, selectedLocalDeviceId, operatingMode, languageMode, diarizationEnabled }, (value) => {
+  useFormDraft(`batch:${project.id}`, { rows: composerDraftRows(rows), selectedProvider, selectedLocalDeviceId, selectedLocalModel, operatingMode, languageMode, diarizationEnabled }, (value) => {
     if (!value || typeof value !== "object") return;
     const draft = value as Record<string, unknown>;
     const restored = composerDraftRows(draft.rows);
@@ -1880,6 +1882,11 @@ function PreparationPanel({
     if (["economic", "standard", "premium"].includes(String(draft.operatingMode))) setOperatingMode(draft.operatingMode as SttOperatingMode);
     if (["ru", "en", "detect"].includes(String(draft.languageMode))) setLanguageMode(draft.languageMode as TranscriptionLanguageMode);
     if (typeof draft.selectedLocalDeviceId === "string" && /^[a-f0-9-]{36}$/.test(draft.selectedLocalDeviceId)) setSelectedLocalDeviceId(draft.selectedLocalDeviceId);
+    const model = draft.selectedLocalModel as Partial<LocalModelSelection> | null | undefined;
+    if ((model?.model === LOCAL_MODEL || model?.model === PARAKEET_MODEL)
+      && typeof model.revision === "string" && /^[a-f0-9]{40}$/.test(model.revision)) {
+      setSelectedLocalModel({ model: model.model, revision: model.revision });
+    }
     if (typeof draft.diarizationEnabled === "boolean") setDiarizationEnabled(draft.diarizationEnabled);
     setComposerRestored(true);
   });
@@ -2111,6 +2118,7 @@ function PreparationPanel({
     operatingMode,
     selectedDictionaryIds,
     selectedLocalDeviceId,
+    selectedLocalModel,
   );
   useEffect(() => {
     if (preflight && preflight.signature !== signature) {
@@ -2229,7 +2237,10 @@ function PreparationPanel({
   const credentialBlocker = selectedProvider === "nemotron"
     ? localDevices.error || (!localDevices.checkedAt ? "Проверяем локальные компьютеры…"
       : !selectedLocalDevice ? "Выберите подключённый компьютер"
-      : !localDeviceReady(selectedLocalDevice) ? `${selectedLocalDevice.label}: ${localDeviceStatus(selectedLocalDevice)}` : "")
+      : !localDeviceReady(selectedLocalDevice) ? `${selectedLocalDevice.label}: ${localDeviceStatus(selectedLocalDevice)}`
+      : selectedLocalModel && (selectedLocalModel.model !== selectedLocalDevice.model || selectedLocalModel.revision !== selectedLocalDevice.model_revision)
+        ? "Активная модель на компьютере изменилась. Выберите компьютер и версию заново."
+      : selectedLocalDevice.model === PARAKEET_MODEL && !selectedLocalModel ? "Подтвердите выбор модели Parakeet." : "")
     : credentialsLoading
     ? "Загрузка профилей STT…"
     : credentialsError
@@ -3798,6 +3809,7 @@ function PreparationPanel({
       operatingMode,
       selectedDictionaryIds,
       selectedLocalDeviceId,
+      selectedLocalModel,
     );
     const confirming = activePreflight !== null;
     if (batchSubmission) {
@@ -5602,12 +5614,19 @@ function PreparationPanel({
             )}
           {selectedProvider === "nemotron" && <div>
             <label className="profile-selector">Компьютер для распознавания
-              <select aria-label="Компьютер для распознавания" value={selectedLocalDeviceId} onChange={event => setSelectedLocalDeviceId(event.target.value)}>
+              <select aria-label="Компьютер для распознавания" value={selectedLocalDeviceId} onChange={event => {
+                const device = localDevices.items.find(row => row.id === event.target.value);
+                setSelectedLocalDeviceId(event.target.value);
+                setSelectedLocalModel(device?.model && device.model_revision ? { model: device.model, revision: device.model_revision } : null);
+                if (device?.model === PARAKEET_MODEL) setDiarizationEnabled(false);
+              }}>
                 <option value="">Выберите компьютер</option>
                 {selectedLocalDeviceId && !selectedLocalDevice && <option value={selectedLocalDeviceId}>Ранее выбранный компьютер недоступен</option>}
-                {localDevices.items.map(row => <option key={row.id} value={row.id}>{row.label} · {localDeviceStatus(row)}</option>)}
+                {localDevices.items.map(row => <option key={row.id} value={row.id}>{row.label} · {localDeviceStatus(row)} · {localModelName(row.model)}{row.model_revision ? ` (${row.model_revision.slice(0, 8)})` : ""}</option>)}
               </select>
             </label>
+            <p className="muted">Studio передаст выбранное аудио этому компьютеру. Текст вернётся в Studio для истории и экспорта.</p>
+            {selectedLocalModel?.model === PARAKEET_MODEL && <p className="muted">Parakeet поддерживает выбранный фрагмент до 24 минут и таймкоды слов. Разделение спикеров недоступно.</p>}
             {credentialBlocker && <p className="notice" role="status">{credentialBlocker}</p>}
             <div className="actions"><button type="button" disabled={localDevices.loading} onClick={() => void localDevices.refresh()}>{localDevices.loading ? "Проверяем компьютеры…" : "Обновить компьютеры"}</button>
               <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("studio:navigate-settings", { detail: { section: "connections" } }))}>Подключить компьютер</button></div>
@@ -5640,7 +5659,7 @@ function PreparationPanel({
               type="checkbox"
               aria-label="Разделять на спикеров"
               checked={diarizationEnabled}
-              disabled={selectedModeCapability?.diarization === false}
+              disabled={selectedModeCapability?.diarization === false || (selectedProvider === "nemotron" && selectedLocalModel?.model === PARAKEET_MODEL)}
               onChange={(event) => {
                 setDiarizationEnabled(event.target.checked);
                 setRows((current) =>

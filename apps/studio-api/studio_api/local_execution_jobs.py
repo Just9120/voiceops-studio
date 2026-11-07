@@ -11,13 +11,25 @@ from .job_processing_lifecycle import acknowledge_job_cancellation, begin_job_pr
 from .job_retry_recovery import classify_source_attempt_failure, prepare_current_attempt_sources
 from .local_execution_devices import _utc, device_payload
 from .models import JobSourceStatus, JobStatus, Project, TranscriptionJob
-from .nemotron_local_result import NEMOTRON_MODEL
-from .transcription_metadata import stored_model
+from .local_model_identity import job_model_identity
 
 LOCAL_LEASE_TTL = timedelta(seconds=90)
 LOCAL_STAGES = ("source_download", "media_processing", "local_transcription", "local_result_upload")
 LOCAL_FAILURES = frozenset({"local_input_unavailable", "local_model_unavailable", "local_runtime_unavailable",
                             "local_processing_failed", "local_worker_interrupted", "local_result_invalid"})
+
+
+def device_model_in_use(db, device, model, *, active_only=False):
+    statuses = (JobStatus.processing,) if active_only else (JobStatus.queued, JobStatus.processing)
+    rows = db.scalars(select(TranscriptionJob.options_json).where(
+        TranscriptionJob.owner_user_id == device.owner_user_id,
+        TranscriptionJob.local_device_id == device.id, TranscriptionJob.provider == "nemotron",
+        TranscriptionJob.local_result_ready_at.is_(None), TranscriptionJob.status.in_(statuses),
+    ).execution_options(yield_per=100))
+    try:
+        return any(job_model_identity(options)[0] == model for options in rows)
+    finally:
+        rows.close()
 
 
 def local_job_payload(job):
@@ -29,10 +41,11 @@ def local_job_payload(job):
         options = json.loads(job.options_json or "{}")
     except (TypeError, ValueError):
         options = {}
+    model, revision = job_model_identity(job.options_json)
     return {"id": job.id, "lease_generation": job.lease_generation,
             "lease_expires_at": _utc(job.lease_expires_at).isoformat(),
             "source_id": source.id, "source_name": source.original_filename, "size_bytes": source.size_bytes,
-            "model": NEMOTRON_MODEL, "language": job.language or "detect", "diarize": options.get("diarize", False),
+            "model": model, "model_revision": revision, "language": job.language or "detect", "diarize": options.get("diarize", False),
             "progress": json.loads(job.work_progress_json) if job.work_progress_json else None}
 
 
@@ -43,7 +56,8 @@ def _scope(db, *, device, job_id, generation, now, allow_cancel=False):
     project = db.get(Project, job.project_id) if job is not None else None
     if job is None or project is None or project.owner_user_id != device.owner_user_id or project.archived_at is not None:
         raise HTTPException(404, detail={"reason": "local_job_unavailable"})
-    if (job.provider != "nemotron" or stored_model(job.options_json) != NEMOTRON_MODEL or job.media_timeline_version != 2
+    model, _ = job_model_identity(job.options_json)
+    if (job.provider != "nemotron" or model is None or model != device.model or job.media_timeline_version != 2
             or job.status != JobStatus.processing or job.local_result_ready_at is not None
             or job.lease_owner_id != "local:" + device.id or job.lease_generation != generation
             or not is_lease_active(job, now)):
@@ -79,7 +93,7 @@ def claim_local_job(db, *, device, now):
         or_(TranscriptionJob.retry_not_before_at.is_(None), TranscriptionJob.retry_not_before_at <= now),
     ).order_by(TranscriptionJob.created_at, TranscriptionJob.id).limit(50).with_for_update(skip_locked=True)).all()
     for job in jobs:
-        if (stored_model(job.options_json) != NEMOTRON_MODEL or job.media_timeline_version != 2
+        if (job_model_identity(job.options_json)[0] != device.model or job.media_timeline_version != 2
                 or not build_claim_readiness(job, now=now)["ready_for_future_claim"]):
             continue
         relations = [relation for relation in job.sources if relation.status != JobSourceStatus.skipped]

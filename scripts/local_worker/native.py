@@ -4,6 +4,7 @@ import http.client
 from dataclasses import dataclass
 import json
 import math
+import os
 from pathlib import Path
 import queue
 import secrets
@@ -14,7 +15,7 @@ import urllib.error
 import urllib.request
 
 from .process import OwnedProcess
-from .protocol import MODEL, RUNTIME_VERSION, MAX_NATIVE_RESPONSE_BYTES, NoRedirect, WorkerError, complete_native_result, file_sha256, strict_json
+from .protocol import MODEL, RUNTIME_VERSION, MAX_NATIVE_RESPONSE_BYTES, PARAKEET_BYTES, PARAKEET_MODEL, PARAKEET_SHA256, NoRedirect, WorkerError, complete_native_result, file_sha256, strict_json
 
 RUNTIME_SHA256 = "8d90b48e4ed4f60a7847b86a983dafc183b3448bcf2722777d3209546cb0c1e4"
 DECODER_SHA256 = "0c47d4ab6c783e7606ec03714b354fab0b2052027a7ea1991e7e2d3009c345ad"
@@ -23,28 +24,41 @@ PINNED_FILES = {"runtime": (1850880, RUNTIME_SHA256), "decoder": (19678656672, D
                 "encoder": (1670410080, ENCODER_SHA256)}
 
 
+def model_scratch_root(root, paths):
+    default = Path(root) / "scratch"
+    if os.name == "nt" and not str(default).isascii():
+        fallback = paths.decoder.parent / ".voiceops-scratch"
+        if not str(fallback).isascii():
+            raise WorkerError("local_model_path_unsupported")
+        return fallback
+    return default
+
+
 @dataclass(frozen=True)
 class NativePaths:
     runtime: Path
     decoder: Path
-    encoder: Path
+    encoder: Path | None
     ffmpeg: Path
     ffprobe: Path
 
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, data, *, model=MODEL):
         try:
             if not isinstance(data, dict) or set(data) != {"runtime", "decoder", "encoder", "ffmpeg", "ffprobe"}:
                 raise ValueError()
+            if model == PARAKEET_MODEL and data["encoder"] is None:
+                return cls(**{key: Path(value).resolve(strict=True) if value is not None else None for key, value in data.items()})
             return cls(**{key: Path(value).resolve(strict=True) for key, value in data.items()})
         except (OSError, TypeError, ValueError):
             raise WorkerError("local_runtime_missing") from None
 
 
-def verify_installation(paths, *, check=lambda: None, verified_files=None):
+def verify_installation(paths, *, check=lambda: None, verified_files=None, model=MODEL):
     verified_files = verified_files if isinstance(verified_files, dict) else {}
     verified = {}
-    for field, (size, digest) in PINNED_FILES.items():
+    files = PINNED_FILES if model == MODEL else {"runtime": PINNED_FILES["runtime"], "decoder": (PARAKEET_BYTES, PARAKEET_SHA256)}
+    for field, (size, digest) in files.items():
         path = getattr(paths, field)
         try:
             before = path.stat()
