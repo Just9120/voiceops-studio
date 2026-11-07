@@ -4,26 +4,29 @@
 
 ### PERSONAL-WINDOWS-STT-20261107 — IN_PROGRESS
 
-Основание: владелец поручил реализовать согласованный план завершения personal и локальных моделей на Windows по редакции требований от 5 ноября. База первого PR — `56b744797551116f0ecf7ff7aaa8af996e3fc485`, ветка `codex/personal-local-stt-contract`. GitHub подтвердил merge PR347 на эту revision и обязательный strict `ci-required`. Последняя проверенная поставка этой базы: web41911520863, API/migration41912714415, worker41931215621.
+Основание 07Nov: владелец поручил весь остаток personal одной Goal и одним основным PR. Встроенная Goal активирована. Scope — LSTT-01…16 по требованиям от 5 ноября, регрессия NEM-01…04. База `f2e222e8e4173c86dd70e9f5934629948703ba62`, существующая локальная ветка `codex/windows-stt-device-enrollment`. PR348 уже в базе и в personal. Закрытый выпуск: версия Windows x64 скачивается из авторизованного Studio владельцем, маркирована как неподписанная и сопровождается SHA-256. Покупка сертификата не входит в scope.
 
-Порядок независимо поставляемых PR:
+Порядок локальных задач одного PR:
 
-1. Уточнения `MC-03`, `JOBREL-13`, трассировка новых требований. Результат — расход и условия продолжения задачи видны в Studio, существующее подтверждение и ограничения моделей сохранены.
-2. Установщик Windows x64, привязка через браузер, запуск и остановка компонента, импорт действующей привязки. Результат — пользователь может подключить ПК без терминала.
-3. Каталог Hugging Face, конфигурация ПК, профили Nemotron/Parakeet и управление версиями. Результат — подходящую модель можно найти и установить или импортировать с проверкой целостности.
-4. Выбор версии в задании, полный локальный результат и выпуск. Результат — обе модели проходят путь от установки до экспорта на синтетической записи.
+1. Установщик Windows x64, защищённое скачивание, привязка через браузер, запуск, остановка и импорт действующей привязки.
+2. Каталог Hugging Face, конфигурация ПК, профили Nemotron/Parakeet и управление версиями с проверкой целостности.
+3. Выбор версии в задании, полный локальный результат, recovery и экспорт. Проверка обеих моделей на синтетической записи.
 
 Зависимости: закреплённый NeMo-Speech.cpp, проверяемые веса и права на поставку артефактов, доступ к Windows x64 для чистой установки, штатные gates GitHub и VPS. Commercial, macOS/Linux, TTS, полностью офлайн-путь, F62 и системная почта personal вне этапа. Внешние платные STT не используются.
 
 | Этап | Риск / AC | Проверка и ожидаемый результат | Среда / обязательность |
 |---|---|---|---|
-| PR1 до push | MC-03, JOBREL-13 | `npm ci`, targeted Vitest, `npm run build` из `apps/studio`. Из root — portable тесты локальных устройств и просроченной lease. Действующие quotes, consent и fallback-инварианты сохранены. | Изолированные Node и Python с synthetic config, REQUIRED |
-| PR1 CI и delivery | JOBREL-13 и изменение web | `ci-required` и browser E2E, включая повторное открытие PWA. Exact merge revision, web health и build identity по [operations](runbooks/studio-platform-ops.md). | GitHub/Linux и personal VPS, REQUIRED |
-| PR2–4 до выпуска | LSTT-01…16, NEM-01…04 | Windows clean install, протоколы и UI на synthetic fixtures, проверка двух реальных локальных моделей на синтетическом аудио. Upgrade/rollback rehearsal при миграции. | Windows и Linux CI, REQUIRED по затронутому PR |
+| До push | LSTT-01…16, NEM-01…04, MC-03, JOBREL-13 | Из root portable тесты локального обработчика, API, lease, файлов и выдачи установщика. Из `apps/studio` targeted Vitest, lint, build. Проверить изоляцию аккаунтов, отсутствие cloud fallback и совместимость. | Локально, synthetic config, REQUIRED |
+| До выпуска | LSTT-07…16, установочный артефакт | Windows x64 без Python: скачать, сверить SHA-256, установить, связать с аккаунтом. Импорт, пауза/продолжение, отказ при повреждении или нехватке места. Обе реальные модели дают полный экспорт на синтетическом аудио. При блокировке Windows сохранить защиту и отразить результат проверки. | Windows clean environment, REQUIRED |
+| CI, merge, delivery | API/web, worker и release identity | `ci-required`, browser E2E, migration rehearsal при изменении схемы. Проверить exact merge revision, health и авторизованную выдачу правильного артефакта по [operations](runbooks/studio-platform-ops.md). | GitHub и personal VPS, REQUIRED |
 
-DoD: все применимые AC подтверждены подходящими тестами и Evidence, все PR прошли gates, поставлены на personal, Windows-артефакт установлен на чистом ПК, обе модели дают результат через Studio. Новый функционал Windows учитывается отдельно от baseline personal. Исторические 476/476 относятся к редакции от 4 ноября на PR347.
+DoD: все применимые AC подтверждены, один PR прошёл gates и поставлен на personal. Проверенный неподписанный установщик доступен владельцу из Studio, обе модели дают результат на чистом Windows. Новый функционал Windows учитывается отдельно от baseline personal.
 
-Checkpoint PR1: UI показывает тип расхода и имя облачного провайдера до согласия, включая неизвестный тариф. Выбор локального режима объясняет расход ресурсов ПК и необходимость держать обработчик запущенным. Серверный контракт согласия и лимит локальной модели 60 минут сохранены. Local Windows evidence на diff PR1: Vitest 261 PASS (`longMediaPreflight` и `App`), portable pytest 72 PASS (`test_studio_local_execution_devices`, `test_voiceops_local_worker`), lint, build и lightweight checks PASS. Проверка повторного открытия PWA добавлена в authenticated browser suite. Локально подтверждён её discovery, выполнение с PostgreSQL/Redis остаётся обязательным в CI. PR merge, web CD и проверка VPS ожидаются. Миграция/API/worker в PR1 неприменимы: изменение ограничено web, браузерным тестом и документацией.
+Checkpoint PR1: PR348 слит в `f2e222e8e4173c86dd70e9f5934629948703ba62`. MC-03/JOBREL-13: Vitest 261 PASS, portable pytest 72 PASS, lint/build PASS. Обязательный CI42353133170, authenticated browser reopen, main CI42353497216 и web CD42353528234 PASS. Personal web/публичный build-meta подтвердили exact merge SHA, все 5 контейнеров здоровы, схема 0045. API/worker в этой поставке не пересобирались. Базовый personal 476/476 на merge с уточнёнными MC-03 и JOBREL-13, Windows-этап 0/16 READY.
+
+Checkpoint 07Nov: единый кандидат включает browser pairing/DPAPI, проверку доступа к скачиванию, каталог и инвентаризацию ПК, загрузку/импорт и локальную проверку модели, привязку revision к задаче и приём результата без облачного STT. Local Windows CPU canary: одна синтетическая запись 9,57 с, Parakeet 23 слова за 3,0 с, Nemotron 23 слова за 196,28 с. Elapsed включает проверку файлов и холодный запуск; вывод о длительных записях из этой пробы не делается. Отдельная smoke-сборка установилась в изолированный каталог с ограниченным PATH и прошла self-test. Чистая ОС и полный путь из установленного приложения остаются обязательными до включения скачивания. Тестовые сборки не публикуются.
+
+Локально на кандидате от `0e0fa1b`: целевые portable Python 162 PASS, Vitest 294 PASS, lint/build и lightweight checks PASS. Chromium layout-only проверил раздел подключения и ссылку скачивания на ширинах 390/768/1280, внешние системы заменены synthetic fixtures. CI, merge и поставка ожидаются. В personal конфигурация закрытого выпуска выключена до подтверждения конкретного release-артефакта.
 
 ### PERSONAL-AUDIT-CLOSURE-20261104 — DONE
 

@@ -685,6 +685,8 @@ class TranscriptionJobBatchCreateIn(BaseModel):
     operating_mode: SttOperatingMode=SttOperatingMode.standard
     provider_credential_id: str|None=Field(default=None, max_length=36)
     local_device_id: str|None=Field(default=None, min_length=36, max_length=36)
+    local_model: str|None=Field(default=None, min_length=1, max_length=80)
+    local_model_revision: str|None=Field(default=None, pattern=r"^[0-9a-f]{40}$")
     language: TranscriptionLanguageMode=DEFAULT_TRANSCRIPTION_LANGUAGE_MODE
     options: TranscriptionJobOptionsIn=Field(default_factory=TranscriptionJobOptionsIn)
     items: list[BatchJobItemIn]=Field(min_length=1,max_length=50)
@@ -699,11 +701,16 @@ class TranscriptionJobBatchCreateIn(BaseModel):
 
     @model_validator(mode="after")
     def execution_target(self):
+        from .local_model_identity import MODEL_REVISIONS
         if self.provider == SttProvider.nemotron:
             if self.local_device_id is None or self.provider_credential_id is not None:
                 raise ValueError("Выберите локальный компьютер без облачного API-ключа")
-        elif self.local_device_id is not None:
-            raise ValueError("Локальный компьютер доступен только для Nemotron")
+            if (self.local_model is not None or self.local_model_revision is not None) and (
+                self.local_model not in MODEL_REVISIONS or self.local_model_revision != MODEL_REVISIONS[self.local_model]
+            ):
+                raise ValueError("Выберите поддерживаемую версию локальной модели")
+        elif any(value is not None for value in (self.local_device_id, self.local_model, self.local_model_revision)):
+            raise ValueError("Локальный компьютер доступен только для локального распознавания")
         return self
 
 class DiagnosticDebugSessionIn(BaseModel):
@@ -1376,6 +1383,8 @@ def job_payload(job: TranscriptionJob, include_sources=False):
     payload={"id": job.id, "project_id": job.project_id, "status": job.status.value, "title": job.title, "provider": job.provider, "operating_mode": getattr(job,"operating_mode","standard"), "language_mode": browser_language_mode(getattr(job, "language", None)), "diarization_enabled": job_diarization_enabled(getattr(job, "options_json", None)), "media_clip": media_clip, "terminal_dismissed_at": terminal_dismissed_at.isoformat() if terminal_dismissed_at else None, "history_attention_resolved_at": attention_resolved_at.isoformat() if attention_resolved_at else None, "history_attention_resolution": getattr(job,"history_attention_resolution",None), "history_attention_linked_job_id": getattr(job,"history_attention_linked_job_id",None), "source_count": len(job.sources), "created_at": job.created_at.isoformat(), "updated_at": job.updated_at.isoformat(), "cancelled_at": job.cancelled_at.isoformat() if job.cancelled_at else None, "cancel_requested_at": job.cancel_requested_at.isoformat() if job.cancel_requested_at else None, "attempt_count": job.attempt_count or 0, "started_at": job.started_at.isoformat() if job.started_at else None, "finished_at": job.finished_at.isoformat() if job.finished_at else None, "error_code": safe_failure_metadata_value(job.error_code), "error_message": safe_failure_metadata_value(job.error_message), "output_provider": getattr(job,"output_provider","google_drive"), "output_folder": safe_job_output_folder_payload(job), "speaker_identities": [job_speaker_payload(row) for row in sorted(getattr(job, "speakers", ()), key=lambda row: row.display_ordinal)], "usage_cost": job_usage_cost_payload(job)}
     payload["source_names"]=[entry.source.original_filename for entry in sorted(job.sources, key=lambda item: item.position)[:3]]
     if job.provider == "nemotron":
+        from .local_model_identity import job_model_identity
+        model, revision = job_model_identity(job.options_json)
         try:
             local_options = json.loads(job.options_json or "{}")
             local_label = local_options.get("_local_device_label")
@@ -1383,7 +1392,7 @@ def job_payload(job: TranscriptionJob, include_sources=False):
             local_label = None
         payload["local_execution"] = {"device_id": job.local_device_id,
             "device_name": local_label if isinstance(local_label, str) and 0 < len(local_label) <= 80 and not any(ord(c) < 32 for c in local_label) else "Локальный компьютер",
-            "result_accepted": job.local_result_ready_at is not None}
+            "result_accepted": job.local_result_ready_at is not None, "model": model, "model_revision": revision}
     batch=browser_batch_reference(job)
     if batch is not None: payload["batch"]=batch
     if include_sources: payload["sources"]=[job_source_payload(s) for s in sorted(job.sources, key=lambda item: item.position)]
@@ -2666,6 +2675,9 @@ def _existing_batch_is_complete(existing, request_hash: str, expected_count: int
 def _normalize_batch_creation_input(data: TranscriptionJobBatchCreateIn):
     language=stored_language_mode(data.language)
     options_payload={"diarize":bool(data.options.diarize),"dictionary_ids":list(data.options.dictionary_ids)}
+    if data.local_model is not None:
+        options_payload["local_model"] = data.local_model
+        options_payload["local_model_revision"] = data.local_model_revision
     options_json=json.dumps(options_payload,sort_keys=True,separators=(",",":"))
     explicit_provider_credential_id=data.provider_credential_id.strip() if isinstance(data.provider_credential_id, str) and data.provider_credential_id.strip() else None
     pairs=set(); duplicate_pair_found=False; source_ids=[]; folder_ids=[]; titles=[]; reprocess_existing=[]; media_clips=[]
@@ -2690,14 +2702,22 @@ def _normalize_batch_creation_input(data: TranscriptionJobBatchCreateIn):
         hash_items.append(hash_item)
     return language, options_json, explicit_provider_credential_id, duplicate_pair_found, source_ids, folder_ids, titles, reprocess_existing, media_clips, hash_items
 
-def _validate_new_batch_targets(db: Session, user: User, project: Project, *, provider, operating_mode, language, diarization_enabled, dictionary_ids, explicit_provider_credential_id, duplicate_pair_found, source_ids, folder_ids, media_clips, output_providers=None, local_device_id=None):
+def _validate_new_batch_targets(db: Session, user: User, project: Project, *, provider, operating_mode, language, diarization_enabled, dictionary_ids, explicit_provider_credential_id, duplicate_pair_found, source_ids, folder_ids, media_clips, output_providers=None, local_device_id=None, local_model=None):
     try:
         capability=validate_selection(settings,provider=provider,mode=operating_mode,language=language,diarization=diarization_enabled,dictionary_count=len(dictionary_ids))
     except SttCapabilityError as exc:
         raise HTTPException(422,detail={"reason":exc.reason.value}) from None
     if provider == SttProvider.nemotron:
+        from dataclasses import replace
         from .local_execution_devices import require_ready_device
-        require_ready_device(db, owner_user_id=user.id, device_id=local_device_id, now=utcnow())
+        from .local_model_identity import NEMOTRON_MODEL, PARAKEET_MODEL, PARAKEET_MAX_DURATION_SECONDS
+        model = local_model or NEMOTRON_MODEL
+        require_ready_device(db, owner_user_id=user.id, device_id=local_device_id, now=utcnow(), model=model)
+        if model == PARAKEET_MODEL:
+            if diarization_enabled:
+                raise HTTPException(422, detail={"reason": "diarization_unsupported"})
+            capability = replace(capability, model=model, diarization=False,
+                file_constraints=replace(capability.file_constraints, max_duration_seconds=PARAKEET_MAX_DURATION_SECONDS))
     else:
         health=provider_health(db,provider=provider.value,operating_mode=operating_mode.value,now=utcnow().replace(tzinfo=None))
         if not health.available:
@@ -2818,7 +2838,7 @@ def _require_batch_preflight_decisions(sources, media_clips, matches, provider_a
 def preflight_transcription_jobs_batch(project_id: str, data: TranscriptionJobBatchCreateIn, request: Request, response: Response, pair=Depends(require_csrf), db: Session=Depends(get_db)):
     _,user=pair; limiter.check("job:batch:preflight:"+user.id, 60, 3600); _browser_capability_cache_headers(response); p=owned_project_or_404(db,user,project_id)
     language, _options_json, explicit_provider_credential_id, duplicate_pair_found, source_ids, folder_ids, titles, reprocess_existing, media_clips, _hash_items=_normalize_batch_creation_input(data)
-    _provider_credential_id, sources, verified_by_id, capability, dictionary_terms=_validate_new_batch_targets(db,user,p,provider=data.provider,operating_mode=data.operating_mode,language=language,diarization_enabled=data.options.diarize,dictionary_ids=data.options.dictionary_ids,explicit_provider_credential_id=explicit_provider_credential_id,duplicate_pair_found=duplicate_pair_found,source_ids=source_ids,folder_ids=folder_ids,media_clips=media_clips,output_providers=[item.output_provider for item in data.items],local_device_id=data.local_device_id)
+    _provider_credential_id, sources, verified_by_id, capability, dictionary_terms=_validate_new_batch_targets(db,user,p,provider=data.provider,operating_mode=data.operating_mode,language=language,diarization_enabled=data.options.diarize,dictionary_ids=data.options.dictionary_ids,explicit_provider_credential_id=explicit_provider_credential_id,duplicate_pair_found=duplicate_pair_found,source_ids=source_ids,folder_ids=folder_ids,media_clips=media_clips,output_providers=[item.output_provider for item in data.items],local_device_id=data.local_device_id,local_model=data.local_model)
     existing_result_matches=_load_batch_existing_result_matches(db,user,sources,media_clips,provider=data.provider.value,model=capability.model,language=language,diarization_enabled=data.options.diarize)
     include_attention_job_id=request.headers.get("x-studio-preflight-recovery") == "1"
     attention_job_ids={} if include_attention_job_id else None
@@ -2854,14 +2874,15 @@ def create_transcription_jobs_batch(project_id: str, data: TranscriptionJobBatch
         if not _existing_batch_is_complete(existing, request_hash, len(data.items)):
             raise HTTPException(409, "Idempotency-Key already used with a different request")
         return {"jobs":[job_payload(j, include_sources=True) for j in existing], "created_count": len(existing), "replayed": True}
-    provider_credential_id, sources, verified_by_id, capability, dictionary_terms=_validate_new_batch_targets(db,user,p,provider=data.provider,operating_mode=data.operating_mode,language=language,diarization_enabled=data.options.diarize,dictionary_ids=data.options.dictionary_ids,explicit_provider_credential_id=explicit_provider_credential_id,duplicate_pair_found=duplicate_pair_found,source_ids=source_ids,folder_ids=folder_ids,media_clips=media_clips,output_providers=[item.output_provider for item in data.items],local_device_id=data.local_device_id)
+    provider_credential_id, sources, verified_by_id, capability, dictionary_terms=_validate_new_batch_targets(db,user,p,provider=data.provider,operating_mode=data.operating_mode,language=language,diarization_enabled=data.options.diarize,dictionary_ids=data.options.dictionary_ids,explicit_provider_credential_id=explicit_provider_credential_id,duplicate_pair_found=duplicate_pair_found,source_ids=source_ids,folder_ids=folder_ids,media_clips=media_clips,output_providers=[item.output_provider for item in data.items],local_device_id=data.local_device_id,local_model=data.local_model)
     request_hash=_batch_hash(p.id,provider_credential_id,language,options_json,hash_items,provider=data.provider.value,operating_mode=data.operating_mode.value,local_device_id=data.local_device_id)
     try:
         jobs=[]
         local_device = None
         if data.provider == SttProvider.nemotron:
             from .local_execution_devices import require_ready_device
-            local_device = require_ready_device(db, owner_user_id=user.id, device_id=data.local_device_id, now=utcnow(), lock=True)
+            local_device = require_ready_device(db, owner_user_id=user.id, device_id=data.local_device_id, now=utcnow(), lock=True,
+                                                model=capability.model)
         _require_catalog_identity_locks(db, user, sources)
         sources=validate_job_sources(db, p.id, source_ids, lock_mode="no_key_update")
         _require_known_batch_clip_bounds(db, user, sources, media_clips)
@@ -2881,6 +2902,8 @@ def create_transcription_jobs_batch(project_id: str, data: TranscriptionJobBatch
                 job.local_device_id = local_device.id
                 local_options = json.loads(job_options_json or "{}")
                 local_options["_local_device_label"] = local_device.label
+                if data.local_model_revision is not None:
+                    local_options["_local_model_revision"] = data.local_model_revision
                 job.options_json = json.dumps(local_options, sort_keys=True, separators=(",", ":"))
             job.output_provider=getattr(vf,"provider","google_drive")
             if job.output_provider != data.items[idx].output_provider:
@@ -3916,7 +3939,11 @@ def post_job_retry(job_id: str, request: Request, data: JobRetryIn | None = None
     initial_readiness = compute_explicit_retry_readiness(db, job, now=utcnow().replace(tzinfo=None))
     if job.provider == "nemotron" and job.local_result_ready_at is None and job.status == JobStatus.failed:
         from .local_execution_devices import require_ready_device
-        require_ready_device(db, owner_user_id=user.id, device_id=job.local_device_id, now=utcnow(), lock=True)
+        from .local_model_identity import job_model_identity
+        model, _ = job_model_identity(job.options_json)
+        if model is None:
+            raise HTTPException(409, detail={"reason": "local_device_model_changed"})
+        require_ready_device(db, owner_user_id=user.id, device_id=job.local_device_id, now=utcnow(), lock=True, model=model)
     if job.output_provider == "yandex_disk" and initial_readiness.reason.value == "output_reconciliation_required":
         from .yandex_output_reconciliation import check_yandex_output_reconciliation
         try:

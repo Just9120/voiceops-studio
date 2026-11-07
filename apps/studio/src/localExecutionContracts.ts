@@ -2,10 +2,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./apiClient";
 
 export const LOCAL_MODEL = "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B";
+export const PARAKEET_MODEL = "parakeet-tdt-0.6b-v3.q8_0";
+export type LocalModelSelection = { model: string; revision: string };
+export function localModelName(model: string | null) {
+  if (model === LOCAL_MODEL) return "Nemotron 3.5 Transcribe";
+  if (model === PARAKEET_MODEL) return "Parakeet TDT 0.6B v3";
+  return "Модель не подтверждена";
+}
 export type LocalExecutionDevice = {
   id: string; label: string; credential_revision: number; online: boolean; ready: boolean;
   runtime_status: "unknown" | "loading_model" | "ready" | "model_missing" | "runtime_missing" | "runtime_error";
   runtime_version: string | null; model: string | null; last_seen_at: string | null; revoked_at: string | null;
+  model_revision?: string | null;
 };
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const statuses = ["unknown", "loading_model", "ready", "model_missing", "runtime_missing", "runtime_error"];
@@ -19,7 +27,9 @@ export function parseLocalDevice(raw: unknown): LocalExecutionDevice | null {
     || typeof raw.online !== "boolean" || typeof raw.ready !== "boolean" || !statuses.includes(String(raw.runtime_status))
     || ![raw.runtime_version, raw.model].every(value => value === null || typeof value === "string")
     || ![raw.last_seen_at, raw.revoked_at].every(value => value === null || typeof value === "string" && Number.isFinite(Date.parse(value)))) return null;
-  if (raw.ready && (!raw.online || raw.runtime_status !== "ready" || raw.model !== LOCAL_MODEL || raw.last_seen_at === null || raw.revoked_at !== null)) return null;
+  if (raw.model_revision != null && (typeof raw.model_revision !== "string" || !/^[a-f0-9]{40}$/.test(raw.model_revision))) return null;
+  if (raw.ready && (!raw.online || raw.runtime_status !== "ready" || raw.last_seen_at === null || raw.revoked_at !== null ||
+    (raw.model !== LOCAL_MODEL && (raw.model !== PARAKEET_MODEL || !raw.model_revision)))) return null;
   return raw as LocalExecutionDevice;
 }
 export function parseLocalDevices(raw: unknown): LocalExecutionDevice[] {
@@ -50,6 +60,7 @@ export function localExecutionFailure(error: unknown) {
   if (reason === "local_device_limit") return "Можно подключить до 8 компьютеров. Отзовите доступ ненужного компьютера.";
   if (reason === "local_device_changed") return "Состояние компьютера изменилось. Обновите список и повторите действие с актуальным состоянием.";
   if (reason === "local_device_not_ready") return "Выбранный компьютер не готов. Запустите его обработчик и дождитесь статуса «Готов к работе».";
+  if (reason === "local_device_model_changed") return "Компьютер сейчас использует другую версию модели. Запустите назначенную версию и обновите список.";
   return "Не удалось подтвердить действие. Обновите список; при повторе подключения Studio проверит тот же запрос без создания дубля.";
 }
 

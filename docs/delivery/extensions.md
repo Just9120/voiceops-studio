@@ -15,24 +15,24 @@ Source snapshot04Nov2026 paragraphs382..386 восстановлен в NEM-01..
 
 Отдельный Windows-этап. Базовая поставка PR347 закрывает NEM-01…04 в исходном scope. Проверки нового мастера, каталога и второй модели учитываются здесь.
 
-| AC | Состояние | PR | Evidence / следующий шаг |
+| AC | Состояние | Блок одного PR | Evidence / следующий шаг |
 |---|---|---|---|
-| `LSTT-01` | BACKLOG | PR3 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
-| `LSTT-02` | BACKLOG | PR3 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
-| `LSTT-03` | BACKLOG | PR3 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
-| `LSTT-04` | BACKLOG | PR3–4 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
-| `LSTT-05` | BACKLOG | PR3 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
-| `LSTT-06` | BACKLOG | PR2–3 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
-| `LSTT-07` | BACKLOG | PR2 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
-| `LSTT-08` | BACKLOG | PR2 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
-| `LSTT-09` | BACKLOG | PR3 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
-| `LSTT-10` | BACKLOG | PR3 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
-| `LSTT-11` | BACKLOG | PR3–4 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
-| `LSTT-12` | BACKLOG | PR2–4 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
-| `LSTT-13` | BACKLOG | PR4 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
-| `LSTT-14` | BACKLOG | PR4 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
-| `LSTT-15` | BACKLOG | PR4 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
-| `LSTT-16` | BACKLOG | PR1–4 | Проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress) |
+| `LSTT-01` | IN_PROGRESS | Каталог | Кандидат и проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress). |
+| `LSTT-02` | IN_PROGRESS | Инвентаризация ПК | Кандидат и проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress). |
+| `LSTT-03` | IN_PROGRESS | Карточка модели | Кандидат и проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress). |
+| `LSTT-04` | IN_PROGRESS | Подбор | Кандидат и проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress). |
+| `LSTT-05` | IN_PROGRESS | Локальная проба | Кандидат и проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress). |
+| `LSTT-06` | IN_PROGRESS | Импорт | Кандидат и проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress). |
+| `LSTT-07` | IN_PROGRESS | Закрытый установщик | Кандидат и проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress). |
+| `LSTT-08` | IN_PROGRESS | Привязка | Кандидат и проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress). |
+| `LSTT-09` | IN_PROGRESS | Возобновляемая загрузка | Кандидат и проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress). |
+| `LSTT-10` | IN_PROGRESS | Управление версиями | Кандидат и проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress). |
+| `LSTT-11` | IN_PROGRESS | Фиксация версии | Кандидат и проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress). |
+| `LSTT-12` | IN_PROGRESS | Статусы и действия | Кандидат и проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress). |
+| `LSTT-13` | IN_PROGRESS | Локальная задача | Кандидат и проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress). |
+| `LSTT-14` | IN_PROGRESS | Восстановление | Кандидат и проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress). |
+| `LSTT-15` | IN_PROGRESS | Путь данных | Кандидат и проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress). |
+| `LSTT-16` | IN_PROGRESS | Разделение расхода | Кандидат и проверки по [плану](../delivery-plan.md#personal-windows-stt-20261107--in_progress). |
 
 ### `AUDIO-QUALITY-PROGRESS-TRIM-01`
 

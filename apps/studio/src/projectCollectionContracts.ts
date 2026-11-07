@@ -474,7 +474,9 @@ function parseJob(
   const localExecution = local === undefined ? undefined : isRecord(local) && provider === "nemotron" &&
     typeof local.device_id === "string" && /^[a-f0-9-]{36}$/.test(local.device_id) &&
     boundedString(local.device_name, 80) && typeof local.result_accepted === "boolean"
-    ? { device_id: local.device_id, device_name: local.device_name as string, result_accepted: local.result_accepted }
+    ? { device_id: local.device_id, device_name: local.device_name as string, result_accepted: local.result_accepted,
+      ...(boundedString(local.model, 80) ? { model: local.model as string } : {}),
+      ...(typeof local.model_revision === "string" && /^[a-f0-9]{40}$/.test(local.model_revision) ? { model_revision: local.model_revision } : {}) }
     : false;
   if (
     !id ||

@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from .models import LocalExecutionDevice, User, UserStatus
-from .nemotron_local_result import NEMOTRON_MODEL
+from .local_model_identity import MODEL_REVISIONS
 
 DEVICE_ONLINE_SECONDS = 90
 MAX_ACTIVE_DEVICES = 8
@@ -30,13 +30,14 @@ def device_payload(row, *, now):
     online = bool(row.revoked_at is None and row.last_seen_at is not None
                   and _utc(now) - timedelta(seconds=DEVICE_ONLINE_SECONDS) <= _utc(row.last_seen_at) <= _utc(now))
     return {"id": row.id, "label": row.label, "credential_revision": row.credential_revision,
-            "online": online, "ready": bool(online and row.runtime_status == "ready" and row.model == NEMOTRON_MODEL),
+            "online": online, "ready": bool(online and row.runtime_status == "ready" and row.model in MODEL_REVISIONS),
             "runtime_status": row.runtime_status, "runtime_version": row.runtime_version, "model": row.model,
+            "model_revision": MODEL_REVISIONS.get(row.model),
             "last_seen_at": _utc(row.last_seen_at).isoformat() if row.last_seen_at else None,
             "revoked_at": _utc(row.revoked_at).isoformat() if row.revoked_at else None}
 
 
-def pair_device(db, *, owner_user_id, label, creation_key, now):
+def pair_device(db, *, owner_user_id, label, creation_key, now, enrollment_verifier=None):
     # Same owner lock serializes the count and idempotency decision on PostgreSQL.
     owner = db.scalar(select(User).where(User.id == owner_user_id, User.status == UserStatus.active).with_for_update())
     if owner is None:
@@ -46,6 +47,10 @@ def pair_device(db, *, owner_user_id, label, creation_key, now):
     if existing is not None:
         if existing.label != label:
             raise HTTPException(409, detail={"reason": "local_device_request_changed"})
+        if enrollment_verifier is not None:
+            expected = hashlib.sha256(f"vs-local.{creation_key}.{enrollment_verifier}".encode("ascii")).hexdigest()
+            if existing.id != creation_key or existing.revoked_at is not None or not hmac.compare_digest(existing.token_hash, expected):
+                raise HTTPException(409, detail={"reason": "local_device_changed"})
         # Secrets cannot be recovered. A lost response requires explicit rotation.
         return existing, None
     rows = db.scalars(select(LocalExecutionDevice.id).where(
@@ -53,8 +58,13 @@ def pair_device(db, *, owner_user_id, label, creation_key, now):
         .limit(MAX_ACTIVE_DEVICES)).all()
     if len(rows) >= MAX_ACTIVE_DEVICES:
         raise HTTPException(409, detail={"reason": "local_device_limit"})
-    device_id = str(uuid.uuid4())
-    raw, digest = _secret(device_id)
+    if enrollment_verifier is None:
+        device_id = str(uuid.uuid4())
+        raw, digest = _secret(device_id)
+    else:
+        device_id = creation_key
+        raw = f"vs-local.{device_id}.{enrollment_verifier}"
+        digest = hashlib.sha256(raw.encode("ascii")).hexdigest()
     row = LocalExecutionDevice(id=device_id, owner_user_id=owner_user_id, label=label,
         creation_key=creation_key, token_hash=digest, credential_revision=1, runtime_status="unknown",
         created_at=now, updated_at=now)
@@ -72,12 +82,14 @@ def owned_device(db, *, owner_user_id, device_id, lock=False):
     return row
 
 
-def require_ready_device(db, *, owner_user_id, device_id, now, lock=False):
+def require_ready_device(db, *, owner_user_id, device_id, now, lock=False, model=None):
     if not device_id:
         raise HTTPException(422, detail={"reason": "local_device_required"})
     row = owned_device(db, owner_user_id=owner_user_id, device_id=device_id, lock=lock)
     if not device_payload(row, now=now)["ready"]:
         raise HTTPException(409, detail={"reason": "local_device_not_ready"})
+    if model is not None and row.model != model:
+        raise HTTPException(409, detail={"reason": "local_device_model_changed"})
     return row
 
 

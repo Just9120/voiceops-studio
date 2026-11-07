@@ -97,7 +97,7 @@ export type JobSpeakerIdentity = {
 };
 export type TranscriptionJob = {
   output_provider?: "google_drive" | "yandex_disk";
-  local_execution?: { device_id: string; device_name: string; result_accepted: boolean };
+  local_execution?: { device_id: string; device_name: string; result_accepted: boolean; model?: string; model_revision?: string };
   id: string;
   project_id: string;
   status: JobСтатус;

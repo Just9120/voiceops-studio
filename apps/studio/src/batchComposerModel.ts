@@ -42,6 +42,8 @@ export type BatchCreateRequest = {
   operating_mode?: SttOperatingMode;
   provider_credential_id: string | null;
   local_device_id?: string;
+  local_model?: string;
+  local_model_revision?: string;
   language: TranscriptionLanguageMode;
   options: { diarize: boolean; dictionary_ids?: string[] };
   items: {
@@ -186,6 +188,7 @@ export function composerSignature(
   operatingMode?: SttOperatingMode,
   dictionaryIds?: string[],
   localDeviceId?: string,
+  localModel?: { model: string; revision: string } | null,
 ) {
   try {
     return JSON.stringify(
@@ -198,6 +201,7 @@ export function composerSignature(
         operatingMode,
         dictionaryIds,
         localDeviceId,
+        localModel,
       ),
     );
   } catch {
@@ -209,6 +213,7 @@ export function composerSignature(
       operatingMode,
       dictionaryIds,
       localDeviceId,
+      localModel,
       invalid_rows: rows.map((row) => ({
         id: row.id,
         source_id: row.source_id,
@@ -372,6 +377,7 @@ export function buildBatchCreateRequest(
   operatingMode?: SttOperatingMode,
   dictionaryIds?: string[],
   localDeviceId?: string,
+  localModel?: { model: string; revision: string } | null,
 ): BatchCreateRequest {
   const items = expandComposerRows(rows).map((item) => item.request_item);
   if (items.length > MAX_BATCH_ITEMS) throw new Error("Batch item limit exceeded");
@@ -382,7 +388,13 @@ export function buildBatchCreateRequest(
     items,
   };
   if (provider) request.provider = provider;
-  if (provider === "nemotron" && localDeviceId) request.local_device_id = localDeviceId;
+  if (provider === "nemotron" && localDeviceId) {
+    request.local_device_id = localDeviceId;
+    if (localModel) {
+      request.local_model = localModel.model;
+      request.local_model_revision = localModel.revision;
+    }
+  }
   if (operatingMode) request.operating_mode = operatingMode;
   if (dictionaryIds?.length) request.options.dictionary_ids = [...dictionaryIds];
   return request;

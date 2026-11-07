@@ -6,6 +6,7 @@ import json
 MODEL_OPTION = "_stt_model"
 SUPPORTED_MODELS = {
     ("nemotron", "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B"): "nemotron_35_transcribe_local",
+    ("nemotron", "parakeet-tdt-0.6b-v3.q8_0"): "parakeet_tdt_v3_local",
     ("mistral", "voxtral-small-transcribe-3"): "mistral_voxtral_small_transcribe_3",
     ("gemini", "gemini-3.5-transcribe"): "gemini_35_transcribe",
     ("tbank", "default"): "tbank_default",

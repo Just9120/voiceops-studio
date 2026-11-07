@@ -1,5 +1,6 @@
 """One local execution at a time; liveness never fabricates model progress."""
 import gzip
+from contextlib import ExitStack, nullcontext
 import hashlib
 import http.client
 import json
@@ -9,14 +10,16 @@ import shutil
 import threading
 import time
 
-from .native import NativePaths, NativeServer, prepare_audio, probe_audio, verify_installation
+from .native import NativePaths, NativeServer, model_scratch_root, prepare_audio, probe_audio, verify_installation
+from .parakeet import transcribe_parakeet
 from .process import owned_scratch, recovered_workspace, single_instance
-from .protocol import APIError, MAX_RESULT_BYTES, Stopped, StudioClient, WorkerError, checked_job, response_bytes
+from .protocol import APIError, MAX_RESULT_BYTES, MODEL, MODEL_REVISIONS, PARAKEET_MODEL, Stopped, StudioClient, WorkerError, checked_job, response_bytes
 
 
 class DevicePulse:
-    def __init__(self, client):
+    def __init__(self, client, check_stop=lambda: None):
         self.client = client
+        self.check_stop = check_stop
         self.status = "loading_model"
         self.failure = None
         self.closed = threading.Event()
@@ -39,6 +42,7 @@ class DevicePulse:
                 return
 
     def check(self):
+        self.check_stop()
         if self.failure is not None:
             raise self.failure
         if time.monotonic() - self.last_success > 60:
@@ -142,8 +146,10 @@ def download_source(client, job, destination, pulse):
 
 
 def submit_result(client, job, result, sha, pulse):
-    raw = json.dumps({"generation": job["generation"], "source_sha256": sha, "result": result},
-        ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
+    envelope = {"generation": job["generation"], "source_sha256": sha, "result": result}
+    if job.get("model") == PARAKEET_MODEL:
+        envelope.update(model=PARAKEET_MODEL, model_revision=MODEL_REVISIONS[PARAKEET_MODEL])
+    raw = json.dumps(envelope, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
     if len(raw) > MAX_RESULT_BYTES + 4096:
         raise WorkerError("local_result_invalid")
     body = gzip.compress(raw, mtime=0)
@@ -196,36 +202,52 @@ def run_job(client, job, paths, server, directory, *, global_check=lambda: None)
         measured = prepare_audio(paths, source, prepared, start=start, duration=selected, directory=scratch, check=pulse.check,
             progress=lambda done, total: pulse.phase("media_processing", done, total, "seconds"))
         pulse.phase("local_transcription")
-        result = server.transcribe(prepared, duration=measured, language=job["language"], diarize=job["diarize"], check=pulse.check)
+        arguments = {"duration": measured, "language": job["language"], "diarize": job["diarize"], "check": pulse.check}
+        if server is None:
+            result = transcribe_parakeet(paths.runtime, paths.decoder, prepared, **arguments)
+        else:
+            result = server.transcribe(prepared, **arguments)
         pulse.check()
         submit_result(client, job, result, sha, pulse)
         return True
 
 
-def run(profile, *, root, notice=print):
-    client = StudioClient(profile["origin"], profile["token"])
-    with single_instance(root), recovered_workspace(Path(root) / "scratch") as (directory, cleanup), DevicePulse(client) as device:
-        if cleanup["preserved"]:
-            notice("Некоторые временные папки заняты или содержат неизвестные файлы и сохранены для проверки.")
+def run(profile, *, root, notice=print, check_stop=lambda: None):
+    model = profile.get("model", MODEL)
+    parakeet = model == PARAKEET_MODEL
+    client_args = {"model": model} if parakeet else {}
+    client = StudioClient(profile["origin"], profile["token"], **client_args)
+    with single_instance(root), ExitStack() as workspace, DevicePulse(client, check_stop) as device:
         try:
-            paths = NativePaths.from_dict(profile["paths"])
-            verify_installation(paths, check=device.check, verified_files=profile["verified_files"])
+            paths = NativePaths.from_dict(profile["paths"], **client_args)
+            verify_installation(paths, check=device.check, verified_files=profile["verified_files"], **client_args)
+        except Stopped:
+            raise
         except WorkerError as error:
             client.heartbeat("model_missing" if error.code == "local_model_unavailable" else "runtime_missing")
             raise
-        with NativeServer(paths, directory) as server:
+        directory, cleanup = workspace.enter_context(recovered_workspace(model_scratch_root(root, paths)))
+        if cleanup["preserved"]:
+            notice("Некоторые временные папки заняты или содержат неизвестные файлы и сохранены для проверки.")
+        with (nullcontext() if parakeet else NativeServer(paths, directory)) as server:
+            if parakeet:
+                device.status = "ready"
+                client.heartbeat("ready")
+                notice("Модель Parakeet проверена. Ожидаю задачи Studio.")
             while True:
                 device.check()
-                if server.process is not None and server.process.process.poll() is not None:
+                if server is not None and server.process is not None and server.process.process.poll() is not None:
                     device.status = "runtime_error"
                     client.heartbeat("runtime_error")
                     raise WorkerError("local_runtime_unavailable")
-                if server.process is None:
+                if server is not None and server.process is None:
                     device.status = "loading_model"
                     client.heartbeat("loading_model")
                     notice("Загрузка локальной модели…")
                     try:
                         server.start(device.check)
+                    except Stopped:
+                        raise
                     except WorkerError as error:
                         device.status = "runtime_error"
                         client.heartbeat("runtime_error")
@@ -246,12 +268,22 @@ def run(profile, *, root, notice=print):
                 if reply["job"] is None:
                     time.sleep(3)
                     continue
-                job = checked_job(reply["job"])
+                job = checked_job(reply["job"], model=model)
+                job["model"] = model
+                notice("Распознаю запись, назначенную в Studio…")
                 try:
                     done = run_job(client, job, paths, server, directory, global_check=device.check)
                     notice("Результат передан Studio для сохранения документа." if done else "Прерванная задача сохранена. Повторите её в Studio.")
                 except Stopped as error:
-                    server.close()
+                    if server is not None:
+                        server.close()
+                    if error.code == "local_worker_interrupted":
+                        try:
+                            client.json(f"/jobs/{job['id']}/failure", {"generation": job["generation"],
+                                        "reason": "local_worker_interrupted"})
+                        except APIError:
+                            pass  # A superseding lease or accepted result already has authority.
+                        raise
                     if error.code in {"local_device_unauthorized", "local_connection_lost"}:
                         raise
                     notice("Локальная задача остановлена. Состояние сохранено в Studio.")
@@ -264,5 +296,5 @@ def run(profile, *, root, notice=print):
                     except APIError:
                         pass  # Owner cancellation/accepted result/expired lease already has authority.
                     notice("Не удалось завершить локальную задачу. Проверьте её состояние в Studio.")
-                    if server.process is not None and server.process.process.poll() is not None:
+                    if server is not None and server.process is not None and server.process.process.poll() is not None:
                         server.close()

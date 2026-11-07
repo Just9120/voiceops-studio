@@ -220,12 +220,14 @@ def create_processing_job_google_doc_from_transcript(
 
 
 def format_transcript_doc(*, title: str, transcript_text: str, job_language: str | None, detected_language_code: str | None, created_at: datetime | None, diarization_enabled: bool = False, provider: str = "elevenlabs", model: str = "scribe_v2", provenance_lines: tuple[str, ...] = ()) -> FormattedTranscriptDocument:
+    from .local_model_identity import PARAKEET_MODEL
     safe_title = normalize_document_title(title)
     lang = document_language(job_language, detected_language_code)
+    local_label = "NVIDIA Parakeet (local)" if model == PARAKEET_MODEL else "NVIDIA Nemotron (local)"
     body = build_transcript_document_text(
         title=safe_title,
         metadata_lines=(
-            f"Provider: {dict(elevenlabs='ElevenLabs', yandex='Yandex SpeechKit', mistral='Mistral Voxtral', gemini='Google Gemini Transcribe', tbank='T-Bank VoiceKit', nemotron='NVIDIA Nemotron (local)').get(provider, 'unknown')}",
+            f"Provider: {dict(elevenlabs='ElevenLabs', yandex='Yandex SpeechKit', mistral='Mistral Voxtral', gemini='Google Gemini Transcribe', tbank='T-Bank VoiceKit', nemotron=local_label).get(provider, 'unknown')}",
             f"Model: {model}",
             f"Language: {lang}",
         ) + ((f"Created at: {_utc_iso(created_at)}",) if created_at is not None and not title_has_recording_date(safe_title) else ()) + compact_provenance_lines(provenance_lines),

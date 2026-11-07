@@ -1,5 +1,8 @@
 """A paired PC receives a narrow capability, never an owner/provider session."""
+import hashlib
+import json
 import os
+import secrets
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -16,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps/studio-api"))
 os.environ.setdefault("STUDIO_DATABASE_URL", "sqlite+pysqlite:///:memory:")
 
 from studio_api.local_execution_devices import authenticate_device, device_payload, pair_device
+from studio_api.local_model_identity import MODEL_REVISIONS, PARAKEET_MODEL
 from studio_api.models import AuditEvent, Base, LocalExecutionDevice, Session, User, UserStatus
 from studio_api.nemotron_local_result import NEMOTRON_MODEL
 from studio_api.security import token_hash
@@ -67,6 +71,131 @@ BASE = "/api/local-execution"
 READY = {"runtime_status": "ready", "runtime_version": "0.2.0+nightly.66d50d9", "model": NEMOTRON_MODEL}
 
 
+def test_closed_installer_download_checks_owner_release_identity_and_bytes(local_app, tmp_path):
+    client, _, settings, (owner_id, _) = local_app
+    endpoint = BASE + "/companion-release"
+    assert client.get(endpoint).status_code == 404
+    data = b"MZ synthetic installer"
+    sha = hashlib.sha256(data).hexdigest()
+    directory = tmp_path / sha
+    directory.mkdir()
+    installer = directory / "VoiceOpsCompanion-Setup.exe"
+    installer.write_bytes(data)
+    manifest = directory / "installer.json"
+    release = {"version": "0.1.0", "source_commit": "a" * 40, "source_dirty": False,
+               "smoke": False, "file": installer.name, "bytes": len(data), "sha256": sha}
+    manifest.write_text(json.dumps(release), encoding="utf-8")
+    settings.companion_release_owner_id = owner_id
+    settings.companion_release_sha256 = sha
+    settings.companion_release_directory = str(tmp_path)
+    download = f"{endpoint}/{sha}/download"
+
+    metadata = client.get(endpoint)
+    assert metadata.json()["sha256"] == sha and metadata.json()["signed"] is False
+    response = client.get(download)
+    assert response.content == data
+    assert response.headers["cache-control"] == "no-store"
+    assert "attachment" in response.headers["content-disposition"]
+    assert client.get(f"{endpoint}/{'a' * 64}/download").status_code == 404
+
+    client.cookies.set(settings.cookie_name, "other-session")
+    assert client.get(endpoint).status_code == client.get(download).status_code == 404
+    client.cookies.clear()
+    assert client.get(endpoint).status_code == client.get(download).status_code == 401
+    client.cookies.set(settings.cookie_name, "owner-session")
+    manifest.write_text(json.dumps({**release, "smoke": True}), encoding="utf-8")
+    assert client.get(download).status_code == 404
+    manifest.write_text(json.dumps(release), encoding="utf-8")
+    installer.write_bytes(data[::-1])
+    assert client.get(download).status_code == 404
+
+
+def test_hub_catalog_paginates_without_trusting_external_navigation(local_app, monkeypatch):
+    from contextlib import contextmanager
+    import httpx
+    from studio_api import local_model_catalog as catalog
+
+    @contextmanager
+    def stream(method, url, *, params, timeout, follow_redirects):
+        assert method == "GET" and url == catalog.HUB_MODELS and not follow_redirects
+        assert ("pipeline_tag", catalog.TASK) in params and ("filter", "ru") in params
+        assert ("sort", "likes") in params
+        linked_host = "untrusted.example" if ("cursor", "opaque=") in params else "huggingface.co"
+        yield httpx.Response(200, request=httpx.Request("GET", url),
+            headers={"link": f'<https://{linked_host}/api/models?cursor=opaque%3D>; rel="next"'},
+            json=[{"id": "nvidia/parakeet-tdt-0.6b-v3", "tags": ["ru", "license:cc-by-4.0"]},
+                  {"id": "other/model", "tags": ["ru"], "likes": 10},
+                  {"id": "https://unexpected.test"}])
+
+    monkeypatch.setattr(catalog.httpx, "stream", stream)
+    catalog._page.cache_clear()
+    try:
+        client, *_ = local_app
+        query = BASE + "/catalog?search=test-catalog&language=ru&sort=likes"
+        first = client.get(query).json()
+        assert [item["id"] for item in first["items"]] == ["nvidia/parakeet-tdt-0.6b-v3", "other/model"]
+        assert first["items"][0]["studio"]["download_bytes"] == 713975456
+        assert first["items"][1]["studio"] is None and first["next_cursor"] == "opaque="
+        assert client.get(query + "&cursor=opaque%3D").json()["next_cursor"] is None
+    finally:
+        catalog._page.cache_clear()
+
+
+def test_inventory_is_only_readable_by_owner_and_rotated_with_capability(local_app, monkeypatch):
+    from studio_api.main import limiter
+
+    class Store(dict):
+        def set(self, key, value, *, ex):
+            assert ex == 300
+            self[key] = value
+
+    monkeypatch.setattr(limiter, "redis", Store())
+    client, _, settings, _ = local_app
+    device_id, headers = prepare_pc(client)
+    inventory = {"cpu": "Synthetic x64", "cpu_threads": 8, "ram_bytes": 17179869184, "gpus": [],
+                 "disk_free_bytes": 1073741824, "execution": ["cpu"], "installed": [PARAKEET_MODEL]}
+    reader = f"{BASE}/devices/{device_id}/inventory"
+    assert client.get(reader).json() == {"inventory": None}
+    assert client.post(BASE + "/companion/inventory", headers=headers, json=inventory).status_code == 200
+    assert client.get(reader).json()["inventory"]["installed"] == [PARAKEET_MODEL]
+    client.cookies.set(settings.cookie_name, "other-session")
+    assert client.get(reader).status_code == 404
+    client.cookies.set(settings.cookie_name, "owner-session")
+    assert client.post(f"{BASE}/devices/{device_id}/rotate", headers=OWNER_HEADERS, json={"expected_revision": 1}).status_code == 200
+    assert client.get(reader).json() == {"inventory": None}
+
+
+def test_browser_install_request_requires_owner_and_only_delivers_pinned_version(local_app, monkeypatch):
+    from studio_api.main import limiter
+
+    class Store(dict):
+        def set(self, key, value, *, ex):
+            assert ex == 300
+            self[key] = value
+
+        def delete(self, key):
+            self.pop(key, None)
+
+    monkeypatch.setattr(limiter, "redis", Store())
+    client, _, settings, _ = local_app
+    device_id, headers = prepare_pc(client)
+    sender = f"{BASE}/devices/{device_id}/model-install"
+    receiver = BASE + "/companion/model-install-request"
+    selected = {"model": PARAKEET_MODEL, "revision": MODEL_REVISIONS[PARAKEET_MODEL]}
+    assert client.post(sender, json=selected).status_code == 403
+    assert client.post(sender, headers=OWNER_HEADERS, json={**selected, "revision": "0" * 40}).status_code == 422
+    client.cookies.set(settings.cookie_name, "other-session")
+    assert client.post(sender, headers=OWNER_HEADERS, json=selected).status_code == 404
+    client.cookies.set(settings.cookie_name, "owner-session")
+    assert client.post(sender, headers=OWNER_HEADERS, json=selected).json() == {"pending": True}
+    request = client.post(receiver, headers=headers, json={}).json()["request"]
+    assert {key: request[key] for key in selected} == selected
+    assert client.post(sender, headers=OWNER_HEADERS, json=selected).status_code == 200
+    assert client.post(receiver, headers=headers, json={}).json()["request"] == request
+    assert client.post(receiver, headers=headers, json={"request_id": request["id"]}).json() == {"request": None}
+    assert client.post(receiver, headers=headers, json={}).json() == {"request": None}
+
+
 def pair(client, **changes):
     data = {"label": "Synthetic PC", "creation_key": str(uuid4()), **changes}
     reply = client.post(BASE + "/devices", headers=OWNER_HEADERS, json=data)
@@ -76,6 +205,79 @@ def pair(client, **changes):
 
 def pc_headers(token):
     return {"authorization": "Bearer " + token, "x-voiceops-local-protocol": "1"}
+
+
+@pytest.fixture
+def enrollment_store(monkeypatch):
+    from studio_api.main import limiter
+
+    class Store:
+        def __init__(self):
+            self.values = {}
+
+        def set(self, key, value, *, ex, nx):
+            assert 0 < ex <= 300 and nx
+            if key in self.values:
+                return False
+            self.values[key] = value
+            return True
+
+        def get(self, key):
+            return self.values.get(key)
+
+        def ttl(self, key):
+            return 300 if key in self.values else -2
+
+    store = Store()
+    monkeypatch.setattr(limiter, "redis", store)
+    return store
+
+
+def test_browser_enrollment_is_owner_approved_proof_bound_and_replay_safe(local_app, enrollment_store):
+    client, maker, settings, (owner_id, _) = local_app
+    machine = {"x-voiceops-local-protocol": "1"}
+    verifier = secrets.token_urlsafe(32)
+    data = {"label": "Synthetic Windows", "challenge": hashlib.sha256(verifier.encode()).hexdigest()}
+    enrollment = BASE + "/enrollment"
+    assert client.post(enrollment, headers={**machine, "origin": settings.app_origin}, json=data).status_code == 403
+    started = client.post(enrollment, headers=machine, json=data)
+    assert started.status_code == 200
+    device_id = started.json()["request_id"]
+    token = f"vs-local.{device_id}.{verifier}"
+    path = enrollment + "/" + device_id
+    assert client.get(path).json() == {"label": data["label"], "approved": False}
+    assert client.post(path + "/finish", headers=machine, json={"verifier": verifier}).status_code == 202
+    assert client.post(path + "/approve").status_code == 403
+    approved = client.post(path + "/approve", headers=OWNER_HEADERS)
+    assert approved.json() == {"label": data["label"], "approved": True}
+    assert verifier not in approved.text
+    client.cookies.set(settings.cookie_name, "other-session")
+    assert client.get(path).status_code == 404
+    assert client.post(path + "/approve", headers=OWNER_HEADERS).status_code == 404
+    assert client.post(path + "/finish", headers=machine, json={"verifier": "x" * 43}).status_code == 403
+    client.cookies.clear()
+    for _ in range(2):
+        finished = client.post(path + "/finish", headers=machine, json={"verifier": verifier})
+        assert finished.status_code == 200
+        assert finished.json()["device"]["id"] == device_id
+        assert not finished.json()["device"]["ready"]
+        assert verifier not in finished.text
+        assert finished.headers["cache-control"] == "no-store"
+    assert client.post(BASE + "/companion/heartbeat", headers=pc_headers(token), json=READY).status_code == 200
+    stopped = client.post(BASE + "/companion/stopped", headers=pc_headers(token)).json()["device"]
+    assert not stopped["online"] and not stopped["ready"]
+    with maker() as db:
+        rows = db.scalars(select(LocalExecutionDevice)).all()
+        assert len(rows) == 1 and rows[0].owner_user_id == owner_id
+        assert rows[0].token_hash == token_hash(token)
+        assert verifier not in str(db.scalars(select(AuditEvent.metadata_json)).all())
+    assert verifier not in str(enrollment_store.values)
+    client.cookies.set(settings.cookie_name, "owner-session")
+    assert client.post(BASE + f"/devices/{device_id}/revoke", headers=OWNER_HEADERS,
+                       json={"expected_revision": 1}).status_code == 200
+    assert client.post(path + "/finish", headers=machine, json={"verifier": verifier}).status_code == 409
+    enrollment_store.values.clear()
+    assert client.post(path + "/finish", headers=machine, json={"verifier": verifier}).status_code == 410
 
 
 def test_pair_is_once_only_idempotent_and_does_not_persist_or_list_secret(local_app):
@@ -400,12 +602,24 @@ def input_fixture(monkeypatch):
     return raw, closed
 
 
-def stage_local_input(client, maker, owner_id, monkeypatch):
+def stage_local_input(client, maker, owner_id, monkeypatch, model=NEMOTRON_MODEL):
     import hashlib
     raw, closed = input_fixture(monkeypatch)
     device_id, headers = prepare_pc(client)
     job_id = seed_local_jobs(maker, owner_id, device_id)[0]
+    if model != NEMOTRON_MODEL:
+        from studio_api.models import TranscriptionJob
+        with maker() as db:
+            job = db.get(TranscriptionJob, job_id)
+            job.options_json = json.dumps({**json.loads(job.options_json), "_stt_model": model,
+                                           "_local_model_revision": MODEL_REVISIONS[model]})
+            db.commit()
+        assert client.post(BASE + "/companion/claim", headers=headers).json() == {"job": None}
+        ready = client.post(BASE + "/companion/heartbeat", headers=headers,
+            json={**READY, "model": model, "model_revision": MODEL_REVISIONS[model]})
+        assert ready.status_code == 200, ready.text
     claimed = client.post(BASE + "/companion/claim", headers=headers).json()["job"]
+    assert claimed["model"] == model and claimed["model_revision"] == MODEL_REVISIONS[model]
     generation = claimed["lease_generation"]
     source = client.get(f"{BASE}/companion/jobs/{job_id}/source", params={"generation": generation}, headers=headers)
     assert source.status_code == 200, source.text
@@ -433,7 +647,8 @@ def post_native(client, headers, job_id, envelope):
         headers={**headers, "content-type": "application/gzip"}, content=gzip.compress(json.dumps(envelope).encode()))
 
 
-def test_complete_local_result_is_encrypted_idempotent_and_exported_without_inputs_or_cloud(local_app, monkeypatch):
+@pytest.mark.parametrize("model", [NEMOTRON_MODEL, PARAKEET_MODEL])
+def test_complete_local_result_is_encrypted_idempotent_and_exported_without_inputs_or_cloud(local_app, monkeypatch, model):
     from studio_api.job_claim_lease import acquire_next_ready_job_lease
     from studio_api.job_processing_lifecycle import begin_job_processing
     from studio_api.job_retry_recovery import prepare_current_attempt_sources
@@ -441,8 +656,15 @@ def test_complete_local_result_is_encrypted_idempotent_and_exported_without_inpu
     from studio_api.models import JobStatus, SourceUploadStatus, TranscriptionJob, TranscriptionProviderPartCheckpoint
     from studio_api import job_stt_transcription as dispatch
     client, maker, settings, (owner_id, _) = local_app
-    _, headers, job_id, generation, sha = stage_local_input(client, maker, owner_id, monkeypatch)
+    _, headers, job_id, generation, sha = stage_local_input(client, maker, owner_id, monkeypatch, model)
     envelope = native_envelope(generation, sha)
+    if model == PARAKEET_MODEL:
+        assert post_native(client, headers, job_id, envelope).status_code == 409
+        assert post_native(client, headers, job_id, {**envelope, "model": model, "model_revision": "0" * 40}).status_code == 409
+        envelope.update(model=model, model_revision=MODEL_REVISIONS[model])
+        removal = client.post(BASE + "/companion/model-removal", headers=headers,
+            json={"model": model, "revision": MODEL_REVISIONS[model]})
+        assert removal.status_code == 409
     accepted = post_native(client, headers, job_id, envelope)
     assert accepted.status_code == 200, accepted.text
     assert accepted.json() == {"accepted": True, "already_accepted": False}
@@ -457,6 +679,7 @@ def test_complete_local_result_is_encrypted_idempotent_and_exported_without_inpu
         assert db.scalar(select(TranscriptionProviderPartCheckpoint)) is None
         checkpoints = db.scalars(select(SttProviderOperation)).all()
         assert len(checkpoints) == 1 and b"Synthetic transcript" not in checkpoints[0].result_ciphertext
+        assert checkpoints[0].model == model
         # No source bytes/key are needed to export the complete accepted text.
         source = job.sources[0].source
         source.upload_status = SourceUploadStatus.expired

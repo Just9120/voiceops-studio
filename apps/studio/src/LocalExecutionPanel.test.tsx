@@ -11,6 +11,53 @@ const json = (value: unknown, status = 200) => new Response(JSON.stringify(value
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); sessionStorage.clear(); });
 
 describe("local computer pairing", () => {
+  it("shows the checksum and a same-origin download for the approved closed release", async () => {
+    const sha256 = "1".repeat(64);
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/companion-release")
+      ? json({ version: "0.1.0", sha256, bytes: 137883537, signed: false }) : json({ devices: [] })));
+    render(<LocalExecutionPanel csrf="csrf" onCsrf={() => {}} />);
+    expect(await screen.findByRole("link", { name: "Скачать установщик Windows" }))
+      .toHaveAttribute("href", `/api/local-execution/companion-release/${sha256}/download`);
+    expect(screen.getByText(sha256)).toBeVisible();
+    expect(screen.getByText(/Установщик не подписан/)).toBeVisible();
+  });
+
+  it("keeps the download hidden when the closed release is unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/companion-release")
+      ? json({}, 404) : json({ devices: [] })));
+    render(<LocalExecutionPanel csrf="csrf" onCsrf={() => {}} />);
+    await screen.findByText("Компьютеры ещё не подключены.");
+    expect(screen.queryByRole("link", { name: "Скачать установщик Windows" })).not.toBeInTheDocument();
+  });
+
+  it("confirms a Windows enrollment without displaying or storing a device secret", async () => {
+    const previous = window.location.href;
+    const requestId = device().id;
+    const approvalCalls: RequestInit[] = [];
+    window.history.replaceState(null, "", `/settings/connections#local-enrollment=${requestId}`);
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/approve")) {
+        approvalCalls.push(init ?? {});
+        return json({ label: "Windows PC", approved: true });
+      }
+      if (url.endsWith(requestId)) return json({ label: "Windows PC", approved: false });
+      return json({ devices: [] });
+    }));
+    try {
+      render(<LocalExecutionPanel csrf="csrf" onCsrf={() => {}} />);
+      const button = await screen.findByRole("button", { name: "Подтвердить подключение" });
+      expect(approvalCalls).toHaveLength(0);
+      fireEvent.click(button);
+      expect(await screen.findByText(/Подключение «Windows PC» подтверждено/)).toBeVisible();
+      expect(approvalCalls).toHaveLength(1);
+      expect(new Headers(approvalCalls[0].headers).get("x-csrf-token")).toBe("csrf");
+      expect(screen.queryByLabelText("Ключ подключения")).not.toBeInTheDocument();
+      expect(JSON.stringify([localStorage, sessionStorage])).not.toContain("vs-local.");
+    } finally {
+      window.history.replaceState(null, "", previous);
+    }
+  });
+
   it("shows missing-model feedback and keeps revoke behind confirmation", async () => {
     let rows = [device({ ready: false, runtime_status: "model_missing" })];
     const mutations: RequestInit[] = [];
