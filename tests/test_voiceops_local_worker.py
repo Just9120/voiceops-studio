@@ -86,6 +86,29 @@ def test_promoted_model_version_needs_exact_claim_and_is_sent_in_heartbeat(monke
     assert checked_job({**job, "model_revision": revision}, revision=revision)["model_revision"] == revision
 
 
+def test_worker_forwards_only_a_valid_trace_for_the_claimed_job(monkeypatch):
+    from local_worker import protocol
+
+    job = {"id": str(uuid4()), "source_id": str(uuid4()), "lease_generation": 1, "size_bytes": 32044,
+           "model": MODEL, "language": "ru", "diarize": True}
+    assert checked_job(job)["trace_id"] is None  # Older Studio servers omit it.
+    assert checked_job({**job, "trace_id": "trace_" + "a" * 24 + "\r\n"})["trace_id"] is None
+    trace = "trace_" + "a" * 32
+    scoped = checked_job({**job, "trace_id": trace})
+    client = StudioClient("https://studio.test", f"vs-local.{uuid4()}.{'a' * 43}")
+    client.job_trace = scoped["id"], scoped["trace_id"]
+
+    class Capture:
+        def open(self, request, *, timeout):
+            return request.get_header("X-trace-id")
+
+    monkeypatch.setattr(protocol.urllib.request, "build_opener", lambda *_: Capture())
+    assert client.open(f"/jobs/{scoped['id']}/source?generation=1", method="GET") == trace
+    assert client.open(f"/jobs/{scoped['id']}/result") == trace
+    assert client.open(f"/jobs/{uuid4()}/result") is None
+    assert client.open("/heartbeat") is None
+
+
 def test_companion_keeps_active_revision_when_another_is_installed_or_removed(tmp_path, monkeypatch):
     pytest.importorskip("tkinter")
     from queue import SimpleQueue

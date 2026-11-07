@@ -93,12 +93,16 @@ class StudioClient:
             raise WorkerError("local_model_unavailable")
         self.model = model
         self.revision = revision
+        self.job_trace = None
 
     def open(self, suffix, *, method="POST", body=None, content_type="application/json", timeout=20):
         if not re.fullmatch(r"(?:/heartbeat|/inventory|/model-removal|/model-install-request|/stopped|/claim|/jobs/[a-f0-9-]{36}/(?:heartbeat|failure|prepare|result|source\?generation=[0-9]{1,10}))", suffix):
             raise WorkerError("local_api_path_invalid")
         headers = {"Authorization": "Bearer " + self.token, "X-VoiceOps-Local-Protocol": "1",
                    "Accept": "application/json", "Content-Type": content_type}
+        job_trace = self.job_trace
+        if job_trace is not None and suffix.startswith(f"/jobs/{job_trace[0]}/"):
+            headers["X-Trace-ID"] = job_trace[1]
         request = urllib.request.Request(self.base + COMPANION_PATH + suffix, data=body, method=method, headers=headers)
         try:
             return urllib.request.build_opener(NoRedirect()).open(request, timeout=timeout)
@@ -151,6 +155,10 @@ def checked_job(data, *, model=MODEL, revision=None):
     size = data.get("size_bytes")
     revision = INITIAL_MODEL_REVISIONS.get(model) if revision is None else revision
     claimed_revision = data.get("model_revision", INITIAL_MODEL_REVISIONS[MODEL] if model == MODEL else None)
+    trace = data.get("trace_id")
+    if (not isinstance(trace, str) or not re.fullmatch(r"trace_[A-Za-z0-9_-]{16,64}", trace)
+            or any(part in trace.lower() for part in ("secret", "token", "bearer", "password"))):
+        trace = None
     if (type(generation) is not int or not 1 <= generation <= 2147483647
             or type(size) is not int or not 0 < size <= MAX_INPUT_BYTES
             or data.get("model") != model or data.get("language") not in {"ru", "en"}
@@ -159,6 +167,7 @@ def checked_job(data, *, model=MODEL, revision=None):
             or type(data.get("diarize")) is not bool):
         raise WorkerError("local_job_invalid")
     return {"id": job_id, "generation": generation, "size_bytes": size, "model": model, "model_revision": revision,
+            "trace_id": trace,
             "language": data["language"], "diarize": data["diarize"], "progress": data.get("progress")}
 
 

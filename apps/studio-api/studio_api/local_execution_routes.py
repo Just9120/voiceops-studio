@@ -3,6 +3,7 @@ from typing import Literal
 import json
 from uuid import UUID, uuid4
 from contextlib import ExitStack
+from functools import partial
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
@@ -26,6 +27,7 @@ from .local_execution_devices import (
 from .models import LocalExecutionDevice
 from .nemotron_local_result import NEMOTRON_MODEL
 from .security import utcnow
+from .trace_context import new_trace_id, set_current_trace_id, valid_trace_id
 from .local_execution_jobs import claim_local_job, device_model_in_use, fail_local_job, fence_device_jobs, heartbeat_local_job, local_job_payload
 from .local_execution_transfer import accept_local_result, decode_local_result, open_local_input, prepare_local_input
 
@@ -183,6 +185,14 @@ def companion_device(request: Request, db=Depends(get_db)):
         raise
     request.state.owner_user_id = device.owner_user_id
     return device
+
+
+def _bind_job_trace(request, job):
+    # Called only after owner, device and lease (or exact result replay) are checked.
+    if not valid_trace_id(job.trace_id):
+        job.trace_id = new_trace_id()
+    request.state.job_trace_id = job.trace_id
+    set_current_trace_id(job.trace_id)
 
 
 def require_companion_enrollment_request(request):
@@ -425,30 +435,33 @@ def build_router(*, recent_auth, limiter):
         return {"device": device_payload(device, now=utcnow())}
 
     @router.post("/api/local-execution/companion/claim")
-    def claim(response: Response, device=Depends(companion_device), db=Depends(get_db)):
+    def claim(request: Request, response: Response, device=Depends(companion_device), db=Depends(get_db)):
         limiter.check("local-device:claim:" + device.id, 30, 60)
         job = claim_local_job(db, device=device, now=utcnow())
+        if job is not None:
+            _bind_job_trace(request, job)
         payload = local_job_payload(job) if job is not None else None
         db.commit()
         response.headers.update(NO_STORE)
         return {"job": payload}
 
     @router.post("/api/local-execution/companion/jobs/{job_id}/heartbeat")
-    def job_heartbeat(job_id: UUID, data: LocalJobHeartbeatIn, response: Response,
+    def job_heartbeat(job_id: UUID, data: LocalJobHeartbeatIn, request: Request, response: Response,
                       device=Depends(companion_device), db=Depends(get_db)):
         limiter.check("local-device:job-heartbeat:" + device.id, 120, 60)
         result = heartbeat_local_job(db, device=device, job_id=str(job_id), generation=data.generation,
-            stage=data.stage, sequence=data.sequence, completed=data.completed, total=data.total, unit=data.unit, now=utcnow())
+            stage=data.stage, sequence=data.sequence, completed=data.completed, total=data.total, unit=data.unit, now=utcnow(),
+            on_scoped=partial(_bind_job_trace, request))
         db.commit()
         response.headers.update(NO_STORE)
         return result
 
     @router.post("/api/local-execution/companion/jobs/{job_id}/failure")
-    def job_failure(job_id: UUID, data: LocalJobFailureIn, response: Response,
+    def job_failure(job_id: UUID, data: LocalJobFailureIn, request: Request, response: Response,
                     device=Depends(companion_device), db=Depends(get_db)):
         limiter.check("local-device:failure:" + device.id, 30, 60)
         result = fail_local_job(db, device=device, job_id=str(job_id), generation=data.generation,
-            reason=data.reason, now=utcnow())
+            reason=data.reason, now=utcnow(), on_scoped=partial(_bind_job_trace, request))
         db.commit()
         response.headers.update(NO_STORE)
         return result
@@ -462,7 +475,8 @@ def build_router(*, recent_auth, limiter):
         stack = ExitStack()
         try:
             chunks, receipt = stack.enter_context(open_local_input(db, device=device,
-                raw_token=request.headers["authorization"][7:], job_id=str(job_id), generation=generation, settings=settings))
+                raw_token=request.headers["authorization"][7:], job_id=str(job_id), generation=generation, settings=settings,
+                on_scoped=partial(_bind_job_trace, request)))
             return LocalInputResponse(chunks, cleanup=stack.close, headers={**NO_STORE,
                 "Content-Length": str(receipt["byte_count"]), "X-VoiceOps-Input-SHA256": receipt["source_sha256"],
                 "Content-Disposition": 'attachment; filename="input.media"'})
@@ -471,11 +485,12 @@ def build_router(*, recent_auth, limiter):
             raise
 
     @router.post("/api/local-execution/companion/jobs/{job_id}/prepare")
-    def prepare(job_id: UUID, data: LocalInputPrepareIn, response: Response,
+    def prepare(job_id: UUID, data: LocalInputPrepareIn, request: Request, response: Response,
                 device=Depends(companion_device), db=Depends(get_db), settings=Depends(get_settings)):
         limiter.check("local-device:prepare:" + device.id, 30, 60)
         result = prepare_local_input(db, device=device, job_id=str(job_id), generation=data.generation,
-            source_sha256=data.source_sha256, source_duration_seconds=data.source_duration_seconds, settings=settings, now=utcnow())
+            source_sha256=data.source_sha256, source_duration_seconds=data.source_duration_seconds, settings=settings,
+            now=utcnow(), on_scoped=partial(_bind_job_trace, request))
         db.commit()
         response.headers.update(NO_STORE)
         return result
@@ -490,7 +505,7 @@ def build_router(*, recent_auth, limiter):
         # only this authenticated boundary expands to a bounded full JSON result.
         envelope, digest = decode_local_result(body)
         result = accept_local_result(db, device=device, job_id=str(job_id), envelope=envelope,
-            digest=digest, settings=settings, now=utcnow())
+            digest=digest, settings=settings, now=utcnow(), on_scoped=partial(_bind_job_trace, request))
         db.commit()
         response.headers.update(NO_STORE)
         return result

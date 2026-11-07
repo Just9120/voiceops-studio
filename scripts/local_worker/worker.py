@@ -270,6 +270,7 @@ def run(profile, *, root, notice=print, check_stop=lambda: None):
                     time.sleep(3)
                     continue
                 job = checked_job(reply["job"], model=model, revision=revision)
+                client.job_trace = (job["id"], job["trace_id"]) if job["trace_id"] is not None else None
                 notice("Распознаю запись, назначенную в Studio…")
                 try:
                     done = run_job(client, job, paths, server, directory, global_check=device.check)
@@ -298,3 +299,5 @@ def run(profile, *, root, notice=print, check_stop=lambda: None):
                     notice("Не удалось завершить локальную задачу. Проверьте её состояние в Studio.")
                     if server is not None and server.process is not None and server.process.process.poll() is not None:
                         server.close()
+                finally:
+                    client.job_trace = None

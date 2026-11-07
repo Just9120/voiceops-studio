@@ -525,18 +525,33 @@ def test_only_assigned_pc_can_claim_and_vps_cannot_seize_inference(local_app):
         with pytest.raises(JobLeaseError):
             acquire_job_lease(db, job_id=job_ids[0], lease_owner_id="vps-worker", now=now, lease_ttl=timedelta(minutes=1))
     assert client.post(BASE + "/companion/claim", headers=other_headers).json() == {"job": None}
-    first = client.post(BASE + "/companion/claim", headers=headers)
+    foreign_trace = "trace_" + "f" * 32
+    first = client.post(BASE + "/companion/claim", headers={**headers, "x-trace-id": foreign_trace})
     assert first.status_code == 200
     claimed = first.json()["job"]
     assert claimed["id"] == job_ids[0] and claimed["model"] == NEMOTRON_MODEL
+    trace = claimed["trace_id"]
+    assert trace.startswith("trace_") and trace != foreign_trace and first.headers["x-trace-id"] == trace
     assert claimed["progress"] is None  # No fabricated elapsed percentage.
     replay = client.post(BASE + "/companion/claim", headers=headers)
     assert replay.json()["job"] == claimed
+    assert replay.headers["x-trace-id"] == trace
+    assert replay.headers["x-request-id"] != first.headers["x-request-id"]
+    path = f"{BASE}/companion/jobs/{claimed['id']}/heartbeat"
+    beat = {"generation": claimed["lease_generation"], "sequence": 1, "stage": "source_download"}
+    denied = client.post(path, headers={**other_headers, "x-trace-id": trace}, json=beat)
+    assert denied.status_code == 404 and denied.headers["x-trace-id"] != trace
+    stale = client.post(path, headers={**headers, "x-trace-id": foreign_trace},
+                        json={**beat, "generation": beat["generation"] + 1})
+    assert stale.status_code == 409 and stale.headers["x-trace-id"] not in {trace, foreign_trace}
+    accepted = client.post(path, headers={**headers, "x-trace-id": foreign_trace}, json=beat)
+    assert accepted.status_code == 200 and accepted.headers["x-trace-id"] == trace
     with maker() as db:
         from studio_api.models import JobStatus, TranscriptionJob
         assert db.get(TranscriptionJob, job_ids[0]).attempt_count == 1
         assert db.get(TranscriptionJob, job_ids[1]).status == JobStatus.queued
         assert db.get(TranscriptionJob, job_ids[0]).source_access_started_at is not None
+        assert db.get(TranscriptionJob, job_ids[0]).trace_id == trace
 
 
 @pytest.mark.parametrize("blocked_by", ["other_model", "expired_source"])
@@ -615,13 +630,13 @@ def test_local_cancel_is_acknowledged_without_cloud_or_second_job(local_app):
 
 
 def test_sleeping_pc_becomes_recoverable_failure_instead_of_automatic_dispatch(local_app):
-    from studio_api.job_retry_recovery import compute_explicit_retry_readiness
+    from studio_api.job_retry_recovery import compute_explicit_retry_readiness, queue_retry
     from studio_api.models import JobStatus, TranscriptionJob
     from studio_api.worker_recovery import recover_expired_worker_jobs
     client, maker, _, (owner_id, _) = local_app
     device_id, headers = prepare_pc(client)
     job_id = seed_local_jobs(maker, owner_id, device_id)[0]
-    client.post(BASE + "/companion/claim", headers=headers)
+    first = client.post(BASE + "/companion/claim", headers=headers).json()["job"]
     now = datetime.now(timezone.utc) + timedelta(seconds=100)
     with maker() as db:
         assert recover_expired_worker_jobs(db, now=now) == 1
@@ -630,6 +645,11 @@ def test_sleeping_pc_becomes_recoverable_failure_instead_of_automatic_dispatch(l
         assert row.status == JobStatus.failed and row.error_code == "local_device_offline"
         assert row.lease_owner_id is None and row.retry_not_before_at is None
         assert compute_explicit_retry_readiness(db, row, now=now).available
+        assert row.trace_id == first["trace_id"]
+        queue_retry(db, owner_user_id=owner_id, job_id=job_id, now=now)
+        db.commit()
+    again = client.post(BASE + "/companion/claim", headers=headers).json()["job"]
+    assert again["lease_generation"] > first["lease_generation"] and again["trace_id"] == first["trace_id"]
 
 
 @pytest.mark.parametrize("action", ["rotate", "revoke"])
@@ -705,7 +725,8 @@ def stage_local_input(client, maker, owner_id, monkeypatch, model=NEMOTRON_MODEL
     import hashlib
     raw, closed = input_fixture(monkeypatch)
     device_id, headers = prepare_pc(client)
-    job_id = seed_local_jobs(maker, owner_id, device_id)[0]
+    trace = "trace_" + uuid4().hex
+    job_id = seed_local_jobs(maker, owner_id, device_id, trace_id=trace)[0]
     if model != NEMOTRON_MODEL:
         from studio_api.models import TranscriptionJob
         with maker() as db:
@@ -719,15 +740,18 @@ def stage_local_input(client, maker, owner_id, monkeypatch, model=NEMOTRON_MODEL
         assert ready.status_code == 200, ready.text
     claimed = client.post(BASE + "/companion/claim", headers=headers).json()["job"]
     assert claimed["model"] == model and claimed["model_revision"] == MODEL_REVISIONS[model]
+    assert claimed["trace_id"] == trace
     generation = claimed["lease_generation"]
     source = client.get(f"{BASE}/companion/jobs/{job_id}/source", params={"generation": generation}, headers=headers)
     assert source.status_code == 200, source.text
+    assert source.headers["x-trace-id"] == claimed["trace_id"]
     assert source.content == raw and len(closed) == 1
     sha = hashlib.sha256(raw).hexdigest()
     assert source.headers["x-voiceops-input-sha256"] == sha
     prepared = client.post(f"{BASE}/companion/jobs/{job_id}/prepare", headers=headers,
         json={"generation": generation, "source_sha256": sha, "source_duration_seconds": 1.0})
     assert prepared.status_code == 200, prepared.text
+    assert prepared.headers["x-trace-id"] == claimed["trace_id"]
     assert prepared.json()["prepared_duration_seconds"] == 1
     return device_id, headers, job_id, generation, sha
 
@@ -842,6 +866,8 @@ def test_complete_local_result_is_encrypted_idempotent_and_exported_without_inpu
         assert job.attempt_count == 2 and job.provider_credential_id is None
     replay = post_native(client, headers, job_id, envelope)
     assert replay.status_code == 200 and replay.json()["already_accepted"]
+    assert replay.headers["x-trace-id"] == accepted.headers["x-trace-id"] == job.trace_id
+    assert replay.headers["x-request-id"] != accepted.headers["x-request-id"]
     changed = native_envelope(generation, sha)
     changed["result"]["text"] = "Different result"
     assert post_native(client, headers, job_id, changed).status_code == 409

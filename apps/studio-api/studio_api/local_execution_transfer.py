@@ -80,8 +80,8 @@ def _load_receipt(job, relation, generation):
 
 
 @contextmanager
-def open_local_input(db, *, device, raw_token, job_id, generation, settings, clock=utcnow, materializer=None):
-    job = _scope(db, device=device, job_id=job_id, generation=generation, now=clock())
+def open_local_input(db, *, device, raw_token, job_id, generation, settings, clock=utcnow, materializer=None, on_scoped=None):
+    job = _scope(db, device=device, job_id=job_id, generation=generation, now=clock(), on_scoped=on_scoped)
     relation = _one_relation(job)
     relation_id = relation.id
     expected_clip = (job.media_timeline_version, job.media_clip_start_seconds, job.media_clip_end_seconds)
@@ -132,8 +132,8 @@ def open_local_input(db, *, device, raw_token, job_id, generation, settings, clo
         yield chunks(), receipt
 
 
-def prepare_local_input(db, *, device, job_id, generation, source_sha256, source_duration_seconds, settings, now):
-    job = _scope(db, device=device, job_id=job_id, generation=generation, now=now)
+def prepare_local_input(db, *, device, job_id, generation, source_sha256, source_duration_seconds, settings, now, on_scoped=None):
+    job = _scope(db, device=device, job_id=job_id, generation=generation, now=now, on_scoped=on_scoped)
     relation = _one_relation(job)
     receipt, selection = _load_receipt(job, relation, generation)
     if (source_sha256 != receipt["source_sha256"] or type(source_duration_seconds) not in (int, float)
@@ -207,7 +207,7 @@ def decode_local_result(body):
         raise _error("local_result_invalid", 422) from None
 
 
-def accept_local_result(db, *, device, job_id, envelope, digest, settings, now):
+def accept_local_result(db, *, device, job_id, envelope, digest, settings, now, on_scoped=None):
     # A timeout after commit must not start another inference or another export.
     job = db.scalar(select(TranscriptionJob).where(TranscriptionJob.id == job_id,
         TranscriptionJob.owner_user_id == device.owner_user_id, TranscriptionJob.local_device_id == device.id
@@ -224,13 +224,15 @@ def accept_local_result(db, *, device, job_id, envelope, digest, settings, now):
     if job.local_result_ready_at is not None:
         if job.local_result_generation != envelope["generation"] or job.local_result_digest != digest:
             raise _error("local_result_changed")
+        if on_scoped is not None:
+            on_scoped(job)
         return {"accepted": True, "already_accepted": True}
     generation = envelope["generation"]
     legacy = (model == NEMOTRON_MODEL and revision == LEGACY_NEMOTRON_REVISION
               and "model" not in envelope)
     if not legacy and (envelope.get("model") != model or envelope.get("model_revision") != revision):
         raise _error("local_result_model_changed")
-    job = _scope(db, device=device, job_id=job_id, generation=generation, now=now)
+    job = _scope(db, device=device, job_id=job_id, generation=generation, now=now, on_scoped=on_scoped)
     relation = _one_relation(job)
     receipt, selection = _load_receipt(job, relation, generation)
     if (receipt.get("prepared_duration_seconds") is None or relation.transcript_timeline_json is None

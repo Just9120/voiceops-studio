@@ -43,14 +43,14 @@ def local_job_payload(job):
     except (TypeError, ValueError):
         options = {}
     model, revision = job_model_identity(job.options_json)
-    return {"id": job.id, "lease_generation": job.lease_generation,
+    return {"id": job.id, "trace_id": job.trace_id, "lease_generation": job.lease_generation,
             "lease_expires_at": _utc(job.lease_expires_at).isoformat(),
             "source_id": source.id, "source_name": source.original_filename, "size_bytes": source.size_bytes,
             "model": model, "model_revision": revision, "language": job.language or "detect", "diarize": options.get("diarize", False),
             "progress": json.loads(job.work_progress_json) if job.work_progress_json else None}
 
 
-def _scope(db, *, device, job_id, generation, now, allow_cancel=False):
+def _scope(db, *, device, job_id, generation, now, allow_cancel=False, on_scoped=None):
     job = db.scalar(select(TranscriptionJob).where(TranscriptionJob.id == job_id,
         TranscriptionJob.owner_user_id == device.owner_user_id, TranscriptionJob.local_device_id == device.id
     ).with_for_update().execution_options(populate_existing=True))
@@ -66,6 +66,8 @@ def _scope(db, *, device, job_id, generation, now, allow_cancel=False):
         raise HTTPException(409, detail={"reason": "local_job_lease_changed"})
     if job.cancel_requested_at is not None and not allow_cancel:
         raise HTTPException(409, detail={"reason": "local_job_cancelled"})
+    if on_scoped is not None:
+        on_scoped(job)
     return job
 
 
@@ -130,8 +132,8 @@ def _matches_local_claim(job, device, now):
             and build_claim_readiness(job, now=now)["ready_for_future_claim"])
 
 
-def heartbeat_local_job(db, *, device, job_id, generation, stage, sequence, completed, total, unit, now):
-    job = _scope(db, device=device, job_id=job_id, generation=generation, now=now, allow_cancel=True)
+def heartbeat_local_job(db, *, device, job_id, generation, stage, sequence, completed, total, unit, now, on_scoped=None):
+    job = _scope(db, device=device, job_id=job_id, generation=generation, now=now, allow_cancel=True, on_scoped=on_scoped)
     if job.cancel_requested_at is not None:
         acknowledge_job_cancellation(db, job_id=job.id, lease_owner_id="local:" + device.id,
             lease_generation=generation, now=now, retire_part_checkpoints=False)
@@ -168,10 +170,10 @@ def heartbeat_local_job(db, *, device, job_id, generation, stage, sequence, comp
     return {"cancelled": False, "lease_expires_at": _utc(job.lease_expires_at).isoformat()}
 
 
-def fail_local_job(db, *, device, job_id, generation, reason, now):
+def fail_local_job(db, *, device, job_id, generation, reason, now, on_scoped=None):
     if reason not in LOCAL_FAILURES:
         raise HTTPException(422, detail={"reason": "local_failure_invalid"})
-    job = _scope(db, device=device, job_id=job_id, generation=generation, now=now, allow_cancel=True)
+    job = _scope(db, device=device, job_id=job_id, generation=generation, now=now, allow_cancel=True, on_scoped=on_scoped)
     if job.cancel_requested_at is not None:
         acknowledge_job_cancellation(db, job_id=job.id, lease_owner_id="local:" + device.id,
             lease_generation=generation, now=now, retire_part_checkpoints=False)

@@ -251,7 +251,8 @@ app.add_middleware(RequestBodyLimitMiddleware)
 async def request_correlation_middleware(request: Request, call_next):
     request_id = new_request_id()
     correlation_id = sanitize_inbound_correlation(request.headers.get("x-correlation-id"))
-    trace_id = sanitize_inbound_trace(request.headers.get("x-trace-id"))
+    companion = request.url.path.startswith("/api/local-execution/companion/")
+    trace_id = sanitize_inbound_trace(None if companion else request.headers.get("x-trace-id"))
     trace_token = set_current_trace_id(trace_id)
     request.state.request_id = request_id
     request.state.correlation_id = correlation_id
@@ -261,6 +262,7 @@ async def request_correlation_middleware(request: Request, call_next):
         try:
             response = await call_next(request)
         except Exception:
+            trace_id = getattr(request.state, "job_trace_id", trace_id)
             endpoint_group=diagnostic_endpoint_group(request.url.path)
             LOGGER.error("api_unhandled_exception request_id=%s correlation_id=%s trace_id=%s endpoint_group=%s", request_id, correlation_id, trace_id, endpoint_group)
             owner_user_id=getattr(request.state, "owner_user_id", None)
@@ -275,7 +277,7 @@ async def request_correlation_middleware(request: Request, call_next):
             response.headers["Pragma"] = "no-cache"
         response.headers["X-Request-ID"] = request_id
         response.headers["X-Correlation-ID"] = correlation_id
-        response.headers["X-Trace-ID"] = trace_id
+        response.headers["X-Trace-ID"] = getattr(request.state, "job_trace_id", trace_id)
         return response
     finally:
         reset_current_trace_id(trace_token)
