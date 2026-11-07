@@ -19,9 +19,9 @@ from .client_ip import get_client_ip
 from .deps import current_session, require_csrf
 from .local_device_enrollment import DeviceEnrollment, PAIRING_SECONDS
 from .local_model_catalog import CatalogUnavailable, catalog_page
-from .local_model_identity import MODEL_REVISIONS, PARAKEET_MODEL
+from .local_model_identity import LEGACY_NEMOTRON_REVISION, MODEL_REVISIONS, PARAKEET_MODEL, is_supported_model_revision
 from .local_execution_devices import (
-    authenticate_device, device_payload, owned_device, pair_device, revoke_device, rotate_device,
+    authenticate_device, device_model_identity, device_payload, owned_device, pair_device, revoke_device, rotate_device,
 )
 from .models import LocalExecutionDevice
 from .nemotron_local_result import NEMOTRON_MODEL
@@ -328,13 +328,17 @@ def build_router(*, recent_auth, limiter):
     def heartbeat(data: DeviceHeartbeatIn, response: Response,
                   device=Depends(companion_device), db=Depends(get_db)):
         limiter.check("local-device:heartbeat:" + device.id, 120, 60)
-        legacy = data.model == NEMOTRON_MODEL and data.model_revision is None
-        if data.runtime_status == "ready" and (data.model not in MODEL_REVISIONS or data.runtime_version is None
-                or (not legacy and data.model_revision != MODEL_REVISIONS[data.model])):
+        revision = data.model_revision
+        if revision is None and data.model == NEMOTRON_MODEL:
+            revision = LEGACY_NEMOTRON_REVISION
+        if ((revision is not None and not is_supported_model_revision(data.model, revision))
+                or (data.runtime_status == "ready" and (revision is None or data.runtime_version is None))):
             raise HTTPException(422, detail={"reason": "local_runtime_identity_required"}, headers=NO_STORE)
-        if device.model is not None and data.model != device.model and device_model_in_use(db, device, device.model, active_only=True):
+        active = device_model_identity(device)
+        if active[0] is not None and (data.model, revision) != active and device_model_in_use(db, device, *active, active_only=True):
             raise HTTPException(409, detail={"reason": "local_model_in_use"}, headers=NO_STORE)
         device.runtime_status, device.runtime_version, device.model = data.runtime_status, data.runtime_version, data.model
+        device.model_revision = revision
         device.last_seen_at = device.updated_at = utcnow()
         db.commit()
         response.headers.update(NO_STORE)
@@ -355,9 +359,10 @@ def build_router(*, recent_auth, limiter):
     @router.post("/api/local-execution/companion/model-removal")
     def model_removal(data: LocalModelVersionIn, response: Response, device=Depends(companion_device), db=Depends(get_db)):
         limiter.check("local-device:model-removal:" + device.id, 10, 60)
-        if data.revision != MODEL_REVISIONS[data.model] or device_model_in_use(db, device, data.model):
+        if (not is_supported_model_revision(data.model, data.revision)
+                or device_model_in_use(db, device, data.model, data.revision)):
             raise HTTPException(409, detail={"reason": "local_model_in_use"}, headers=NO_STORE)
-        if device.model == data.model:
+        if device_model_identity(device) == (data.model, data.revision):
             device.runtime_status = "unknown"
             device.last_seen_at = None
             device.updated_at = utcnow()

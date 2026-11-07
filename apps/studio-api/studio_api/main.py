@@ -701,12 +701,12 @@ class TranscriptionJobBatchCreateIn(BaseModel):
 
     @model_validator(mode="after")
     def execution_target(self):
-        from .local_model_identity import MODEL_REVISIONS
+        from .local_model_identity import is_supported_model_revision
         if self.provider == SttProvider.nemotron:
             if self.local_device_id is None or self.provider_credential_id is not None:
                 raise ValueError("Выберите локальный компьютер без облачного API-ключа")
             if (self.local_model is not None or self.local_model_revision is not None) and (
-                self.local_model not in MODEL_REVISIONS or self.local_model_revision != MODEL_REVISIONS[self.local_model]
+                not is_supported_model_revision(self.local_model, self.local_model_revision)
             ):
                 raise ValueError("Выберите поддерживаемую версию локальной модели")
         elif any(value is not None for value in (self.local_device_id, self.local_model, self.local_model_revision)):
@@ -2702,7 +2702,7 @@ def _normalize_batch_creation_input(data: TranscriptionJobBatchCreateIn):
         hash_items.append(hash_item)
     return language, options_json, explicit_provider_credential_id, duplicate_pair_found, source_ids, folder_ids, titles, reprocess_existing, media_clips, hash_items
 
-def _validate_new_batch_targets(db: Session, user: User, project: Project, *, provider, operating_mode, language, diarization_enabled, dictionary_ids, explicit_provider_credential_id, duplicate_pair_found, source_ids, folder_ids, media_clips, output_providers=None, local_device_id=None, local_model=None):
+def _validate_new_batch_targets(db: Session, user: User, project: Project, *, provider, operating_mode, language, diarization_enabled, dictionary_ids, explicit_provider_credential_id, duplicate_pair_found, source_ids, folder_ids, media_clips, output_providers=None, local_device_id=None, local_model=None, local_model_revision=None):
     try:
         capability=validate_selection(settings,provider=provider,mode=operating_mode,language=language,diarization=diarization_enabled,dictionary_count=len(dictionary_ids))
     except SttCapabilityError as exc:
@@ -2710,9 +2710,10 @@ def _validate_new_batch_targets(db: Session, user: User, project: Project, *, pr
     if provider == SttProvider.nemotron:
         from dataclasses import replace
         from .local_execution_devices import require_ready_device
-        from .local_model_identity import NEMOTRON_MODEL, PARAKEET_MODEL, PARAKEET_MAX_DURATION_SECONDS
+        from .local_model_identity import LEGACY_NEMOTRON_REVISION, NEMOTRON_MODEL, PARAKEET_MODEL, PARAKEET_MAX_DURATION_SECONDS
         model = local_model or NEMOTRON_MODEL
-        require_ready_device(db, owner_user_id=user.id, device_id=local_device_id, now=utcnow(), model=model)
+        require_ready_device(db, owner_user_id=user.id, device_id=local_device_id, now=utcnow(), model=model,
+                             revision=local_model_revision or LEGACY_NEMOTRON_REVISION)
         if model == PARAKEET_MODEL:
             if diarization_enabled:
                 raise HTTPException(422, detail={"reason": "diarization_unsupported"})
@@ -2838,7 +2839,7 @@ def _require_batch_preflight_decisions(sources, media_clips, matches, provider_a
 def preflight_transcription_jobs_batch(project_id: str, data: TranscriptionJobBatchCreateIn, request: Request, response: Response, pair=Depends(require_csrf), db: Session=Depends(get_db)):
     _,user=pair; limiter.check("job:batch:preflight:"+user.id, 60, 3600); _browser_capability_cache_headers(response); p=owned_project_or_404(db,user,project_id)
     language, _options_json, explicit_provider_credential_id, duplicate_pair_found, source_ids, folder_ids, titles, reprocess_existing, media_clips, _hash_items=_normalize_batch_creation_input(data)
-    _provider_credential_id, sources, verified_by_id, capability, dictionary_terms=_validate_new_batch_targets(db,user,p,provider=data.provider,operating_mode=data.operating_mode,language=language,diarization_enabled=data.options.diarize,dictionary_ids=data.options.dictionary_ids,explicit_provider_credential_id=explicit_provider_credential_id,duplicate_pair_found=duplicate_pair_found,source_ids=source_ids,folder_ids=folder_ids,media_clips=media_clips,output_providers=[item.output_provider for item in data.items],local_device_id=data.local_device_id,local_model=data.local_model)
+    _provider_credential_id, sources, verified_by_id, capability, dictionary_terms=_validate_new_batch_targets(db,user,p,provider=data.provider,operating_mode=data.operating_mode,language=language,diarization_enabled=data.options.diarize,dictionary_ids=data.options.dictionary_ids,explicit_provider_credential_id=explicit_provider_credential_id,duplicate_pair_found=duplicate_pair_found,source_ids=source_ids,folder_ids=folder_ids,media_clips=media_clips,output_providers=[item.output_provider for item in data.items],local_device_id=data.local_device_id,local_model=data.local_model,local_model_revision=data.local_model_revision)
     existing_result_matches=_load_batch_existing_result_matches(db,user,sources,media_clips,provider=data.provider.value,model=capability.model,language=language,diarization_enabled=data.options.diarize)
     include_attention_job_id=request.headers.get("x-studio-preflight-recovery") == "1"
     attention_job_ids={} if include_attention_job_id else None
@@ -2874,15 +2875,17 @@ def create_transcription_jobs_batch(project_id: str, data: TranscriptionJobBatch
         if not _existing_batch_is_complete(existing, request_hash, len(data.items)):
             raise HTTPException(409, "Idempotency-Key already used with a different request")
         return {"jobs":[job_payload(j, include_sources=True) for j in existing], "created_count": len(existing), "replayed": True}
-    provider_credential_id, sources, verified_by_id, capability, dictionary_terms=_validate_new_batch_targets(db,user,p,provider=data.provider,operating_mode=data.operating_mode,language=language,diarization_enabled=data.options.diarize,dictionary_ids=data.options.dictionary_ids,explicit_provider_credential_id=explicit_provider_credential_id,duplicate_pair_found=duplicate_pair_found,source_ids=source_ids,folder_ids=folder_ids,media_clips=media_clips,output_providers=[item.output_provider for item in data.items],local_device_id=data.local_device_id,local_model=data.local_model)
+    provider_credential_id, sources, verified_by_id, capability, dictionary_terms=_validate_new_batch_targets(db,user,p,provider=data.provider,operating_mode=data.operating_mode,language=language,diarization_enabled=data.options.diarize,dictionary_ids=data.options.dictionary_ids,explicit_provider_credential_id=explicit_provider_credential_id,duplicate_pair_found=duplicate_pair_found,source_ids=source_ids,folder_ids=folder_ids,media_clips=media_clips,output_providers=[item.output_provider for item in data.items],local_device_id=data.local_device_id,local_model=data.local_model,local_model_revision=data.local_model_revision)
     request_hash=_batch_hash(p.id,provider_credential_id,language,options_json,hash_items,provider=data.provider.value,operating_mode=data.operating_mode.value,local_device_id=data.local_device_id)
     try:
         jobs=[]
         local_device = None
         if data.provider == SttProvider.nemotron:
             from .local_execution_devices import require_ready_device
+            from .local_model_identity import LEGACY_NEMOTRON_REVISION
+            revision = data.local_model_revision or LEGACY_NEMOTRON_REVISION
             local_device = require_ready_device(db, owner_user_id=user.id, device_id=data.local_device_id, now=utcnow(), lock=True,
-                                                model=capability.model)
+                                                model=capability.model, revision=revision)
         _require_catalog_identity_locks(db, user, sources)
         sources=validate_job_sources(db, p.id, source_ids, lock_mode="no_key_update")
         _require_known_batch_clip_bounds(db, user, sources, media_clips)
@@ -2902,8 +2905,7 @@ def create_transcription_jobs_batch(project_id: str, data: TranscriptionJobBatch
                 job.local_device_id = local_device.id
                 local_options = json.loads(job_options_json or "{}")
                 local_options["_local_device_label"] = local_device.label
-                if data.local_model_revision is not None:
-                    local_options["_local_model_revision"] = data.local_model_revision
+                local_options["_local_model_revision"] = revision
                 job.options_json = json.dumps(local_options, sort_keys=True, separators=(",", ":"))
             job.output_provider=getattr(vf,"provider","google_drive")
             if job.output_provider != data.items[idx].output_provider:
@@ -3940,10 +3942,11 @@ def post_job_retry(job_id: str, request: Request, data: JobRetryIn | None = None
     if job.provider == "nemotron" and job.local_result_ready_at is None and job.status == JobStatus.failed:
         from .local_execution_devices import require_ready_device
         from .local_model_identity import job_model_identity
-        model, _ = job_model_identity(job.options_json)
+        model, revision = job_model_identity(job.options_json)
         if model is None:
             raise HTTPException(409, detail={"reason": "local_device_model_changed"})
-        require_ready_device(db, owner_user_id=user.id, device_id=job.local_device_id, now=utcnow(), lock=True, model=model)
+        require_ready_device(db, owner_user_id=user.id, device_id=job.local_device_id, now=utcnow(), lock=True,
+                             model=model, revision=revision)
     if job.output_provider == "yandex_disk" and initial_readiness.reason.value == "output_reconciliation_required":
         from .yandex_output_reconciliation import check_yandex_output_reconciliation
         try:

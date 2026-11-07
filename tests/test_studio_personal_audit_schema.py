@@ -17,7 +17,7 @@ def test_source_version_migration_preserves_legacy_identity_and_guards_rollback(
     config = Config("apps/studio-api/alembic.ini")
     scripts = ScriptDirectory.from_config(config)
     revision = scripts.get_revision("0045_personal_audit")
-    assert scripts.get_heads() == [revision.revision]
+    assert revision.revision in {item.revision for item in scripts.walk_revisions()}
     assert revision.down_revision == "0044_quality_progress"
     assert revision.module.release_safety == "additive"
     engine = sa.create_engine("sqlite://")

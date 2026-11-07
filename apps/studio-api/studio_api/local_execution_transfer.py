@@ -25,7 +25,7 @@ from .job_source_materialization import materialize_processing_job_source
 from .local_execution_devices import authenticate_device
 from .local_execution_jobs import _scope
 from .models import JobSourceStatus, JobStatus, Project, TranscriptionJob, SttProviderOperation
-from .local_model_identity import PARAKEET_MAX_DURATION_SECONDS, PARAKEET_MODEL, job_model_identity
+from .local_model_identity import LEGACY_NEMOTRON_REVISION, PARAKEET_MAX_DURATION_SECONDS, PARAKEET_MODEL, job_model_identity
 from .nemotron_local_result import NEMOTRON_MAX_DURATION_SECONDS, NEMOTRON_MODEL, normalize_nemotron_local_result
 from .provider_result_cache import persist_operation_result
 from .security import utcnow
@@ -226,7 +226,8 @@ def accept_local_result(db, *, device, job_id, envelope, digest, settings, now):
             raise _error("local_result_changed")
         return {"accepted": True, "already_accepted": True}
     generation = envelope["generation"]
-    legacy = model == NEMOTRON_MODEL and "model" not in envelope
+    legacy = (model == NEMOTRON_MODEL and revision == LEGACY_NEMOTRON_REVISION
+              and "model" not in envelope)
     if not legacy and (envelope.get("model") != model or envelope.get("model_revision") != revision):
         raise _error("local_result_model_changed")
     job = _scope(db, device=device, job_id=job_id, generation=generation, now=now)

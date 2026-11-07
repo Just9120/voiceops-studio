@@ -123,7 +123,7 @@ def test_personal_security_migration_is_one_additive_successor():
 
     script = ScriptDirectory.from_config(Config(str(ROOT / "apps/studio-api/alembic.ini")))
     revision = script.get_revision("0034_personal_security")
-    assert script.get_heads() == ["0045_personal_audit"]
+    assert script.get_heads() == ["0046_local_model_revision"]
     assert revision.down_revision == "0033_observability_alerts_audit"
     assert revision.module.release_safety == "additive"
 

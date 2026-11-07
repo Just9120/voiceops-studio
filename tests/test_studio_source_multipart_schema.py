@@ -19,7 +19,7 @@ def test_source_multipart_migration_is_additive_direct_successor():
     scripts = ScriptDirectory.from_config(
         Config(str(ROOT / "apps/studio-api/alembic.ini"))
     )
-    assert scripts.get_heads() == ["0045_personal_audit"]
+    assert scripts.get_heads() == ["0046_local_model_revision"]
     revision = scripts.get_revision("0032_source_multipart_authority")
     assert revision is not None
     assert revision.down_revision == "0031_provider_account_snapshots"

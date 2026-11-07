@@ -19,7 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps/studio-api"))
 os.environ.setdefault("STUDIO_DATABASE_URL", "sqlite+pysqlite:///:memory:")
 
 from studio_api.local_execution_devices import authenticate_device, device_payload, pair_device
-from studio_api.local_model_identity import MODEL_REVISIONS, PARAKEET_MODEL
+from studio_api.local_model_identity import (
+    LEGACY_NEMOTRON_REVISION, MODEL_REVISIONS, PARAKEET_MODEL, SUPPORTED_MODEL_REVISIONS, job_model_identity,
+)
 from studio_api.models import AuditEvent, Base, LocalExecutionDevice, Session, User, UserStatus
 from studio_api.nemotron_local_result import NEMOTRON_MODEL
 from studio_api.security import token_hash
@@ -69,6 +71,19 @@ def local_app(monkeypatch):
 OWNER_HEADERS = {"origin": "https://studio.test", "x-csrf-token": "test-csrf"}
 BASE = "/api/local-execution"
 READY = {"runtime_status": "ready", "runtime_version": "0.2.0+nightly.66d50d9", "model": NEMOTRON_MODEL}
+
+
+def test_promoting_catalog_default_preserves_explicit_and_legacy_job_versions(monkeypatch):
+    previous = LEGACY_NEMOTRON_REVISION
+    promoted = "a" * 40
+    monkeypatch.setitem(MODEL_REVISIONS, NEMOTRON_MODEL, promoted)
+    monkeypatch.setitem(SUPPORTED_MODEL_REVISIONS, NEMOTRON_MODEL, frozenset((previous, promoted)))
+    assert job_model_identity(json.dumps({"_stt_model": NEMOTRON_MODEL})) == (NEMOTRON_MODEL, previous)
+    for revision in (previous, promoted):
+        assert job_model_identity(json.dumps({"_stt_model": NEMOTRON_MODEL, "_local_model_revision": revision})) == (
+            NEMOTRON_MODEL, revision,
+        )
+    assert job_model_identity(json.dumps({"_stt_model": NEMOTRON_MODEL, "_local_model_revision": "b" * 40})) == (None, None)
 
 
 def test_closed_installer_download_checks_owner_release_identity_and_bytes(local_app, tmp_path):
@@ -717,6 +732,51 @@ def post_native(client, headers, job_id, envelope):
     import json
     return client.post(f"{BASE}/companion/jobs/{job_id}/result",
         headers={**headers, "content-type": "application/gzip"}, content=gzip.compress(json.dumps(envelope).encode()))
+
+
+def test_retained_revision_can_finish_queued_work_after_catalog_promotion(local_app, monkeypatch):
+    from studio_api.models import TranscriptionJob
+
+    client, maker, _, (owner_id, _) = local_app
+    previous = LEGACY_NEMOTRON_REVISION
+    promoted = "a" * 40
+    raw, _ = input_fixture(monkeypatch)
+    device_id, headers = prepare_pc(client)
+    job_id = seed_local_jobs(maker, owner_id, device_id)[0]
+    with maker.begin() as db:
+        job = db.get(TranscriptionJob, job_id)
+        job.options_json = json.dumps({**json.loads(job.options_json), "_local_model_revision": previous})
+    monkeypatch.setitem(MODEL_REVISIONS, NEMOTRON_MODEL, promoted)
+    monkeypatch.setitem(SUPPORTED_MODEL_REVISIONS, NEMOTRON_MODEL, frozenset((previous, promoted)))
+
+    def heartbeat(revision):
+        return client.post(BASE + "/companion/heartbeat", headers=headers, json={**READY, "model_revision": revision})
+
+    def remove(revision):
+        return client.post(BASE + "/companion/model-removal", headers=headers,
+            json={"model": NEMOTRON_MODEL, "revision": revision})
+
+    assert heartbeat(promoted).json()["device"]["model_revision"] == promoted
+    assert client.post(BASE + "/companion/claim", headers=headers).json() == {"job": None}
+    assert remove(previous).status_code == 409
+    assert heartbeat(previous).json()["device"]["model_revision"] == previous
+    assert remove(promoted).json() == {"allowed": True}
+    claim = client.post(BASE + "/companion/claim", headers=headers).json()["job"]
+    assert claim["id"] == job_id and claim["model_revision"] == previous
+    assert heartbeat(promoted).status_code == 409
+    generation = claim["lease_generation"]
+    source = client.get(f"{BASE}/companion/jobs/{job_id}/source", params={"generation": generation}, headers=headers)
+    sha = hashlib.sha256(raw).hexdigest()
+    assert source.headers["x-voiceops-input-sha256"] == sha
+    prepared = client.post(f"{BASE}/companion/jobs/{job_id}/prepare", headers=headers,
+        json={"generation": generation, "source_sha256": sha, "source_duration_seconds": 1.0})
+    assert prepared.status_code == 200
+    envelope = {**native_envelope(generation, sha), "model": NEMOTRON_MODEL, "model_revision": promoted}
+    assert post_native(client, headers, job_id, envelope).status_code == 409
+    assert post_native(client, headers, job_id, {**envelope, "model_revision": previous}).json() == {
+        "accepted": True, "already_accepted": False,
+    }
+    assert remove(previous).json() == {"allowed": True}
 
 
 @pytest.mark.parametrize("model", [NEMOTRON_MODEL, PARAKEET_MODEL])
