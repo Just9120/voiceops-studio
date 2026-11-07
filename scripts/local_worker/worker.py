@@ -13,7 +13,8 @@ import time
 from .native import NativePaths, NativeServer, model_scratch_root, prepare_audio, probe_audio, verify_installation
 from .parakeet import transcribe_parakeet
 from .process import owned_scratch, recovered_workspace, single_instance
-from .protocol import APIError, MAX_RESULT_BYTES, MODEL, MODEL_REVISIONS, PARAKEET_MODEL, Stopped, StudioClient, WorkerError, checked_job, response_bytes
+from .model_profiles import INITIAL_MODEL_REVISIONS
+from .protocol import APIError, MAX_RESULT_BYTES, MODEL, PARAKEET_MODEL, Stopped, StudioClient, WorkerError, checked_job, response_bytes
 
 
 class DevicePulse:
@@ -147,8 +148,8 @@ def download_source(client, job, destination, pulse):
 
 def submit_result(client, job, result, sha, pulse):
     envelope = {"generation": job["generation"], "source_sha256": sha, "result": result}
-    if job.get("model") == PARAKEET_MODEL:
-        envelope.update(model=PARAKEET_MODEL, model_revision=MODEL_REVISIONS[PARAKEET_MODEL])
+    if "model_revision" in job:
+        envelope.update(model=job["model"], model_revision=job["model_revision"])
     raw = json.dumps(envelope, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
     if len(raw) > MAX_RESULT_BYTES + 4096:
         raise WorkerError("local_result_invalid")
@@ -214,13 +215,13 @@ def run_job(client, job, paths, server, directory, *, global_check=lambda: None)
 
 def run(profile, *, root, notice=print, check_stop=lambda: None):
     model = profile.get("model", MODEL)
+    revision = profile.get("model_revision", INITIAL_MODEL_REVISIONS.get(model))
     parakeet = model == PARAKEET_MODEL
-    client_args = {"model": model} if parakeet else {}
-    client = StudioClient(profile["origin"], profile["token"], **client_args)
+    client = StudioClient(profile["origin"], profile["token"], model=model, revision=revision)
     with single_instance(root), ExitStack() as workspace, DevicePulse(client, check_stop) as device:
         try:
-            paths = NativePaths.from_dict(profile["paths"], **client_args)
-            verify_installation(paths, check=device.check, verified_files=profile["verified_files"], **client_args)
+            paths = NativePaths.from_dict(profile["paths"], model=model)
+            verify_installation(paths, check=device.check, verified_files=profile["verified_files"], model=model, revision=revision)
         except Stopped:
             raise
         except WorkerError as error:
@@ -268,8 +269,7 @@ def run(profile, *, root, notice=print, check_stop=lambda: None):
                 if reply["job"] is None:
                     time.sleep(3)
                     continue
-                job = checked_job(reply["job"], model=model)
-                job["model"] = model
+                job = checked_job(reply["job"], model=model, revision=revision)
                 notice("Распознаю запись, назначенную в Studio…")
                 try:
                     done = run_job(client, job, paths, server, directory, global_check=device.check)

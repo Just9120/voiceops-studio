@@ -12,16 +12,15 @@ import webbrowser
 
 from local_worker.enrollment import begin_enrollment
 from local_worker.hardware import hardware_inventory
-from local_worker.model_download import PROFILES, install_profile, remove_managed_profile
+from local_worker.model_download import install_profile, remove_managed_profile
+from local_worker.model_profiles import INITIAL_MODEL_REVISIONS, PROFILES, RETAINED_PROFILES
 from local_worker.native import NativePaths, NativeServer, model_scratch_root, prepare_audio, probe_audio, verify_installation
 from local_worker.parakeet import transcribe_parakeet
 from local_worker.process import owned_scratch, single_instance
 from local_worker.profile import default_profile, protect, read_profile, write_profile
-from local_worker.protocol import APIError, MODEL, MODEL_REVISIONS, PARAKEET_MODEL, RUNTIME_VERSION, Stopped, StudioClient, WorkerError, canonical_id
+from local_worker.protocol import APIError, MODEL, PARAKEET_MODEL, RUNTIME_VERSION, Stopped, StudioClient, WorkerError, canonical_id
 from local_worker.worker import run
 
-DECODER = "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-AD-IQ4_NL.gguf"
-ENCODER = "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf"
 AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 AUTOSTART_NAME = "VoiceOps Studio Companion"
 APP_MUTEX = r"Local\VoiceOpsStudioCompanion"
@@ -31,13 +30,18 @@ def legacy_identity(profile):
     return {key: profile[key] for key in ("origin", "token")}
 
 
-def bundled_paths(model_dir, model=MODEL):
+def profile_identity(profile):
+    model = profile.get("model", MODEL)
+    return model, profile.get("model_revision", INITIAL_MODEL_REVISIONS[model])
+
+
+def bundled_paths(model_dir, profile):
     # A frozen installer supplies trusted native tools next to the app resources.
     assets = Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) / "voiceops-tools"
     return {
         "runtime": str(assets / "nemo" / "nemo-speech.exe"),
-        "decoder": str(model_dir / (DECODER if model == MODEL else "parakeet-tdt-0.6b-v3.q8_0.gguf")),
-        "encoder": str(model_dir / ENCODER) if model == MODEL else None,
+        "decoder": str(model_dir / profile.files[0].name),
+        "encoder": str(model_dir / profile.files[1].name) if profile.model == MODEL else None,
         "ffmpeg": str(assets / "ffmpeg.exe"),
         "ffprobe": str(assets / "ffprobe.exe"),
     }
@@ -109,8 +113,10 @@ class CompanionWindow:
         self.import_connection = ttk.Button(view, text="Использовать прежнее подключение", command=self.adopt)
         self.approve_button = ttk.Button(view, text="Открыть подтверждение в браузере", command=self.open_approval)
         self.import_model = ttk.Button(view, text="Импортировать файлы выбранной модели", command=self.import_models)
-        ttk.Label(view, text="Модель для установки и запуска").pack(anchor="w", pady=(8, 0))
-        self.model_choice = ttk.Combobox(view, state="readonly", values=[profile.name for profile in PROFILES.values()])
+        ttk.Label(view, text="Модель и версия для установки или запуска").pack(anchor="w", pady=(8, 0))
+        defaults = {(profile_id, profile.revision): profile for profile_id, profile in PROFILES.items()}
+        self.model_choices = tuple((defaults | RETAINED_PROFILES).items())
+        self.model_choice = ttk.Combobox(view, state="readonly", values=self.model_labels())
         self.model_choice.current(0)
         self.model_choice.pack(fill="x")
         self.install_model = ttk.Button(view, text="Выбрать диск и скачать / продолжить", command=self.download_model)
@@ -123,18 +129,26 @@ class CompanionWindow:
         for button in (self.pair_button, self.import_connection, self.approve_button, self.import_model, self.install_model, self.probe_button, self.remove_model_button,
                        self.start_button, self.stop_button, self.auto_button):
             button.pack(anchor="w", pady=(5, 0))
+        restore_active = False
         try:
             if self.legacy_path.exists():
                 self.legacy = read_profile(self.legacy_path)
             if self.identity_path.exists():
                 self.identity = read_profile(self.identity_path, identity_only=True)
-            if self.runtime_path.exists() and read_profile(self.runtime_path).get("model") == PARAKEET_MODEL:
-                self.model_choice.current(1)
+            if self.runtime_path.exists():
+                saved = read_profile(self.runtime_path)
+                if legacy_identity(saved) == self.identity:
+                    for index, (_, candidate) in enumerate(self.model_choices):
+                        if (candidate.model, candidate.revision) == profile_identity(saved):
+                            self.model_choice.current(index)
+                            restore_active = True
+                            break
             self.auto.set(autostart())
             if self.identity:
                 self.status.set("Компьютер привязан. Обработчик остановлен.")
         except (WorkerError, OSError):
             self.status.set("Не удалось прочитать настройки. Проверьте профиль подключения.")
+        self.refresh_model_labels()
         self.enable_controls()
         window.after(100, self.pump)
         window.after(250, self.publish_inventory)
@@ -142,7 +156,7 @@ class CompanionWindow:
         if background:
             if self.tray:
                 window.withdraw()
-            if self.identity:
+            if restore_active:
                 window.after(0, self.start)
 
     def add_tray(self):
@@ -224,11 +238,11 @@ class CompanionWindow:
             elif kind == "inventory-disk":
                 self.inventory_disk = data
             elif kind == "probe":
-                self.probes[data["model"]] = data
-            elif kind == "model-removed":
+                version, probe = data
+                self.probes[version] = probe
+            elif kind in {"model-removed", "model-updated"}:
                 self.probes.pop(data, None)
-            elif kind == "model-updated":
-                self.probes.pop(data, None)
+                self.refresh_model_labels()
             elif kind == "install-request":
                 self.accept_install_request(data)
             elif kind == "show":
@@ -242,6 +256,7 @@ class CompanionWindow:
             elif kind == "done":
                 self.thread = None
                 self.approval_url = None
+                self.refresh_model_labels()
                 self.enable_controls()
         if self.exiting and self.thread is None:
             if self.tray:
@@ -259,39 +274,48 @@ class CompanionWindow:
         if self.exiting:
             return
         identity, disk = self.identity, self.inventory_disk
-        probes = list(self.probes.values())
+        probes = self.probes.copy()
         answered = self.answered_install
         if identity and not (self.inventory_thread and self.inventory_thread.is_alive()):
             def report():
-                installed = []
-                verified_installations = []
+                versions = []
                 effective_disk = disk
-                for model in (MODEL, PARAKEET_MODEL):
+                for _, candidate in self.model_choices:
+                    model, revision = candidate.model, candidate.revision
                     try:
-                        profile = read_profile(self.model_path(model))
-                        if legacy_identity(profile) != identity:
+                        profile = self.configured_model(identity, model, revision)
+                        if profile is None:
                             continue
                         decoder = Path(profile["paths"]["decoder"])
                         if not decoder.is_file():
                             continue
-                        installed.append(model)
-                        effective_disk = effective_disk or decoder.parent
-                        verify_installation(
-                            NativePaths.from_dict(profile["paths"], model=model), model=model,
-                            verified_files=profile["verified_files"], cached_only=True,
-                        )
-                        verified_installations.append(model)
                     except (OSError, WorkerError):
                         continue
+                    effective_disk = effective_disk or decoder.parent
+                    verified = False
+                    try:
+                        verify_installation(
+                            NativePaths.from_dict(profile["paths"], model=model), model=model,
+                            revision=revision, verified_files=profile["verified_files"], cached_only=True,
+                        )
+                        verified = True
+                    except (OSError, WorkerError):
+                        pass
+                    versions.append({"model": model, "revision": revision, "verified": verified,
+                                     "probe": probes.get((model, revision)) if verified else None})
+                defaults = {(item.model, item.revision) for item in PROFILES.values()}
+                current = [item for item in versions if (item["model"], item["revision"]) in defaults]
                 try:
                     client = StudioClient(identity["origin"], identity["token"])
                     client.json("/inventory", {
-                        **hardware_inventory(effective_disk), "installed": installed,
-                        "verified_installations": verified_installations,
-                        "probes": [probe for probe in probes if probe["model"] in verified_installations],
+                        **hardware_inventory(effective_disk), "model_versions": versions,
+                        "installed": [item["model"] for item in current],
+                        "verified_installations": [item["model"] for item in current if item["verified"]],
+                        "probes": [item["probe"] for item in current if item["probe"] is not None],
                     })
                     pending = client.json("/model-install-request", {"request_id": answered}).get("request")
-                    if isinstance(pending, dict) and MODEL_REVISIONS.get(pending.get("model")) == pending.get("revision"):
+                    if isinstance(pending, dict) and any((item.model, item.revision) == (
+                            pending.get("model"), pending.get("revision")) for item in PROFILES.values()):
                         self.events.put(("install-request", {**pending, "id": canonical_id(pending.get("id"))}))
                 except (OSError, WorkerError):
                     pass  # Missing inventory expires; it cannot imply compatibility or readiness.
@@ -303,15 +327,14 @@ class CompanionWindow:
     def accept_install_request(self, request):
         if self.thread or self.exiting or request["id"] == self.answered_install:
             return
-        models = (MODEL, PARAKEET_MODEL)
-        if request["model"] not in models:
+        choice = next((choice for choice in self.model_choices if (choice[1].model, choice[1].revision)
+                       == (request["model"], request["revision"])), None)
+        if choice is None:
             return
-        index = models.index(request["model"])
-        name = tuple(PROFILES.values())[index].name
+        name = choice[1].name
         self.answered_install = request["id"]
         if messagebox.askyesno("Запрос установки из Studio", f"Установить {name}? Вы сможете выбрать диск.", parent=self.window):
-            self.model_choice.current(index)
-            self.download_model()
+            self.download_model(choice)
 
     def open_approval(self):
         if self.approval_url:
@@ -358,58 +381,82 @@ class CompanionWindow:
 
     def import_models(self):
         identity = self.identity
-        model = self.selected_model()
+        choice = self.selected_model()
         chosen = filedialog.askdirectory(title="Папка с весами выбранной модели")
-        if not identity or not chosen or not model:
+        if not identity or not chosen or not choice:
             return
         if not str(Path(chosen).resolve()).isascii():
             self.status.set("Эта версия движка требует путь без кириллицы. Выберите папку с латинским названием.")
             return
 
         def validate():
-            self.save_model(identity, model, Path(chosen))
+            self.save_model(identity, choice[1], Path(chosen))
             self.events.put(("status", "Модель проверена. Можно запустить обработчик."))
 
         self.task(validate)
 
     def selected_model(self):
         index = self.model_choice.current()
-        return (MODEL, PARAKEET_MODEL)[index] if 0 <= index < 2 else None
+        return self.model_choices[index] if index >= 0 else None
 
-    def model_path(self, model):
-        return self.runtime_path.with_name(f"desktop-runtime-{model}.json")
+    def model_labels(self):
+        labels = []
+        for _, candidate in self.model_choices:
+            installed = False
+            if self.identity:
+                try:
+                    profile = self.configured_model(self.identity, candidate.model, candidate.revision)
+                    installed = bool(profile and Path(profile["paths"]["decoder"]).is_file())
+                except (OSError, WorkerError):
+                    pass
+            labels.append(f"{candidate.name} · {candidate.revision[:8]}" + (" · установлена" if installed else ""))
+        return labels
 
-    def configured_model(self, identity, model):
-        available = [self.model_path(model), self.runtime_path]
+    def refresh_model_labels(self):
+        index = self.model_choice.current()
+        self.model_choice.configure(values=self.model_labels())
+        self.model_choice.current(max(index, 0))
+
+    def model_path(self, model, revision):
+        return self.runtime_path.with_name(f"desktop-runtime-{model}-{revision}.json")
+
+    def stored_model_paths(self, model, revision):
+        yield self.model_path(model, revision)
+        if revision == INITIAL_MODEL_REVISIONS[model]:
+            yield self.runtime_path.with_name(f"desktop-runtime-{model}.json")
+
+    def configured_model(self, identity, model, revision):
+        available = [*self.stored_model_paths(model, revision), self.runtime_path]
         if model == MODEL and self.legacy:
             available.append(self.legacy_path)
         for candidate in available:
             if candidate.exists():
                 item = read_profile(candidate)
-                if legacy_identity(item) == identity and item.get("model", MODEL) == model:
+                if legacy_identity(item) == identity and profile_identity(item) == (model, revision):
                     return item
         return None
 
-    def save_model(self, identity, model, directory, *, managed_root=None):
-        values = bundled_paths(directory, model)
+    def save_model(self, identity, candidate, directory, *, managed_root=None):
+        model, revision = candidate.model, candidate.revision
+        values = bundled_paths(directory, candidate)
         self.events.put(("status", "Проверяем файлы модели…"))
-        verified = verify_installation(NativePaths.from_dict(values, model=model), model=model, check=self.check_stop)
+        verified = verify_installation(NativePaths.from_dict(values, model=model), model=model, revision=revision,
+                                       check=self.check_stop)
         self.check_stop()
-        target = self.model_path(model)
-        config = {**identity, "model": model, "paths": values, "verified_files": verified}
+        target = self.model_path(model, revision)
+        config = {**identity, "model": model, "model_revision": revision, "paths": values, "verified_files": verified}
         if managed_root is not None:
             config["managed_root"] = str(Path(managed_root).resolve())
         write_profile(target, config, replace=target.exists())
         self.events.put(("inventory-disk", directory))
-        self.events.put(("model-updated", model))
+        self.events.put(("model-updated", (model, revision)))
 
-    def download_model(self):
+    def download_model(self, choice=None):
         identity = self.identity
-        index = self.model_choice.current()
-        model = self.selected_model()
-        if not identity or index < 0:
+        choice = self.selected_model() if choice is None else choice
+        if not identity or not choice:
             return
-        profile_id = tuple(PROFILES)[index]
+        profile_id, candidate = choice
         chosen = filedialog.askdirectory(title="Диск или папка для моделей VoiceOps Studio")
         if not chosen:
             return
@@ -428,21 +475,19 @@ class CompanionWindow:
                     last_percent = percent
                     self.events.put(("status", f"Загрузка модели: {done:,} / {total:,} байт ({percent}%)."))
 
-            directory = install_profile(profile_id, chosen, check=self.check_stop, progress=progress)
-            self.save_model(identity, model, directory, managed_root=chosen)
+            directory = install_profile(profile_id, chosen, check=self.check_stop, progress=progress,
+                                        revision=candidate.revision)
+            self.save_model(identity, candidate, directory, managed_root=chosen)
             self.events.put(("status", "Модель скачана. Целостность файлов подтверждена."))
 
         self.task(download, cancelled="Загрузка приостановлена. Выберите ту же папку, чтобы продолжить.")
 
     def remove_model(self):
-        identity, model = self.identity, self.selected_model()
-        if not identity or not model:
+        identity, choice = self.identity, self.selected_model()
+        if not identity or not choice:
             return
-        profile_id = tuple(PROFILES)[self.model_choice.current()]
-        target = self.model_path(model)
-        if not target.is_file():
-            self.status.set("Нет установленной через это приложение версии.")
-            return
+        profile_id, candidate = choice
+        model, revision = candidate.model, candidate.revision
         if not messagebox.askyesno("Удалить версию модели",
             "Скачанные приложением файлы будут удалены с диска. При импорте исходные файлы останутся на месте.",
             parent=self.window):
@@ -450,38 +495,51 @@ class CompanionWindow:
 
         def remove():
             with single_instance(self.legacy_path.parent):
-                profile = read_profile(target)
-                if legacy_identity(profile) != identity:
-                    raise WorkerError("local_profile_unavailable")
+                installed = []
+                for target in self.stored_model_paths(model, revision):
+                    if target.is_file():
+                        profile = read_profile(target)
+                        if legacy_identity(profile) == identity and profile_identity(profile) == (model, revision):
+                            installed.append((target, profile))
+                if not installed:
+                    self.events.put(("status", "Нет установленной через это приложение версии."))
+                    return
+                profile = installed[0][1]
+                active = read_profile(self.runtime_path) if self.runtime_path.exists() else None
                 reply = StudioClient(identity["origin"], identity["token"]).json("/model-removal", {
-                    "model": model, "revision": MODEL_REVISIONS[model],
+                    "model": model, "revision": revision,
                 })
                 if reply != {"allowed": True}:
                     raise WorkerError("local_model_in_use")
                 if profile.get("managed_root"):
-                    remove_managed_profile(profile_id, profile["managed_root"], profile["paths"]["decoder"], check=self.check_stop)
-                if self.runtime_path.exists() and read_profile(self.runtime_path) == profile:
+                    remove_managed_profile(profile_id, profile["managed_root"], profile["paths"]["decoder"],
+                                           check=self.check_stop, revision=revision)
+                if active and legacy_identity(active) == identity and profile_identity(active) == (model, revision):
                     self.runtime_path.unlink()
-                target.unlink()
-            self.events.put(("model-removed", model))
+                for target, _ in installed:
+                    target.unlink()
+            self.events.put(("model-removed", (model, revision)))
             self.events.put(("status", "Версия удалена из списка установленных моделей."))
 
         self.task(remove)
 
     def probe_model(self):
-        identity, model = self.identity, self.selected_model()
-        if not identity or not model:
+        identity, choice = self.identity, self.selected_model()
+        if not identity or not choice:
             return
+        candidate = choice[1]
+        model, revision = candidate.model, candidate.revision
 
         def probe():
-            profile = self.configured_model(identity, model)
+            profile = self.configured_model(identity, model, revision)
             if profile is None:
                 raise WorkerError("local_model_unavailable")
             paths = NativePaths.from_dict(profile["paths"], model=model)
             root = self.legacy_path.parent
             self.events.put(("status", "Проверяем скорость на короткой синтетической записи…"))
             with single_instance(root), owned_scratch(model_scratch_root(root, paths), prefix="job-") as directory:
-                verify_installation(paths, model=model, check=self.check_stop, verified_files=profile["verified_files"])
+                verify_installation(paths, model=model, revision=revision, check=self.check_stop,
+                                    verified_files=profile["verified_files"])
                 sample = bundled_probe()
                 duration = probe_audio(paths, sample, directory, self.check_stop)
                 audio = directory / "prepared.wav"
@@ -496,19 +554,22 @@ class CompanionWindow:
                         server.start(self.check_stop)
                         server.transcribe(audio, duration=duration, language="en", diarize=False, check=self.check_stop)
                 elapsed = max(.01, time.monotonic() - started)
-                self.events.put(("probe", {"model": model, "audio_seconds": duration, "elapsed_seconds": elapsed}))
+                self.events.put(("probe", ((model, revision), {
+                    "model": model, "audio_seconds": duration, "elapsed_seconds": elapsed,
+                })))
                 self.events.put(("status", f"Проба прошла: {duration:.1f} с аудио за {elapsed:.1f} с, включая холодный запуск."))
 
         self.task(probe)
 
     def start(self):
         identity = self.identity
-        model = self.selected_model()
-        if not identity or not model:
+        choice = self.selected_model()
+        if not identity or not choice:
             return
+        candidate = choice[1]
 
         def run_worker():
-            profile = self.configured_model(identity, model)
+            profile = self.configured_model(identity, candidate.model, candidate.revision)
             if profile is None:
                 self.events.put(("status", "Сначала скачайте или импортируйте выбранную модель."))
                 return
@@ -557,7 +618,7 @@ def self_test():
     probe = b"voiceops-companion-smoke"
     if protect(protect(probe), decrypt=True) != probe:
         return 1
-    paths = bundled_paths(Path("."))
+    paths = bundled_paths(Path("."), PROFILES["nemotron-transcribe-iq4-nl"])
     for key, option, version in (("runtime", "--version", RUNTIME_VERSION),
                                   ("ffmpeg", "-version", "8.1.2"), ("ffprobe", "-version", "8.1.2")):
         result = subprocess.run([paths[key], option], capture_output=True, text=True, errors="replace",

@@ -9,14 +9,7 @@ import urllib.parse
 import urllib.request
 from uuid import UUID
 
-MODEL = "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B"
-PARAKEET_MODEL = "parakeet-tdt-0.6b-v3.q8_0"
-MODEL_REVISIONS = {
-    MODEL: "dbd06c5cad7a2f33c8e06be2fb3ef814dbd9aa59",
-    PARAKEET_MODEL: "541d1f99c6b0c3cd0b11a95167540bb8edefd82b",
-}
-PARAKEET_BYTES = 713975456
-PARAKEET_SHA256 = "e3880d0aaaaf2c308ea2c35016b2b895c423eb3fda924c1b463d1c19b7f4d32e"
+from .model_profiles import INITIAL_MODEL_REVISIONS, MODEL, PARAKEET_MODEL, model_profile
 RUNTIME_VERSION = "0.2.0+nightly.66d50d9"
 MAX_INPUT_BYTES = 2147483647
 MAX_RESULT_BYTES = 16 * 1024 * 1024
@@ -85,7 +78,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class StudioClient:
-    def __init__(self, base, token, *, allow_loopback=False, model=MODEL):
+    def __init__(self, base, token, *, allow_loopback=False, model=MODEL, revision=None):
         self.base = origin(base, allow_loopback=allow_loopback)
         if not isinstance(token, str) or re.fullmatch(r"vs-local\.[a-f0-9-]{36}\.[A-Za-z0-9_-]{43}", token) is None:
             raise WorkerError("local_pairing_token_invalid")
@@ -95,9 +88,11 @@ class StudioClient:
         except ValueError:
             raise WorkerError("local_pairing_token_invalid") from None
         self.token = token
-        if model not in MODEL_REVISIONS:
+        revision = INITIAL_MODEL_REVISIONS.get(model) if revision is None else revision
+        if model_profile(model, revision) is None:
             raise WorkerError("local_model_unavailable")
         self.model = model
+        self.revision = revision
 
     def open(self, suffix, *, method="POST", body=None, content_type="application/json", timeout=20):
         if not re.fullmatch(r"(?:/heartbeat|/inventory|/model-removal|/model-install-request|/stopped|/claim|/jobs/[a-f0-9-]{36}/(?:heartbeat|failure|prepare|result|source\?generation=[0-9]{1,10}))", suffix):
@@ -132,9 +127,8 @@ class StudioClient:
 
     def heartbeat(self, status):
         payload = {"runtime_status": status,
-                   "runtime_version": RUNTIME_VERSION if status == "ready" else None, "model": self.model}
-        if self.model != MODEL:
-            payload["model_revision"] = MODEL_REVISIONS[self.model]
+                   "runtime_version": RUNTIME_VERSION if status == "ready" else None,
+                   "model": self.model, "model_revision": self.revision}
         return self.json("/heartbeat", payload)
 
 
@@ -148,21 +142,23 @@ def response_bytes(response, maximum):
     return data
 
 
-def checked_job(data, *, model=MODEL):
+def checked_job(data, *, model=MODEL, revision=None):
     if not isinstance(data, dict):
         raise WorkerError("local_job_invalid")
     job_id = canonical_id(data.get("id"))
     canonical_id(data.get("source_id"))
     generation = data.get("lease_generation")
     size = data.get("size_bytes")
+    revision = INITIAL_MODEL_REVISIONS.get(model) if revision is None else revision
+    claimed_revision = data.get("model_revision", INITIAL_MODEL_REVISIONS[MODEL] if model == MODEL else None)
     if (type(generation) is not int or not 1 <= generation <= 2147483647
             or type(size) is not int or not 0 < size <= MAX_INPUT_BYTES
             or data.get("model") != model or data.get("language") not in {"ru", "en"}
-            or (model != MODEL and data.get("model_revision") != MODEL_REVISIONS.get(model))
+            or claimed_revision != revision or model_profile(model, revision) is None
             or (model == PARAKEET_MODEL and data.get("diarize") is not False)
             or type(data.get("diarize")) is not bool):
         raise WorkerError("local_job_invalid")
-    return {"id": job_id, "generation": generation, "size_bytes": size,
+    return {"id": job_id, "generation": generation, "size_bytes": size, "model": model, "model_revision": revision,
             "language": data["language"], "diarize": data["diarize"], "progress": data.get("progress")}
 
 

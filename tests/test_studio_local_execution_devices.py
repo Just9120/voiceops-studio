@@ -217,6 +217,18 @@ def test_inventory_is_only_readable_by_owner_and_rotated_with_capability(local_a
     inventory["verified_installations"] = [PARAKEET_MODEL]
     assert client.post(BASE + "/companion/inventory", headers=headers, json=inventory).status_code == 200
     assert client.get(reader).json()["inventory"]["verified_installations"] == [PARAKEET_MODEL]
+    original = MODEL_REVISIONS[PARAKEET_MODEL]
+    assert client.get(reader).json()["inventory"]["model_versions"] == [{
+        "model": PARAKEET_MODEL, "revision": original, "verified": True, "probe": None,
+    }]
+    newer = "a" * 40
+    inventory["model_versions"] = [{"model": PARAKEET_MODEL, "revision": newer, "verified": True}]
+    assert client.post(BASE + "/companion/inventory", headers=headers, json=inventory).status_code == 422
+    monkeypatch.setitem(SUPPORTED_MODEL_REVISIONS, PARAKEET_MODEL, frozenset((original, newer)))
+    assert client.post(BASE + "/companion/inventory", headers=headers, json=inventory).status_code == 200
+    assert client.get(reader).json()["inventory"]["model_versions"] == [{
+        "model": PARAKEET_MODEL, "revision": newer, "verified": True, "probe": None,
+    }]
     client.cookies.set(settings.cookie_name, "other-session")
     assert client.get(reader).status_code == 404
     client.cookies.set(settings.cookie_name, "owner-session")

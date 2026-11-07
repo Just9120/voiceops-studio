@@ -9,14 +9,34 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from local_worker import model_download as models
+from local_worker.model_profiles import ModelFile, ModelProfile
 from local_worker.protocol import WorkerError
+
+
+def test_remove_retained_profile_is_retryable_and_does_not_touch_promoted_version(tmp_path, monkeypatch):
+    profile_id = "synthetic"
+    original, promoted = "a" * 40, "b" * 40
+    specs = tuple(ModelFile(name, 4, hashlib.sha256(b"test").hexdigest()) for name in ("decoder.gguf", "encoder.gguf"))
+    monkeypatch.setitem(models.PROFILES, profile_id, ModelProfile("New", "nvidia/test", promoted, specs))
+    monkeypatch.setitem(models.RETAINED_PROFILES, (profile_id, original), ModelProfile("Old", "nvidia/test", original, specs))
+    directory = tmp_path / "VoiceOpsModels" / profile_id
+    old_files, new_files = directory / original, directory / promoted
+    old_files.mkdir(parents=True)
+    new_files.mkdir()
+    # Retry after the decoder was already removed and the encoder remained.
+    (old_files / "encoder.gguf").write_bytes(b"test")
+    for spec in specs:
+        (new_files / spec.name).write_bytes(b"test")
+    models.remove_managed_profile(profile_id, tmp_path, old_files / "decoder.gguf", check=lambda: None, revision=original)
+    assert list(old_files.iterdir()) == []
+    assert all((new_files / spec.name).read_bytes() == b"test" for spec in specs)
 
 
 def test_resumed_profile_requires_correct_range_and_digest(tmp_path, monkeypatch):
     content = b"correct-model-fixture"
     profile_id = "synthetic"
-    spec = models.ModelFile("test.gguf", len(content), hashlib.sha256(content).hexdigest())
-    monkeypatch.setitem(models.PROFILES, profile_id, models.ModelProfile(
+    spec = ModelFile("test.gguf", len(content), hashlib.sha256(content).hexdigest())
+    monkeypatch.setitem(models.PROFILES, profile_id, ModelProfile(
         "Synthetic", "nvidia/test", "a" * 40, (spec,)))
     directory = tmp_path / "VoiceOpsModels" / profile_id / ("a" * 40)
     directory.mkdir(parents=True)
@@ -51,9 +71,9 @@ def test_repeated_corrupt_downloads_leave_a_fresh_retry(tmp_path, monkeypatch):
     content = b"model-good"
     first_corrupt = b"model-bad1"
     second_corrupt = b"model-bad2"
-    spec = models.ModelFile("test.gguf", len(content), hashlib.sha256(content).hexdigest())
+    spec = ModelFile("test.gguf", len(content), hashlib.sha256(content).hexdigest())
     revision = "a" * 40
-    monkeypatch.setitem(models.PROFILES, "synthetic", models.ModelProfile(
+    monkeypatch.setitem(models.PROFILES, "synthetic", ModelProfile(
         "Synthetic", "nvidia/test", revision, (spec,)))
     directory = tmp_path / "VoiceOpsModels" / "synthetic" / revision
     replies = iter((first_corrupt, second_corrupt, content))

@@ -1,5 +1,6 @@
 """Actual child lifetime, protected profile and complete native protocol checks."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from dataclasses import replace
 import json
 import gzip
 import hashlib
@@ -15,7 +16,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from local_worker import native, profile
+from local_worker import model_profiles, native, profile
 from local_worker.process import OwnedProcess, owned_scratch, single_instance
 from local_worker.protocol import APIError, MODEL, RUNTIME_VERSION, StudioClient, WorkerError, checked_job, complete_native_result, origin
 from local_worker import worker
@@ -65,6 +66,74 @@ def test_job_contract_rejects_server_supplied_commands_urls_or_unsupported_selec
                     {"model": "cloud-model"}, {"language": "detect"}, {"lease_generation": -1}, {"diarize": "true"}):
         with pytest.raises(WorkerError, match="local_job_invalid"):
             checked_job({**job, **changes})
+
+
+def test_promoted_model_version_needs_exact_claim_and_is_sent_in_heartbeat(monkeypatch):
+    revision = "a" * 40
+    original = model_profiles.PROFILES["nemotron-transcribe-iq4-nl"]
+    monkeypatch.setitem(model_profiles.RETAINED_PROFILES, ("nemotron-transcribe-iq4-nl", original.revision), original)
+    monkeypatch.setitem(model_profiles.PROFILES, "nemotron-transcribe-iq4-nl", replace(original, revision=revision))
+    client = StudioClient("https://studio.test", f"vs-local.{uuid4()}.{'a' * 43}", revision=revision)
+    monkeypatch.setattr(client, "json", lambda path, payload: (path, payload))
+    assert client.heartbeat("ready")[1]["model_revision"] == revision
+
+    job = {"id": str(uuid4()), "source_id": str(uuid4()), "lease_generation": 1, "size_bytes": 32044,
+           "model": MODEL, "language": "ru", "diarize": True}
+    assert checked_job(job)["model_revision"] == original.revision
+    for claim in (job, {**job, "model_revision": original.revision}):
+        with pytest.raises(WorkerError, match="local_job_invalid"):
+            checked_job(claim, revision=revision)
+    assert checked_job({**job, "model_revision": revision}, revision=revision)["model_revision"] == revision
+
+
+def test_companion_keeps_active_revision_when_another_is_installed_or_removed(tmp_path, monkeypatch):
+    pytest.importorskip("tkinter")
+    from queue import SimpleQueue
+    import voiceops_companion as companion
+
+    profile_id = "nemotron-transcribe-iq4-nl"
+    original = model_profiles.PROFILES[profile_id]
+    promoted = replace(original, revision="a" * 40)
+    monkeypatch.setitem(model_profiles.RETAINED_PROFILES, (profile_id, original.revision), original)
+    monkeypatch.setitem(model_profiles.PROFILES, profile_id, promoted)
+    monkeypatch.setattr(profile, "protect", lambda value, **_: value)
+    ui = object.__new__(companion.CompanionWindow)
+    ui.runtime_path = tmp_path / "desktop-runtime.json"
+    ui.legacy_path = tmp_path / "profile.json"
+    ui.legacy = None
+    ui.identity = {"origin": "https://studio.test", "token": f"vs-local.{uuid4()}.{'a' * 43}"}
+    ui.events = SimpleQueue()
+    ui.window = None
+    ui.task = lambda action, **_: action()
+    ui.check_stop = lambda: None
+    monkeypatch.setattr(companion, "bundled_paths", lambda directory, _: {
+        key: str(directory / key) for key in ("runtime", "decoder", "encoder", "ffmpeg", "ffprobe")
+    })
+    verified = []
+    monkeypatch.setattr(native.NativePaths, "from_dict", lambda *_, **__: None)
+    monkeypatch.setattr(companion, "verify_installation", lambda _, *, revision, **__: verified.append(revision) or {})
+    # A desktop profile created before revision fields and versioned filenames existed.
+    legacy = {**ui.identity, "model": MODEL, "paths": companion.bundled_paths(tmp_path, original), "verified_files": {}}
+    profile.write_profile(ui.runtime_path, legacy)
+    profile.write_profile(ui.runtime_path.with_name(f"desktop-runtime-{MODEL}.json"), legacy)
+    ui.save_model(ui.identity, promoted, tmp_path / "new")
+    assert verified == [promoted.revision]
+    assert companion.profile_identity(profile.read_profile(ui.runtime_path)) == (MODEL, original.revision)
+    assert ui.configured_model(ui.identity, MODEL, original.revision) == legacy
+    assert ui.configured_model(ui.identity, MODEL, promoted.revision)["model_revision"] == promoted.revision
+
+    ui.selected_model = lambda: (profile_id, promoted)
+    monkeypatch.setattr(companion.messagebox, "askyesno", lambda *_, **__: True)
+    class RemovalClient:
+        def json(self, endpoint, payload):
+            assert endpoint == "/model-removal"
+            assert payload == {"model": MODEL, "revision": promoted.revision}
+            return {"allowed": True}
+    monkeypatch.setattr(companion, "StudioClient", lambda *_: RemovalClient())
+    ui.remove_model()
+    assert ui.configured_model(ui.identity, MODEL, promoted.revision) is None
+    assert profile.read_profile(ui.runtime_path) == legacy
+    assert ui.configured_model(ui.identity, MODEL, original.revision) == legacy
 
 
 @pytest.mark.parametrize("value", ["http://studio.test", "https://user:secret@studio.test", "https://studio.test/another",
@@ -216,11 +285,11 @@ def test_idle_native_exit_withdraws_readiness_before_claiming_another_job(tmp_pa
             self.process = SimpleNamespace(process=SimpleNamespace(poll=lambda: 1 if state["dead"] else None))
 
     pulse = SimpleNamespace(status="loading_model", check=lambda: None)
-    monkeypatch.setattr(worker, "StudioClient", lambda *_: Client())
+    monkeypatch.setattr(worker, "StudioClient", lambda *_, **__: Client())
     monkeypatch.setattr(worker, "DevicePulse", lambda *_: nullcontext(pulse))
     monkeypatch.setattr(worker, "NativeServer", Server)
     monkeypatch.setattr(worker, "verify_installation", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(worker.NativePaths, "from_dict", lambda *_: None)
+    monkeypatch.setattr(worker.NativePaths, "from_dict", lambda *_, **__: None)
     monkeypatch.setattr(worker.time, "sleep", lambda *_: None)
     with pytest.raises(WorkerError, match="local_runtime_unavailable"):
         worker.run({"origin": "https://example.invalid", "token": "synthetic", "paths": {}, "verified_files": {}},
@@ -235,7 +304,11 @@ def test_verified_weight_cache_reuses_only_unchanged_identity_and_executable_is_
     for path in (paths.runtime, paths.decoder, paths.encoder, paths.ffmpeg, paths.ffprobe):
         path.write_bytes(b"synthetic")
     digest = hashlib.sha256(b"synthetic").hexdigest()
-    monkeypatch.setattr(native, "PINNED_FILES", {name: (9, digest) for name in ("runtime", "decoder", "encoder")})
+    monkeypatch.setattr(native, "RUNTIME_FILE", (9, digest))
+    profile_id = "nemotron-transcribe-iq4-nl"
+    original = model_profiles.PROFILES[profile_id]
+    monkeypatch.setitem(model_profiles.PROFILES, profile_id, replace(original, files=tuple(
+        replace(spec, size=9, sha256=digest) for spec in original.files)))
     hashes = []
     original = native.file_sha256
     def counted(path, check):
@@ -365,8 +438,12 @@ def test_lost_commit_reply_reuses_exact_result_even_after_handoff_fences_heartbe
         def phase(self, *_): pass
         def global_check(self): pass
     monkeypatch.setattr(worker.time, "sleep", lambda *_: None)
-    worker.submit_result(client, synthetic_job(client), {"text": "synthetic"}, client.sha, Pulse())
+    revision = model_profiles.INITIAL_MODEL_REVISIONS[MODEL]
+    job = {**synthetic_job(client), "model": MODEL, "model_revision": revision}
+    worker.submit_result(client, job, {"text": "synthetic"}, client.sha, Pulse())
     assert len(client.uploads) == 2 and client.uploads[0] == client.uploads[1]
+    envelope = json.loads(gzip.decompress(client.uploads[0]))
+    assert (envelope["model"], envelope["model_revision"]) == (MODEL, revision)
 
 
 def test_stale_cleanup_removes_only_recognized_dead_runs_and_preserves_active_or_unknown_data(tmp_path, monkeypatch):

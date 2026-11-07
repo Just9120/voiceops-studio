@@ -13,11 +13,14 @@ type CatalogItem = {
 type CatalogPage = { items: CatalogItem[]; next_cursor: string | null };
 type CatalogQuery = { key: string; parameters: string; supported: boolean; speakers: boolean; timestamps: boolean; compatible: boolean };
 
+type Probe = { model: string; audio_seconds: number; elapsed_seconds: number };
+type InstalledVersion = { model: string; revision: string; verified: boolean; probe: Probe | null };
 type Inventory = {
   cpu: string; cpu_threads: number | null; ram_bytes: number | null; disk_free_bytes: number | null;
   gpus: { name: string; vram_bytes: number | null }[]; installed: string[]; execution: string[];
   verified_installations?: string[];
-  probes: { model: string; audio_seconds: number; elapsed_seconds: number }[];
+  probes: Probe[];
+  model_versions?: InstalledVersion[];
 };
 
 function gib(bytes: number | null) {
@@ -27,16 +30,25 @@ function gib(bytes: number | null) {
 function suitability(item: CatalogItem, inventory: Inventory | null) {
   if (!item.studio) return "Недостаточно данных";
   if (!inventory) return "Недостаточно данных";
-  if (isVerifiedInstallation(inventory, item.studio.model)) {
-    return inventory.probes.some(probe => probe.model === item.studio?.model)
+  const version = installedVersion(inventory, item.studio);
+  if (version?.verified) {
+    return version.probe
       ? "Подходит по короткой пробе" : "С ограничениями · скорость не измерена";
   }
   if (inventory.disk_free_bytes !== null && inventory.disk_free_bytes < item.studio.download_bytes) return "Не подходит · недостаточно места";
   return "Недостаточно данных · требуется проба на ПК";
 }
 
-function isVerifiedInstallation(inventory: Inventory | null, model: string) {
-  return inventory?.installed.includes(model) && inventory.verified_installations?.includes(model);
+function installedVersion(inventory: Inventory | null, studio: CatalogItem["studio"]) {
+  if (!inventory || !studio) return undefined;
+  const { model, revision } = studio;
+  if (inventory.model_versions) {
+    return inventory.model_versions.find(item => item.model === model && item.revision === revision);
+  }
+  // An older API can serve the Web during rollout. It only knows the original profiles.
+  if (!inventory.installed.includes(model)) return undefined;
+  const verified = inventory.verified_installations?.includes(model) ?? false;
+  return { model, revision, verified, probe: verified ? inventory.probes.find(item => item.model === model) ?? null : null };
 }
 
 export function LocalModelCatalog({ devices, csrf, onCsrf }: {
@@ -146,20 +158,23 @@ export function LocalModelCatalog({ devices, csrf, onCsrf }: {
     {queryChanged && <p>Показаны результаты предыдущего поиска. Нажмите «Найти модели», чтобы применить новые параметры.</p>}
     {!pending && visible?.length === 0 && <p>На этой странице нет моделей по заданным фильтрам.</p>}
     {visible && <ul className="local-device-list">{visible.map(item => {
-      const model = item.studio?.model;
-      const verified = model && isVerifiedInstallation(inventory, model);
-      const probe = verified ? inventory?.probes.find(value => value.model === model) : undefined;
-      const installationLabel = !inventory ? "нет данных" : verified ? "файлы проверены"
-        : model && inventory.installed.includes(model) ? "файлы обнаружены, проверка не подтверждена" : "не подтверждена";
+      const version = installedVersion(inventory, item.studio);
+      const probe = version?.verified ? version.probe : null;
+      const otherVersions = inventory?.model_versions?.filter(value => value.model === item.studio?.model
+        && value.revision !== item.studio?.revision) ?? [];
+      const installationLabel = !inventory ? "нет данных" : version?.verified ? "файлы проверены"
+        : version ? "файлы обнаружены, проверка не подтверждена" : "не подтверждена";
       return <li key={item.id}>
       <p><a href={item.source_url} target="_blank" rel="noreferrer">{item.studio?.name ?? item.id}</a></p>
       <p>{item.studio ? "Есть профиль Studio" : "Запуск в Studio пока не поддерживается"}</p>
       {item.studio && <p>Совместимость: {suitability(item, inventory)}. Установка: {installationLabel}.</p>}
+      {otherVersions.length > 0 && <p>Другие версии на ПК: {otherVersions.map(value =>
+        `${value.revision.slice(0, 12)} (${value.verified ? "проверена" : "проверка не подтверждена"})`).join(", ")}.</p>}
       {item.studio && <p className="muted">Профиль использует CPU. {item.studio.diarization
         ? "Nemotron требует больше ресурсов и поддерживает разделение спикеров."
         : "Parakeet занимает меньше места. Этот профиль без разделения спикеров."}</p>}
       {probe && <p>Проба с холодным запуском: {probe.audio_seconds.toFixed(1)} с записи за {probe.elapsed_seconds.toFixed(1)} с.</p>}
-      {item.studio && device && !verified && <button type="button"
+      {item.studio && device && !version?.verified && <button type="button"
         disabled={installPending} onClick={() => { if (item.studio) void requestInstall(item.studio); }}>Установить на выбранном ПК</button>}
       <p>Языки {((item.studio?.languages ?? item.languages).join(", ")) || "не указаны"} · Лицензия {item.license ?? "не указана"}</p>
       <p>Доступ на Hugging Face: {item.access === "public" ? "открытый"

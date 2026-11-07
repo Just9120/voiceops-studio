@@ -7,7 +7,7 @@ from contextlib import ExitStack
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
-from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, field_validator, model_validator
 from redis.exceptions import RedisError
 from sqlalchemy import select
 
@@ -19,7 +19,7 @@ from .client_ip import get_client_ip
 from .deps import current_session, require_csrf
 from .local_device_enrollment import DeviceEnrollment, PAIRING_SECONDS
 from .local_model_catalog import CatalogUnavailable, catalog_page
-from .local_model_identity import LEGACY_NEMOTRON_REVISION, MODEL_REVISIONS, PARAKEET_MODEL, is_supported_model_revision
+from .local_model_identity import INITIAL_MODEL_REVISIONS, LEGACY_NEMOTRON_REVISION, MODEL_REVISIONS, PARAKEET_MODEL, is_supported_model_revision
 from .local_execution_devices import (
     authenticate_device, device_model_identity, device_payload, owned_device, pair_device, revoke_device, rotate_device,
 )
@@ -91,6 +91,18 @@ class LocalModelVersionIn(BaseModel):
     revision: str = Field(pattern=r"^[0-9a-f]{40}$")
 
 
+class LocalModelInventoryVersionIn(LocalModelVersionIn):
+    verified: StrictBool
+    probe: LocalModelProbeIn | None = None
+
+    @model_validator(mode="after")
+    def validate_version(self):
+        if (not is_supported_model_revision(self.model, self.revision)
+                or (self.probe is not None and (not self.verified or self.probe.model != self.model))):
+            raise ValueError("Invalid model version inventory")
+        return self
+
+
 class LocalInventoryIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cpu: str = Field(min_length=1, max_length=120)
@@ -102,6 +114,14 @@ class LocalInventoryIn(BaseModel):
     installed: list[Literal[NEMOTRON_MODEL, PARAKEET_MODEL]] = Field(max_length=2)
     verified_installations: list[Literal[NEMOTRON_MODEL, PARAKEET_MODEL]] = Field(default_factory=list, max_length=2)
     probes: list[LocalModelProbeIn] = Field(default_factory=list, max_length=2)
+    model_versions: list[LocalModelInventoryVersionIn] | None = Field(default=None, max_length=16)
+
+    @field_validator("model_versions")
+    @classmethod
+    def unique_versions(cls, value):
+        if value is not None and len({(item.model, item.revision) for item in value}) != len(value):
+            raise ValueError("Duplicate model version")
+        return value
 
 
 def _inventory_key(device):
@@ -211,7 +231,15 @@ def build_router(*, recent_auth, limiter):
             raw = limiter.redis.get(_inventory_key(row))
         except RedisError:
             raise HTTPException(503, "Сведения о компьютере временно недоступны", headers=NO_STORE) from None
-        return {"inventory": json.loads(raw) if raw is not None else None}
+        inventory = json.loads(raw) if raw is not None else None
+        if inventory is not None and inventory.get("model_versions") is None:
+            verified = set(inventory.get("verified_installations", []))
+            probes = {item["model"]: item for item in inventory.get("probes", [])}
+            inventory["model_versions"] = [{
+                "model": model, "revision": INITIAL_MODEL_REVISIONS[model], "verified": model in verified,
+                "probe": probes.get(model) if model in verified else None,
+            } for model in dict.fromkeys(inventory["installed"])]
+        return {"inventory": inventory}
 
     @router.post("/api/local-execution/devices/{device_id}/model-install")
     def request_model_install(device_id: UUID, data: LocalModelVersionIn, response: Response,

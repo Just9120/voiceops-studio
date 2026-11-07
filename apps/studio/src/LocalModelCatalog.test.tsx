@@ -12,13 +12,15 @@ const device: LocalExecutionDevice = {
   runtime_status: "unknown", runtime_version: null, model: null, last_seen_at: null, revoked_at: null,
 };
 
-it.each([false, true])("labels an installation according to complete file evidence (%s)", async (verified) => {
+it.each(["detected", "verified", "older revision"])("labels an installation according to file evidence (%s)", async (state) => {
   const model = "synthetic";
+  const probe = { model, audio_seconds: 2, elapsed_seconds: 1 };
   vi.mocked(api).mockImplementation(async (path) => path.endsWith("/inventory") ? {
     inventory: {
       cpu: "Synthetic CPU", cpu_threads: 8, ram_bytes: null, disk_free_bytes: null, gpus: [],
-      execution: ["cpu"], installed: [model], verified_installations: verified ? [model] : undefined,
-      probes: [{ model, audio_seconds: 2, elapsed_seconds: 1 }],
+      execution: ["cpu"], installed: [model], verified_installations: state !== "detected" ? [model] : undefined,
+      probes: [probe],
+      model_versions: state === "older revision" ? [{ model, revision: "b".repeat(40), verified: true, probe }] : undefined,
     },
   } : {
     items: [{
@@ -36,12 +38,17 @@ it.each([false, true])("labels an installation according to complete file eviden
   fireEvent.change(screen.getByLabelText("Компьютер для подбора"), { target: { value: device.id } });
   fireEvent.click(screen.getByRole("button", { name: "Найти модели" }));
 
-  if (verified) {
+  if (state === "verified") {
     expect(await screen.findByText(/файлы проверены/)).toBeInTheDocument();
     expect(screen.getByText(/Проба с холодным запуском/)).toBeInTheDocument();
-  } else {
+  } else if (state === "detected") {
     expect(await screen.findByText(/файлы обнаружены, проверка не подтверждена/)).toBeInTheDocument();
     expect(screen.queryByText(/Проба с холодным запуском/)).not.toBeInTheDocument();
+  } else {
+    expect(await screen.findByText(/Другие версии на ПК: bbbbbbbbbbbb \(проверена\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Установка: не подтверждена/)).toBeInTheDocument();
+    expect(screen.queryByText(/Проба с холодным запуском/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Установить на выбранном ПК" })).toBeEnabled();
   }
   expect(screen.getByText(/Доступ на Hugging Face: по запросу/)).toBeInTheDocument();
   expect(screen.getByText(/RAM нет данных · предел записи 24 мин/)).toBeInTheDocument();

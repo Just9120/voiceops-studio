@@ -6,7 +6,8 @@ import os
 from pathlib import Path
 import tempfile
 
-from .protocol import MODEL, MODEL_REVISIONS, PARAKEET_MODEL, StudioClient, WorkerError, strict_json
+from .model_profiles import INITIAL_MODEL_REVISIONS, model_profile
+from .protocol import MODEL, PARAKEET_MODEL, StudioClient, WorkerError, strict_json
 
 FORMAT = "voiceops-local-worker-v1"
 IDENTITY_FORMAT = "voiceops-local-companion-identity-v1"
@@ -68,16 +69,19 @@ def read_profile(path, *, unseal=None, identity_only=False):
             StudioClient(data["origin"], data["token"])
             return data
         fields = {"origin", "token", "paths", "verified_files"}
-        if (not isinstance(data, dict) or not fields <= data.keys() <= fields | {"model", "managed_root"}
+        if (not isinstance(data, dict) or not fields <= data.keys() <= fields | {"model", "model_revision", "managed_root"}
                 or not isinstance(data["verified_files"], dict)):
             raise ValueError()
         model = data.get("model", MODEL)
-        if not isinstance(model, str) or model not in MODEL_REVISIONS:
+        if not isinstance(model, str):
+            raise ValueError()
+        revision = data.get("model_revision", INITIAL_MODEL_REVISIONS.get(model))
+        if model_profile(model, revision) is None:
             raise ValueError()
         managed = data.get("managed_root")
         if managed is not None and (not isinstance(managed, str) or not Path(managed).is_absolute()):
             raise ValueError()
-        StudioClient(data["origin"], data["token"], model=model)
+        StudioClient(data["origin"], data["token"], model=model, revision=revision)
         if not isinstance(data["paths"], dict) or set(data["paths"]) != {"runtime", "decoder", "encoder", "ffmpeg", "ffprobe"}:
             raise ValueError()
         for key, value in data["paths"].items():
