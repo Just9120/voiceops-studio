@@ -126,7 +126,7 @@ To qualify the candidate Batch Colab dependency lock, run the following from the
 python scripts/check_colab_dependency_install.py
 ```
 
-The check selects the matching `requirements-colab-linux-x64-py*.lock`, installs wheel packages by SHA-256 into a disposable venv and verifies its dependency graph. It constructs synthetic Drive, Docs and STT requests without authenticating or sending them. The launcher still uses `requirements-colab.txt` while the integration is pending. The qualification does not exercise the hosted Colab authentication or widget lifecycle.
+The check selects the matching `requirements-colab-linux-x64-py*.lock`, installs wheel packages by SHA-256 into a disposable venv and verifies its dependency graph. It constructs synthetic Drive, Docs and STT requests without authenticating or sending them. The Batch launcher uses the same installer for its isolated STT subprocess. Google SDK calls, Colab authentication, IPython and widgets use the packages provided by the notebook's kernel. Qualify those flows in a clean hosted Colab session separately. The legacy direct `elevenlabs_api.py` entry point keeps its existing setup.
 
 After an intentional Python dependency change, regenerate both constraints with the pinned generator and review the complete diff before testing:
 

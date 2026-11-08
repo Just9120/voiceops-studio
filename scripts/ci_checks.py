@@ -99,15 +99,14 @@ def check_launcher_notebook() -> None:
         "urllib.request.urlopen",
         "download_verified",
         "hashlib.sha256",
-        "subprocess.run",
+        "ARTIFACT_SHA256",
+        "install_locked_colab_python",
+        "VOICEOPS_STT_POST",
         "exec(compile",
     ]
     for marker in required_markers:
         if marker not in source_text:
             fail(f"Launcher notebook missing expected thin-launcher marker: {marker}")
-
-    if not any(m in source_text for m in ["subprocess.check_call", "subprocess.run"]):
-        fail("Launcher notebook missing expected dependency install execution marker (subprocess.*)")
 
     suspicious_markers = [
         "cleanup_stale_project_temp_files",
