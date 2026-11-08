@@ -653,6 +653,11 @@ else
 fi
 
 phase="complete"
+if ! timeout 120 restic --password-file "$RESTIC_PASSWORD_FILE" forget \
+  --host studio-postgres --tag studio-postgres,pre-migration \
+  --group-by host --keep-last 5 --prune >/dev/null 2>&1; then
+  printf '%s WARNING pre_migration_backup_retention_failed\n' "$PREFIX" >&2
+fi
 printf '%s OK commit=%s mode=%s from=%s to=%s head=%s snapshot=%s image=%s api_deployed=%s\n' \
   "$PREFIX" \
   "${STUDIO_EXPECTED_COMMIT:0:12}" \

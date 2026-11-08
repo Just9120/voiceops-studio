@@ -126,21 +126,13 @@ def test_scheduled_retention_selects_only_scheduled_snapshots() -> None:
     assert "--keep-monthly 12" in forget
 
 
-def test_pre_migration_retention_selects_only_pre_migration_snapshots() -> None:
+def test_pre_migration_backup_does_not_rotate_before_release_checks() -> None:
     import tempfile
 
     with tempfile.TemporaryDirectory() as d:
         proc, calls = run_backup(Path(d), "pre-migration")
     assert proc.returncode == 0, proc.stderr
-    forget = _restic_forget(calls)
-    assert "--host studio-postgres" in forget
-    assert "--tag studio-postgres,pre-migration" in forget
-    assert "--tag studio-postgres --tag pre-migration" not in forget
-    assert "scheduled" not in forget
-    assert "--group-by host,tags" in forget
-    assert "--keep-within 90d" in forget
-    assert "--keep-daily" not in forget
-    assert "--keep-monthly" not in forget
+    assert not any(call.startswith("restic ") and " forget " in call for call in calls)
 
 
 def test_unsupported_backup_tag_fails_closed_before_secret_or_restic_use(tmp_path: Path) -> None:

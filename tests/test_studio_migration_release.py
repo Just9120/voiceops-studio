@@ -60,6 +60,7 @@ def run_release(
     api_container_changed: bool = False,
     worker_role_ok: bool = True,
     migration_script_ok: bool = True,
+    retention_ok: bool = True,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     checkout = tmp_path / "checkout"
     fake_bin = tmp_path / "bin"
@@ -357,6 +358,8 @@ elif [[ "$*" == *" restore "* ]]; then
   [[ -n "$target" ]]
   mkdir -p "$target/tmp/source"
   printf 'fake-postgres-dump' > "$target/tmp/source/studio-postgres.dump"
+elif [[ "$*" == *" forget "* ]]; then
+  exit {0 if retention_ok else 51}
 else
   exit 50
 fi
@@ -416,7 +419,7 @@ def test_release_orders_candidate_backup_verification_migration_and_api() -> Non
     restic_indices = [
         index for index, call in enumerate(calls) if call.startswith("restic ")
     ]
-    assert len(restic_indices) == 3
+    assert len(restic_indices) == 4
     assert restic_indices[0] < _index(calls, "backup") < restic_indices[1]
     assert " snapshots " in f" {calls[restic_indices[0]]} "
     assert " snapshots " in f" {calls[restic_indices[1]]} "
@@ -429,6 +432,9 @@ def test_release_orders_candidate_backup_verification_migration_and_api() -> Non
     assert _index(calls, "worker-role verify") < _index(
         calls, "up -d --no-deps --force-recreate studio-api"
     )
+    retention = calls[restic_indices[3]]
+    assert _index(calls, "https://studio.example.test/api/readyz") < restic_indices[3]
+    assert " forget --host studio-postgres --tag studio-postgres,pre-migration --group-by host --keep-last 5 --prune" in retention
     pg_restore_call = calls[pg_restore_index]
     assert POSTGRES_IMAGE_ID in pg_restore_call
     assert "--pull never" in pg_restore_call
@@ -465,6 +471,7 @@ def test_worker_role_recovery_uses_protected_lane_without_migration_or_deploy(
     assert not any(call.startswith("migrate ") for call in calls)
     assert not any("docker compose" in call and " build " in call for call in calls)
     assert not any("force-recreate studio-api" in call for call in calls)
+    assert not any(call.startswith("restic ") and " forget " in call for call in calls)
     assert any("/api/readyz" in call for call in calls if call.startswith("curl "))
 
 
@@ -671,6 +678,16 @@ def test_failed_isolated_pg_restore_check_blocks_before_migration(
     assert any("--entrypoint pg_restore" in call for call in calls)
     assert not any(call.startswith("migrate ") for call in calls)
     assert not any("force-recreate studio-api" in call for call in calls)
+    assert not any(call.startswith("restic ") and " forget " in call for call in calls)
+
+
+def test_retention_failure_does_not_invalidate_completed_migration(tmp_path: Path) -> None:
+    proc, calls = run_release(tmp_path, retention_ok=False)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "studio-migration-release] OK" in proc.stdout
+    assert "WARNING pre_migration_backup_retention_failed" in proc.stderr
+    assert _index(calls, "https://studio.example.test/api/readyz") < _index(calls, " forget ")
 
 
 def test_forced_command_wrapper_never_executes_original_command() -> None:
