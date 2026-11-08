@@ -2,34 +2,68 @@
 
 Читай этот документ при первоначальной настройке CI/CD, изменении pipeline и исправлении его проблем. Он задаёт требования к workflows, triggers, checks, runners, permissions, artifacts, CD и связанным настройкам. Повседневный flow агента и Goal определяет корневой [AGENTS.md](../AGENTS.md); команды и процедуры проекта находятся по его routing.
 
-Адаптируй правила к фактическому стеку и согласованному scope. Перечень возможностей не требует внедрять все инструменты. Workflows/scripts/runbooks можно исправлять внутри разрешённой Goal; изменение общей политики, модели доступа и safety exceptions требует соответствующего решения пользователя.
+Адаптируй правила к фактическому стеку и согласованному scope. Перечень возможностей не требует внедрять все инструменты. Workflows/scripts/runbooks можно исправлять внутри разрешённой Goal; изменение общей политики, модели доступа и safety exceptions требует соответствующего решения пользователя. Обновлённые инструкции не изменяют CI/CD автоматически: в порученной адаптации сначала сверь actual workflows/settings/scripts, используй уже работающие selection/reuse/full profiles и сохрани согласованные проектные исключения.
 
 ## 1. Границы CI, CD и окружений
 
-- Базовый flow: CI → merge → CD на VPS. CI подтверждает готовность актуальной revision PR к merge через обязательные checks/tests. CD доставляет нужную merge revision/artifact и подтверждает работающую версию обязательными post-checks. Настроенные review/protections также обязательны.
+- Базовый flow: CI → merge → CD на целевую платформу проекта (VPS, Cloudflare, Google Cloud или другую). CI подтверждает готовность актуальной revision PR к merge через обязательные checks/tests. После каждого merge, требующего deployment, CD доставляет нужную merge revision/artifact и подтверждает работающую версию обязательными post-checks. Настроенные review/protections также обязательны.
 - Разделяй проверку кода и изменение окружения по jobs, triggers, credentials и permissions. Отдельные workflow-файлы необязательны. Проверка PR не должна незаметно запускать production deploy.
 - Различай runtime environment, GitHub Environment, вариант продукта и операцию delivery. Для каждого GitHub Environment установи назначение, jobs, targets, configuration и access/protection rules; укажи связь с runtime environment, если она есть. Не вводи обязательный набор dev/staging/production. Вариант продукта требует отдельного окружения только при самостоятельной цели deployment.
 - Для каждого изменения определи применимость deployment. Изменение документации без влияния на runtime не требует искусственного CD. Неизвестный target или отсутствующий доступ не означают N/A.
 
 ## 2. Validation и merge gates
 
-Используй Validation Plan проекта и canonical scripts. Не поддерживай вторую копию команд или AC. Выбирай unit/integration/E2E и другие проверки по требованиям и риску; критичные бизнес-сценарии, ошибки, права доступа, целостность данных и регрессии должны иметь подходящее автоматическое покрытие. Coverage выявляет gaps, но сам по себе не доказывает выполнение AC.
+Минимальный CI входит в первую implementation Goal нового проекта: настрой его в первом PR с кодом, до merge обеспечь успешные применимые build/static checks и необходимые tests реализованного поведения. Развивай проверки вместе с функциональностью. Отсутствие pipeline не разрешает merge первого PR с кодом без CI. Аудит/bootstrap сами по себе не поручают его настройку; CD на целевую платформу проекта внедряй в согласованном delivery scope.
 
-Разделяй pre-merge, release и scheduled validation. Проверки, необходимые для безопасного merge, не переноси только в nightly. Для affected selection учитывай зависимости модулей и общие конфигурации; при неясном impact выполняй более широкий подходящий набор. Простое изменение текста требует применимой проверки документации, а не искусственной E2E suite.
+Используй Validation Plan проекта и canonical scripts без второй копии команд/AC. Основной прогон перед merge выполняет CI; минимальный локальный набор определяется AGENTS.md и явными gates проекта. Сначала используй существующие tests; новые нужны для существенного непокрытого поведения, важных рисков и содержательных регрессий. Один сценарий может подтверждать несколько AC; test на каждый AC/метод и обязательный TDD не требуются. Выбирай unit/integration/E2E по затронутым требованиям и риску. Coverage выявляет gaps, но не доказывает AC; CI обнаруживает только проверяемые нарушения.
+
+Выбирай проверки по назначению, риску и стоимости, а не только по метке `non-PG`, `postgres` или `E2E`. Простое изменение текста требует применимой проверки документации, а не искусственной E2E suite.
+
+Разделяй полноту поддерживаемого test inventory и частоту запусков. Профили используют одни suites/команды, без второй реализации:
+
+| Профиль | Состав и запуск |
+| --- | --- |
+| Обычный CI PR | Применимые static/build, unit/component/API/DB/integration и критичное общее ядро по зависимостям и риску; действующие проектные исключения сохраняются. |
+| Полная регрессия main | По отдельной команде на exact main SHA: весь поддерживаемый применимый набор, включая browser/native/recovery по проекту. Не запускает CD, полный аудит или пересчёт готовности; не обязателен после каждой Goal/аудита. |
+| Специализированные | Load/stress/soak, large-data/resource qualification, fault/backup/restore и другие проверки по требованиям и выбранному scope в подходящей изолированной среде. |
+
+Property-based/stateful tests рассматривай для инвариантов, комбинаций входов и последовательностей действий; mutation testing — для силы существующих assertions; fuzzing — для парсеров, импортов, протоколов и другого недоверенного ввода. Выбирай по риску и стоимости, без обязательного инструмента или целевого mutation score. Небольшие полезные проверки могут входить в обычный CI; дорогие кампании относятся к специализированному scope и автоматически не запускаются. Для кампаний определи scope, лимиты времени/ресурсов и условия остановки; сохраняй seed/минимальный контрпример либо другой способ воспроизведения failure вместе с revision. Mutation score не подтверждает READY. Новый тестовый профиль и обязательный workflow этим не вводятся.
+
+Команды, inventory, prerequisites, target revision и условия запуска держи в canonical scripts/README/процедурах проекта. Должны быть доступны полный профиль без deployment и результаты по фактически выполненным suites, включая skips/ограничения. Отсутствующий профиль или сценарий — gap; присутствие config не доказывает запуск. Actions-версия полного профиля тоже расходует ресурсы. Обязательные автоматические расписания не вводи.
+
+Дополнительные некритичные tests можно отложить. Проверки текущих AC, безопасного merge и существенных рисков (права, деньги, миграции, целостность данных) не откладывай; сохраняй обязательные tests/assertions/gates и согласованные исключения по разделу 9. Полная suite не компенсирует отсутствующие сценарии.
+
+Playwright внедряй лишь для небольшой обоснованной browser гарантии сверх unit/component/API; наличие frontend/PWA само по себе не требует framework или широкой device/browser matrix. Обычный запуск — headless, без UI/debug/watch, открытия окон/HTML-отчёта; диагностика по failure. Визуальный аудит и воспроизводимые assertions не заменяют друг друга; существующие обязательные browser gates сохраняются.
+
+Для существенных рисков проверяй настоящий entrypoint и execution model: user/group/permissions, isolated child process, версии зависимостей, concurrency, размер данных и CPU/RAM/IO по применимости. Wrapper/mock или маленький fixture не доказывают результат production профиля. Дорогую qualification запускай отдельно по scope; не используй production как тестовый стенд.
+
+Для affected selection начни с понятных групп по компонентам и зависимостям; усложняй selector только при измеримой пользе. Учитывай общие config/lockfiles, migrations, test infrastructure и динамические связи. Неизвестный impact, ошибка selector или неполный diff требуют более широкого подходящего набора; пустая выборка должна иметь объяснимое основание.
 
 Настрой точную проверяемую revision, изолированный workspace и воспроизводимую установку dependencies с lockfiles, когда применимо. Required command должна завершаться ошибкой при failure; test discovery должен находить ожидаемые tests. Silent fallback, безусловный success и `continue-on-error` не должны скрывать обязательную ошибку.
 
-Required checks и их источник устанавливай по фактическим rulesets/branch protection. Уточни revision model: PR head, test merge commit или merge group. После изменения revision требуется соответствующая validation. При merge queue настрой `merge_group` trigger. Self-review не заменяет обязательное approval, а зелёный YAML job не доказывает выполнение repository gate.
+Required checks и их источник устанавливай по фактическим rulesets/branch protection. Уточни revision model: PR head, test merge commit или merge group. После изменения revision требуется соответствующая validation; reuse после merge допустим только по условиям раздела 3. При merge queue настрой `merge_group` trigger. Self-review не заменяет обязательное approval, а зелёный YAML job не доказывает выполнение repository gate.
 
 Required workflow не должен зависать в ожидании из-за path/branch filters. Для выборочных jobs настрой итоговый required gate, который запускается после dependencies и проверяет результат каждого применимого required job, в том числе при failures/cancellations зависимостей.
 
-GitHub допускает успешное завершение отдельных checks со статусом `skipped` или `neutral`. По этому контракту пропуск подтверждает только заранее определённую неприменимость. Ошибочный filter, dependency failure или недоступность сервиса не являются N/A. Разбирай `failure`, `cancelled`, `timed_out`, отсутствие результата и неожиданный `action_required`, сохраняя обязательные gates.
+GitHub допускает успешное завершение отдельных checks со статусом `skipped` или `neutral`. По этому контракту skip допустим при заранее определённой неприменимости либо подтверждённом reuse по разделу 3. Reuse оформляй отдельным основанием с исходным run, не как неприменимость самих tests. Ошибочный filter, dependency failure или недоступность сервиса не являются N/A. Разбирай `failure`, `cancelled`, `timed_out`, отсутствие результата и неожиданный `action_required`, сохраняя обязательные gates.
 
 ## 3. Время CI и GitHub Actions minutes
 
-Избегай дублирующих запусков одной suite по `push` и `pull_request` без отдельной цели. Используй безопасные caches и обоснованную параллельность; отменяй устаревшие CI runs, когда это не затрагивает stateful операции. Timeouts задавай по реальным операциям и поведению зависаний.
+Избегай дублирующих запусков одной suite по `push` и `pull_request` без отдельной цели. Используй безопасные caches и обоснованную параллельность; не дроби быстрые команды на отдельные jobs без пользы. Отменяй устаревшие CI runs в пределах того же PR/workflow, сохраняя stateful операции и независимые проверки. Timeouts задавай по реальным операциям и поведению зависаний.
 
-Измеряй длительность CI и суммарный runner time: сокращение ожидания за счёт параллельных jobs само по себе не означает экономии minutes. Проектные бюджеты и цели длительности устанавливай по измерениям и ограничениям проекта. Универсальный лимит времени или coverage target не вводи; стоимость не разрешает ослаблять обязательные проверки.
+Определи selection/reuse до дорогого setup. Поднимай PostgreSQL, браузеры и другие сервисы и устанавливай специальные dependencies только в jobs, которым они нужны для оставшихся checks/build. Пропуск test step после безусловного setup не устраняет его стоимость.
+
+После merge допускается reuse успешной PR validation вместо повторной suite, если автоматически подтверждены merged PR, связь head/base/tested revision с текущим main, совпадение проверенного Git tree и влияющих inputs: dependencies, test/workflow/config и environment. Учитывай фактический способ интеграции PR: merge commit, squash/rebase или merge queue; не навязывай два parent commit там, где их нет. Одинаковый tree сам по себе недостаточен: temporal/runtime и изменившиеся inputs требуют своих проверок. Проверь trusted repository/workflow и результаты всех required jobs последнего релевантного run/attempt для этой PR revision. Старый PASS не перекрывает более новый неуспешный, отменённый или незавершённый релевантный запуск.
+
+Неизвестные или изменившиеся inputs, недоступные records либо неподтверждённые условия reuse требуют выполнения необходимых checks; не подменяй их success. Для текущей revision сохраняй проверяемое решение reuse и ID исходного run. Reuse tests не отменяет проверку нового artifact и применимый CD; cache не заменяет эту процедуру.
+
+Измеряй длительность CI и суммарный runner time отдельно от billing. Сравнивай сопоставимые изменения до/после оптимизации: выбранные tests, причины fallback, setup/build и повторы. Параллельность сама по себе не означает экономии minutes. Проектные бюджеты и цели устанавливай по измерениям; универсальный лимит времени или coverage target не вводи. Стоимость не разрешает ослаблять обязательные проверки.
+
+При оптимизации используй доступную историю PR/runs/jobs за заданный период, сверяя pagination, attempts и отменённые jobs. Раздели PR validation, main validation, build, CD и manual; manual workflow-ref SHA сам по себе не доказывает поставленного candidate. Измеряй setup, tests, build, ожидание и CD раздельно, насколько позволяют records. Runner sum по jobs, elapsed до результата и billable usage — разные величины; billing требует runner type, visibility и доступных billing records. Ранжируй предложения по подтверждённому baseline, цене/риску и сохраняемым гарантиям; численные затраты/экономию давай только с расчётом, недостаток данных обозначай. Новые speculative runs ради измерения не нужны.
+
+Цепочки hotfix связывай с основной работой через PR descriptions, project records, commits и diff, не по соседству номеров/слову fix. Различай регрессию, окружение, ошибку проверки, новый scope и плановое продолжение. При разборе выбранной Goal учитывай число CI/CD runs и суммарный runner time основных PR и подтверждённо связанных исправлений до завершения applicable delivery либо указанного момента проверки. Одни и те же jobs/attempts не считай повторно; период, неполную историю и неизвестные затраты обозначай. Подбери минимальный test реальной причины и проверь совокупный результат Goal; известные связанные CI failures исправляй batch в текущем PR по AGENTS.md, срочный safety hotfix не задерживай ради пакета. Исправленные исторические дефекты не выдавай за текущие.
+
+Flaky tests отличай от воспроизводимой регрессии и сбоев окружения по доступным logs/attempts. Исправляй подтверждённую причину; повторный зелёный run сам по себе не доказывает исправления. Не заменяй исправление ослаблением assertions, отключением tests или бесконтрольным увеличением retries; обязательные gates сохраняются.
 
 Длительный monitoring/observation и speculative reruns на GitHub-hosted Actions требуют отдельного owner approval и предварительной проверки остатка included minutes. Неизвестный остаток сообщи. Ограниченные обязательные post-checks и обоснованный retry подтверждённой transient ошибки отличаются от наблюдения без конкретной проверяемой причины.
 
@@ -47,8 +81,6 @@ Untrusted PR/fork code не должен получать production secrets, wr
 
 Cache — оптимизация, а не доверенный artifact. Учитывай OS/runtime/lockfile и trust context в ключах; privileged job не должен потреблять cache, который может отравить untrusted job. Не помещай secrets в repository, artifacts/cache/logs. При изменении runner, trigger или credential model перепроверь trust boundaries.
 
-Проектное ограничение VoiceOps Studio: **Baseline repository and Studio CI must remain secretless**. Synthetic setup и применимость проверок — в [validation runbook](runbooks/validation.md); credentialed integration требует отдельного согласованного scope.
-
 ## 5. Build и identity поставки
 
 Свяжи image/package/archive с source revision, build run и immutable digest/version. `latest` или branch tag без неизменяемой identity недостаточны. Для передачи между workflows проверяй repository, источник и provenance artifact по модели проекта.
@@ -57,13 +89,29 @@ Production artifact должен пройти required validation в допус�
 
 По возможности строй один раз и продвигай тот же artifact. Если модель проекта требует пересборки, зафиксируй её, обеспечь точную source revision, воспроизводимость inputs и проверку нового artifact; не выдавай его за ранее проверенный бинарный результат. Publishing — явный разрешённый этап, а не побочный эффект tests.
 
-## 6. CD на VPS и recovery
+### Версии и release notes
+
+Сохраняй принятую схему версий; при её отсутствии в порученном внедрении выбери простую схему по контексту проекта, без единого обязательного формата. Свяжи версию с точным SHA/artifact; опубликованный тег не переноси на другой код. Принятую схему и порядок выпуска отражай в существующей проектной процедуре.
+
+При ведении releases обычно оформляй release после завершения applicable delivery Goal. Два основных PR не требуют двух releases; каждая промежуточная поставка сохраняет SHA/artifact независимо от наличия release notes. Отдельно поставляемое исправление опубликованной версии получает новую версию.
+
+Храни короткие release notes в GitHub Releases: существенные изменения, исправления, несовместимость и действия при обновлении — по применимости. Основу получай из PR/commits между выбранными revisions, проверяя содержание по diff. Отдельный CHANGELOG.md не обязателен. Release не подтверждает READY, успешный deployment или безопасность rollback.
+
+Не создавай отдельный PR и не повторяй CI/build/CD ради release notes. Не вводи обязательный workflow выпуска; учитывай существующие tag/release triggers, чтобы публикация не запускала лишние checks или повторную поставку. Если номер нужен в manifest приложения, обновляй его в соответствующем implementation PR.
+
+Ретроспективно оформляй только значимые версии по отдельному поручению, без переписывания истории и переноса опубликованных тегов. Помечай описание как восстановленное, различай историческую revision и время оформления; неизвестную прошлую поставку не выдавай за подтверждённую.
+
+## 6. CD и recovery
 
 Проверь trusted trigger, expected repository/ref, exact revision/artifact, target host/account, directory, service/deployment unit и config/credential owners. Настрой обязательные preconditions, environment protections, allowed branches/tags, approvals и stop criteria. Не выбирай неизвестный target по догадке и не обходи protections.
 
 Сериализуй поставки в один target. Перед изменением окружения повторно проверяй допустимость candidate по release policy: отложенный job не должен затереть более новую поставленную версию. Одна очередь не гарантирует правильный порядок версий. Намеренный rollback выполняй по recovery procedure. Не отменяй migration/deploy, если это может оставить неконсистентный state; retry требует известной idempotency или безопасной точки продолжения.
 
 До переключения версии проверь config и stateful preconditions, изменяй только intended deployment unit. Успех CD должен зависеть от проверки фактически запущенной версии, health/readiness и необходимых прикладных smoke checks. Статус процесса или доступный endpoint не доказывают успешный бизнес-сценарий. Failed post-check останавливает дальнейшее продвижение; сохраняй Evidence и применяй согласованную recovery strategy.
+
+Для критичного риска с предусмотренным эксплуатационным сигналом укажи в существующей процедуре поставки связь проверки и сигнала с revision/artifact, владельца реакции и действие по runbook. При поэтапной поставке используй согласованные критерии продолжения, паузы и восстановления. При canary сравнивай candidate и контроль по сопоставимым условиям. Учитывай согласованное окно наблюдения, объём и состав трафика. При недостатке данных укажи ограничение Evidence и следуй проектной процедуре паузы или эскалации. Используй имеющиеся источники сигналов и предусмотренные прогоны.
+
+Для managed/serverless-платформ установи account/project, service/worker и регион по применимости, deployment version/artifact, bindings/config/secrets и способ проверки активной версии/маршрутизации. Адаптируй поставку и recovery к фактической платформе, сохраняя общие trust, stateful и post-check gates.
 
 ### VPS, Docker Compose и IaC по применимости
 
@@ -91,23 +139,18 @@ Automatic rollback допустим только при проверенной �
 
 ## 8. Records и проверка конфигурации
 
-Сохраняй первичные records независимо от сессии агента: CI run/check ID и проверяемую revision с результатами required jobs; build run и artifact identity; CD run/deployment ID, target environment, фактически запущенную revision/artifact, время, migration result и обязательные post-checks. Настрой retention/access по потребностям восстановления контекста и recovery, без secrets в artifacts.
+Сохраняй первичные records независимо от сессии агента: CI run/check ID и проверяемую revision с результатами required jobs; build run и artifact identity; CD run/deployment ID, target environment, фактически запущенную revision/artifact, время, migration result и обязательные post-checks. Настрой retention/access по потребностям восстановления контекста и recovery, без secrets в artifacts. Для оптимизации отражай selection/reuse/fallback reason и существенные phase timings в существующем job summary/records, без нового monitoring workflow; сравнивай сопоставимые scopes/inputs до и после изменения.
 
 Успешный CD подтверждает выполненные проверки на момент поставки. Наличие конфигурации не доказывает запуск; raw log без target/revision не заменяет Evidence. Недоступный результат остаётся неподтверждённым. Pre-merge CI не подтверждает будущую поставку.
 
 Отдельные статусы DEPLOY/LIVE, обязательная post-merge запись delivery metadata в main и metadata-only follow-up PR не требуются. Источник результата поставки — первичные records. Не вводи automation для переписывания metadata без отдельного поручения.
 
-После настройки проверь синтаксис и затронутые trigger/revision/selection/trust/failure paths, required checks и protections доступным безопасным способом. Сохрани результат и ограничения. Непроверенная гарантия не становится PASS из-за наличия YAML; production/destructive сценарий не запускай только ради проверки конфигурации.
+После настройки проверь синтаксис и затронутые trigger/revision/selection/reuse/trust/failure paths, required checks и protections доступным безопасным способом. Для selector/reuse проверь неизвестный impact, неполные records, изменённые inputs и более новый неуспешный run; они не должны давать ложный green. Сохрани результат и ограничения. Непроверенная гарантия не становится PASS из-за наличия YAML; production/destructive сценарий не запускай только ради проверки конфигурации.
 
 ## 9. Проектная адаптация
 
-Фактические workflows/settings/scripts и runbooks — canonical источники команд и процедур. В README/AGENTS.md оставь routing, без второго Project profile в этом файле. Обеспечь восстановление обычного delivery/recovery по проектным процедурам без повторного чтения универсальных правил настройки.
+Фактические workflows/settings/scripts и runbooks — canonical источники команд и процедур; реальные пути и навигацию держи в README. Репозиторный AGENTS.md остаётся универсальным контрактом, без проектных сведений. Согласованные исключения из этих CI/CD правил фиксируй в соответствующей проектной процедуре с основанием и scope по разделу 9. Обеспечь восстановление обычного delivery/recovery по проектным процедурам без повторного чтения универсальных правил настройки.
 
 Указывай источники и время/revision проверки; неизвестное — UNSET, неприменимое — N/A с основанием. При изменении stack, settings или окружений обновляй затронутые процедуры. Сохраняй доступную версию шаблона и основания проектных отличий, не выдумывая provenance.
 
 Исключение из safety contract требует решения пользователя/уполномоченного владельца: правило, причина, scope/срок, риск, compensating checks и stop/recovery criteria. Уже разрешённое исключение действует в своих границах и не меняет универсальный шаблон. Стоимость, flaky test или ожидание доступа не разрешают обходить обязательный gate.
-
-
-## Project profile — VoiceOps Studio
-
-Настройка F13/F63 разрешена владельцем06Oct2026 в Goal DELIVERY-METADATA-CLEANUP-20261006. Canonical validation commands, required aggregate `ci-required`, source/tree/context proof, selection/reuse fallback и cost records — [validation runbook](runbooks/validation.md). Exact-main component/edge CI gate, production target/queue, protected migration approval и post-checks — [Studio operations](runbooks/studio-platform-ops.md#ci-gate-для-component-и-edge-delivery). Общая policy выше не изменена. GitHub enforcement применяется с readback после PASS текущего PR, до merge; до primary подтверждения не считать настройку завершённой. Production provider/Google mutations и cleanup/restore не являются CI fixtures.

@@ -10,6 +10,8 @@ Do not record secrets, provider API keys, OAuth tokens, refresh tokens, document
 
 ## Repository checks
 
+Baseline repository and Studio CI must remain secretless. Используй synthetic configuration и test data. Credentialed integrations требуют отдельного согласованного scope. Production provider/Google mutations, cleanup и restore в CI fixtures не входят.
+
 Рабочий каталог указан отдельно; команды установки выполняй в изолированном environment. Production config/data не использовать. При расхождении сверяй команды с фактическими workflow/package scripts, фиксируя drift.
 
 CI process budget полной Python suite —300s с diagnostic SIGABRT и hard kill через10s; job ограничен15min. Budget не заменяет assertions или успех полного процесса; gates сохраняются. Root Linux CI требует FFmpeg/ffprobe через `STUDIO_REQUIRE_FFMPEG=true`: их отсутствие останавливает suite, а не разрешает green через SKIP. Исторические результаты с отсутствующим binary не подтверждают этот действующий gate. Локальный portable профиль допускает явный SKIP real-media tests, если binaries отсутствуют; такой результат не подтверждает обработку медиа.
