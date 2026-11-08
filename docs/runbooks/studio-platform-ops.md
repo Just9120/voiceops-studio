@@ -803,6 +803,14 @@ back the database, remove certificates, clear browser storage or delete files.
 Keep new external allowlists for diagnosis until explicitly cleaned up. Do not
 blindly retry an ambiguous config update or provider call.
 
+#### Retiring the previous R2 CORS origin
+
+The cutover rollback above still relies on the previous origin being accepted by both input buckets. Keep that compatibility until the owner explicitly retires the old-host rollback or approves restoring the old CORS rules as a prerequisite for it. Restoring just nginx and the three runtime settings after CORS retirement would otherwise leave old-origin uploads broken.
+
+For a separately authorized retirement, capture both live CORS policies, confirm the old API still returns 410, and resolve any old-origin draft or client dependency with the owner. Measure the browser transfer path from the canonical host using a disposable recording and verify cleanup before changing either policy. The old host is DNS-only and its nginx access log is disabled, so empty Cloudflare HTTP analytics cannot establish that it has no traffic.
+
+Remove only the previous exact origin in the two input buckets. Preserve the canonical origin, methods, allowed/exposed headers, cache age, lifecycle and backup configuration. Read back both policies, verify canonical GET/HEAD/PUT and the old-origin preflight rejection, and repeat the approved disposable upload and cleanup. On failure restore the captured policy for each changed bucket and repeat the canonical check. If the old-host rollback is later invoked, restore and verify the former CORS entries in both buckets before reactivating the old API and UI.
+
 Google OAuth runtime config is fail-closed. OAuth endpoints must remain unavailable or reject safely until required non-secret settings and a non-empty client secret file are present.
 
 Primary Picker settings include client ID, redirect URI, scopes, state TTL, and the client-secret file path. The client secret itself stays in an operator-managed file. Current Drive/Picker integration permits only exact `openid`, email identity, `https://www.googleapis.com/auth/drive.file`, and `https://www.googleapis.com/auth/drive.readonly`. `drive.readonly` is a restricted broad-read scope required for arbitrary source-folder descendants; `drive.file` remains the output-write boundary. Full `drive` and unrelated scopes are forbidden. A primary connection missing either Drive scope or reporting an additional scope is not Picker-ready and must be disconnected/reconnected before browser-token issuance. Scope rollout may require Google OAuth consent-screen publication/verification or a security assessment; never weaken the boundary to bypass an external Google gate.
