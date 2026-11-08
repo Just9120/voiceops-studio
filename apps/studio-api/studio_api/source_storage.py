@@ -341,6 +341,7 @@ class S3SourceStorage:
         prefix: str,
         *,
         continuation_token: str | None = None,
+        start_after: str | None = None,
         max_keys: int = 100,
     ) -> StoredObjectPage:
         params = {
@@ -350,6 +351,8 @@ class S3SourceStorage:
         }
         if continuation_token:
             params["ContinuationToken"] = continuation_token
+        if start_after:
+            params["StartAfter"] = start_after
         result = self.client.list_objects_v2(**params)
         objects: list[StoredObject] = []
         for raw in result.get("Contents") or ():

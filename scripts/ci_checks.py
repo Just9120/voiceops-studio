@@ -3,8 +3,12 @@
 
 from __future__ import annotations
 
+import ast
+import hashlib
 import json
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -47,6 +51,60 @@ def check_notebooks() -> None:
     print(f"[ci-checks] Notebook JSON + clean output checks passed ({len(notebook_paths)} file(s)).")
 
 
+def check_colab_release_refs() -> None:
+    git = shutil.which("git")
+    if git is None:
+        print("[ci-checks] Colab release ancestry requires Git; skipped.")
+        return
+    checkout = subprocess.run(
+        [git, "rev-parse", "--is-shallow-repository"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    if checkout.returncode or checkout.stdout.strip() != "false":
+        print("[ci-checks] Colab release ancestry requires full Git history; skipped.")
+        return
+
+    for path in (NOTEBOOK_PATH, REALTIME_NOTEBOOK_PATH):
+        notebook = json.loads(path.read_text(encoding="utf-8"))
+        source = "\n".join("".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code")
+        refs = re.findall(r'^GITHUB_REF\s*=\s*["\']([0-9a-f]{40})["\']', source, re.MULTILINE)
+        if len(refs) != 1:
+            fail(f"{path.name} must pin exactly one full Git commit.")
+        ancestor = subprocess.run(
+            [git, "merge-base", "--is-ancestor", refs[0], "HEAD"],
+            cwd=ROOT, capture_output=True,
+        )
+        if ancestor.returncode:
+            fail(f"{path.name} release {refs[0]} is outside the checked-out branch history.")
+        if path == NOTEBOOK_PATH:
+            check_batch_artifact_hashes(git, refs[0], source)
+    print("[ci-checks] Colab release ancestry checks passed.")
+
+
+def check_batch_artifact_hashes(git: str, revision: str, source: str) -> None:
+    assignments = [
+        node.value for node in ast.parse(source).body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "ARTIFACT_SHA256" for target in node.targets)
+    ]
+    if len(assignments) != 1:
+        fail("Batch Colab launcher must define one artifact manifest.")
+    try:
+        manifest = ast.literal_eval(assignments[0])
+    except (ValueError, TypeError):
+        fail("Batch Colab artifact manifest must be a literal mapping.")
+    if not isinstance(manifest, dict) or not manifest:
+        fail("Batch Colab artifact manifest is empty or invalid.")
+    for artifact, digest in manifest.items():
+        if not isinstance(artifact, str) or not isinstance(digest, str):
+            fail("Batch Colab artifact names and digests must be strings.")
+        result = subprocess.run(
+            [git, "show", f"{revision}:{artifact}"], cwd=ROOT, capture_output=True,
+        )
+        if result.returncode or hashlib.sha256(result.stdout).hexdigest() != digest:
+            fail(f"Batch Colab artifact {artifact} does not match the reviewed release digest.")
+
+
 def check_launcher_notebook() -> None:
     if not NOTEBOOK_PATH.exists():
         fail("Required launcher notebook missing: notebooks/elevenlabs_api_colab.ipynb")
@@ -69,15 +127,14 @@ def check_launcher_notebook() -> None:
         "urllib.request.urlopen",
         "download_verified",
         "hashlib.sha256",
-        "subprocess.run",
+        "ARTIFACT_SHA256",
+        "install_locked_colab_python",
+        "VOICEOPS_STT_POST",
         "exec(compile",
     ]
     for marker in required_markers:
         if marker not in source_text:
             fail(f"Launcher notebook missing expected thin-launcher marker: {marker}")
-
-    if not any(m in source_text for m in ["subprocess.check_call", "subprocess.run"]):
-        fail("Launcher notebook missing expected dependency install execution marker (subprocess.*)")
 
     suspicious_markers = [
         "cleanup_stale_project_temp_files",
@@ -252,6 +309,7 @@ def main() -> int:
         check_notebooks()
         check_launcher_notebook()
         check_realtime_launcher_notebook()
+        check_colab_release_refs()
         check_realtime_runtime_boundaries()
         check_no_raw_provider_body_logging()
         check_temp_cleanup_patterns()

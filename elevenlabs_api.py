@@ -49,6 +49,8 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload, MediaInMemoryUpload
 
+COLAB_STT_POST = globals().get("VOICEOPS_STT_POST", requests.post)
+
 _STARTUP_IMPORTS_OR_BOOTSTRAP_FINISHED = time.perf_counter()
 
 logging.getLogger("google_auth_httplib2").setLevel(logging.ERROR)
@@ -4504,7 +4506,7 @@ def transcribe_fileobj(
     fileobj.seek(0)
 
     try:
-        resp = requests.post(
+        resp = COLAB_STT_POST(
             url,
             headers=headers,
             files={"file": (filename, fileobj, mime_type)},
@@ -5418,7 +5420,7 @@ def transcribe_openai_fileobj(
     fileobj.seek(0)
 
     try:
-        resp = requests.post(
+        resp = COLAB_STT_POST(
             url,
             headers=headers,
             files={"file": (filename, fileobj, mime_type)},

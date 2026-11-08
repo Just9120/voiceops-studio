@@ -211,18 +211,22 @@ def test_s3_storage_multipart_and_verified_delete_are_bounded():
     assert storage.client.deleted == [{"Bucket": "private", "Key": "owner/key"}]
 
 
-def test_s3_inventory_requires_typed_owner_scoped_metadata():
+@pytest.mark.parametrize("start_after", [None, "transcription/users/owner/previous"])
+def test_s3_inventory_requires_typed_owner_scoped_metadata(start_after):
     from studio_api.source_storage import S3SourceStorage
 
     modified = datetime(2026, 9, 1, tzinfo=timezone.utc)
 
     class Client:
         def list_objects_v2(self, **kwargs):
-            assert kwargs == {
+            expected = {
                 "Bucket": "private",
                 "Prefix": "transcription/users/owner/",
                 "MaxKeys": 25,
             }
+            if start_after:
+                expected["StartAfter"] = start_after
+            assert kwargs == expected
             return {
                 "Contents": [
                     {
@@ -240,6 +244,7 @@ def test_s3_inventory_requires_typed_owner_scoped_metadata():
     storage.client = Client()
     page = storage.list_objects_page(
         "transcription/users/owner/",
+        start_after=start_after,
         max_keys=25,
     )
     assert page.next_token is None

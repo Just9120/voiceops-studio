@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
 PROJECT_SPEC = (ROOT / "docs/project-spec.md").read_text(encoding="utf-8")
-CI_RULES = (ROOT / "docs/ci-cd-rules.md").read_text(encoding="utf-8")
+VALIDATION_RUNBOOK = (ROOT / "docs/runbooks/validation.md").read_text(encoding="utf-8")
 
 
 def test_security_policy_covers_both_product_contours_and_current_status() -> None:
@@ -49,4 +49,4 @@ def test_project_spec_owns_durable_colab_security_constraints() -> None:
     ):
         assert marker in PROJECT_SPEC
 
-    assert "Baseline repository and Studio CI must remain secretless" in CI_RULES
+    assert "Baseline repository and Studio CI must remain secretless" in VALIDATION_RUNBOOK

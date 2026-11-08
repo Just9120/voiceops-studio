@@ -6,6 +6,7 @@ import logging
 import subprocess
 import sys
 import threading
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -90,6 +91,36 @@ def test_production_selector_rotates_priority_under_continuous_backlog(monkeypat
     worker.run_worker_loop(settings=settings, session_factory=lambda: SimpleNamespace(close=lambda: None),
                            stop_event=stop, independent_background=True)
     assert seen == ["audio", "transcription", "maintenance"]
+
+
+def test_background_storage_reconciliation_is_opt_in_and_rate_limited(monkeypatch):
+    from studio_api import security_email, worker_background
+
+    clock = [0]
+    calls = []
+    stop = threading.Event()
+    settings = SimpleNamespace(storage_orphan_worker_enabled=False)
+    monkeypatch.setattr(worker_background, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(security_email, "process_one_security_email", lambda **kw: None)
+    background = worker_background.WorkerBackground(
+        settings=settings, session_factory=lambda: nullcontext(),
+        stop_event=stop, logger=logging.getLogger("test"), owner_id="owner",
+        source_cleanup_runner=lambda *a, **kw: False,
+        job_notification_runner=lambda **kw: None,
+        alert_evaluator=lambda **kw: None, alert_delivery_runner=lambda **kw: None,
+    )
+    background.storage_reconciliation = SimpleNamespace(
+        run_page=lambda *a, **kw: (calls.append(clock[0]) or 0, 0),
+    )
+    background.run_once()
+    settings.storage_orphan_worker_enabled = True
+    for tick in (0, 59, 60):
+        clock[0] = tick
+        background.run_once()
+    stop.set()
+    clock[0] = 120
+    background.run_once()
+    assert calls == [0, 60]
 
 
 def test_graceful_shutdown_waits_for_active_background_boundary(monkeypatch):
