@@ -332,6 +332,105 @@ def test_storage_scan_stops_a_repeated_provider_cursor(sqlite_db):
     assert len(calls) == 2
 
 
+def test_empty_pages_with_fresh_cursors_exhaust_the_request_budget(sqlite_db):
+    from studio_api.source_storage import StoredObjectPage
+    from studio_api.storage_reconciliation import (
+        StorageReconciliationError,
+        apply_reconciliation_plan,
+    )
+
+    _, user, _ = _owner(sqlite_db)
+    sqlite_db.commit()
+    calls = []
+
+    class EmptyPagesStorage:
+        def list_objects_page(self, prefix, **kwargs):
+            calls.append(prefix)
+            return StoredObjectPage((), str(len(calls)))
+
+    with pytest.raises(StorageReconciliationError, match="scan_truncated"):
+        apply_reconciliation_plan(
+            sqlite_db,
+            owner_user_id=user.id,
+            settings=_settings(storage_reconciliation_scan_limit=1, storage_reconciliation_apply_limit=1),
+            now=datetime.now(timezone.utc),
+            secret="test-secret",
+            plan_token="not-used-for-truncated-scan",
+            storage_factory=lambda _: EmptyPagesStorage(),
+        )
+    assert len(calls) == 4
+
+
+@pytest.mark.parametrize("reference_appears_during_head", [False, True])
+def test_reconciliation_protects_a_physical_key_referenced_by_another_owner_and_class(
+    sqlite_db, monkeypatch, reference_appears_during_head,
+):
+    from studio_api.storage_reconciliation import scan_owner_storage
+
+    m, owner, _ = _owner(sqlite_db)
+    other = m.User(email="other-owner@example.com")
+    sqlite_db.add(other)
+    sqlite_db.flush()
+    project = m.Project(owner_user_id=other.id, title="Other storage")
+    sqlite_db.add(project)
+    sqlite_db.flush()
+    key = f"transcription/users/{owner.id}/orphan/source"
+    sqlite_db.commit()
+    now = datetime.now(timezone.utc)
+    storages = _inventory(owner.id, now)
+
+    def publish_reference():
+        sqlite_db.add(m.Source(
+            project_id=project.id,
+            source_type=m.SourceType.local_upload,
+            original_filename="known.mp3",
+            reference_class="audio_processing",
+            s3_bucket="transcription-private",
+            s3_object_key=key,
+        ))
+        sqlite_db.commit()
+
+    storage = storages["transcription-private"]
+    if reference_appears_during_head:
+        original_head = storage.head_object
+
+        def head_and_publish(object_key):
+            head = original_head(object_key)
+            if object_key == key:
+                publish_reference()
+            return head
+
+        monkeypatch.setattr(storage, "head_object", head_and_publish)
+    else:
+        publish_reference()
+
+    settings = _settings()
+    factory = lambda selected: storages[selected.source_s3_bucket]
+    scan = scan_owner_storage(
+        sqlite_db,
+        owner_user_id=owner.id,
+        settings=settings,
+        now=now,
+        storage_factory=factory,
+    )
+    candidates = {item.object.key for item in scan.candidates}
+    assert (key in candidates) == reference_appears_during_head
+    if reference_appears_during_head:
+        from studio_api.storage_reconciliation import apply_reconciliation_plan, issue_reconciliation_plan
+
+        token, _ = issue_reconciliation_plan(
+            owner_user_id=owner.id, scan=scan, secret="test-secret", now=now, ttl_seconds=600,
+        )
+        assert token
+        result = apply_reconciliation_plan(
+            sqlite_db, owner_user_id=owner.id, plan_token=token, secret="test-secret",
+            settings=settings, now=now, storage_factory=factory,
+        )
+        assert result.failed_count == 1
+        assert key in storage.objects
+        assert key not in storage.deleted
+
+
 def test_storage_scan_looks_up_only_each_page_and_protects_pending_deletions(sqlite_db):
     from sqlalchemy import event
     from studio_api.storage_reconciliation import scan_owner_storage
@@ -346,7 +445,7 @@ def test_storage_scan_looks_up_only_each_page_and_protects_pending_deletions(sql
     queries = []
     plans = []
     def capture(connection, _cursor, statement, parameters, _context, _many):
-        if statement.startswith("SELECT DISTINCT sources.reference_class"):
+        if statement.startswith("SELECT sources.s3_object_key"):
             queries.append((statement, parameters))
             plans.extend(row[3] for row in connection.exec_driver_sql("EXPLAIN QUERY PLAN " + statement, parameters))
     engine = sqlite_db.get_bind()
@@ -361,5 +460,6 @@ def test_storage_scan_looks_up_only_each_page_and_protects_pending_deletions(sql
     assert known_key not in [item.object.key for item in scan.candidates]
     assert len(scan.candidates) == 2
     assert queries
-    assert all("sources.s3_object_key IN" in statement and len(parameters) <= 8 for statement, parameters in queries)
+    assert all("sources.s3_object_key IN" in statement and len(parameters) <= 10 for statement, parameters in queries)
+    assert not any("SCAN sources" in plan for plan in plans)
     assert any("ix_sources_storage_identity" in plan for plan in plans)

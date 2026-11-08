@@ -5,12 +5,13 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+from math import ceil
 from typing import Callable
 
-from sqlalchemy import select
+from sqlalchemy import select, union
 from sqlalchemy.orm import Session
 
-from .models import Project, Source, SourceType
+from .models import Source, SourceType
 from .signed_cursor import decode_signed_cursor, encode_signed_cursor
 from .source_storage import (
     AUDIO_PROCESSING_REFERENCE_CLASS,
@@ -76,26 +77,18 @@ def _owner_prefixes(owner_user_id: str) -> tuple[tuple[str, str], ...]:
     )
 
 
-def _known_owner_objects(db: Session, owner_user_id: str, *, reference_class: str, bucket: str, keys: tuple[str, ...]) -> set[tuple[str, str, str]]:
+def _referenced_storage_keys(db: Session, *, bucket: str, keys: tuple[str, ...]) -> set[str]:
     if not keys:
         return set()
-    rows = db.execute(
-        select(Source.reference_class, Source.s3_bucket, Source.s3_object_key)
-        .join(Project, Project.id == Source.project_id)
-        .where(
-            Project.owner_user_id == owner_user_id,
-            Source.source_type == SourceType.local_upload,
-            Source.s3_bucket.is_not(None),
-            Source.s3_bucket != "",
-            Source.s3_object_key.is_not(None),
-            Source.s3_object_key != "",
-            Source.reference_class == reference_class,
-            Source.s3_bucket == bucket,
-            Source.s3_object_key.in_(keys),
-        )
-        .distinct()
-    ).all()
-    return {(str(reference_class), str(bucket), str(key)) for reference_class, bucket, key in rows}
+    matches = select(Source.s3_object_key).where(
+        Source.source_type == SourceType.local_upload,
+        Source.s3_bucket == bucket,
+        Source.s3_object_key.in_(keys),
+    )
+    return set(db.scalars(union(
+        matches.where(Source.reference_class == TRANSCRIPTION_REFERENCE_CLASS),
+        matches.where(Source.reference_class == AUDIO_PROCESSING_REFERENCE_CLASS),
+    )))
 
 
 def _candidate_digest(candidates: tuple[OrphanCandidate, ...]) -> str:
@@ -141,7 +134,9 @@ def scan_owner_storage(
     candidates: list[OrphanCandidate] = []
     observed: set[tuple[str, str, str]] = set()
     prefixes = _owner_prefixes(owner_user_id)
-    for prefix_index, (reference_class, prefix) in enumerate(prefixes):
+    # A provider may return short or empty pages even with a fresh cursor.
+    pages_left = ceil(settings.storage_reconciliation_scan_limit / settings.storage_reconciliation_page_size) + len(prefixes) - 1
+    for reference_class, prefix in prefixes:
         if scanned >= settings.storage_reconciliation_scan_limit:
             truncated = True
             break
@@ -153,10 +148,11 @@ def scan_owner_storage(
         seen_tokens: set[str] = set()
         while True:
             remaining = settings.storage_reconciliation_scan_limit - scanned
-            if remaining <= 0:
+            if remaining <= 0 or pages_left <= 0:
                 truncated = True
                 break
             page_limit = min(settings.storage_reconciliation_page_size, remaining)
+            pages_left -= 1
             page = storage.list_objects_page(
                 prefix,
                 continuation_token=token,
@@ -164,9 +160,8 @@ def scan_owner_storage(
             )
             if len(page.objects) > page_limit or any(not item.key.startswith(prefix) for item in page.objects):
                 raise StorageReconciliationError(StorageReconciliationReason.unavailable)
-            # Query only this bounded page, including logically deleted rows that
-            # still own physical bytes. Never load the owner's complete inventory.
-            known = _known_owner_objects(db, owner_user_id, reference_class=reference_class, bucket=bucket, keys=tuple(item.key for item in page.objects))
+            # A reference protects physical bytes regardless of its owner or class.
+            known = _referenced_storage_keys(db, bucket=bucket, keys=tuple(item.key for item in page.objects))
             db.rollback()
             for stored in page.objects:
                 if not stored.key.startswith(prefix):
@@ -176,7 +171,7 @@ def scan_owner_storage(
                     continue
                 observed.add(identity)
                 scanned += 1
-                if identity in known:
+                if stored.key in known:
                     continue
                 if _as_utc(stored.last_modified) > minimum_modified_at:
                     protected_recent += 1
@@ -191,7 +186,7 @@ def scan_owner_storage(
             if scanned >= settings.storage_reconciliation_scan_limit:
                 truncated = True
                 break
-        if truncated and prefix_index < len(prefixes) - 1:
+        if truncated:
             break
     ordered = tuple(sorted(candidates, key=lambda item: (item.reference_class, item.object.key)))
     return StorageReconciliationScan(
@@ -245,23 +240,6 @@ def _plan_is_valid(
     return _as_utc(expires_at) > _as_utc(now) and digest == _candidate_digest(scan.candidates)
 
 
-def _object_became_authoritative(db: Session, owner_user_id: str, item: OrphanCandidate) -> bool:
-    exists = db.execute(
-        select(Source.id)
-        .join(Project, Project.id == Source.project_id)
-        .where(
-            Project.owner_user_id == owner_user_id,
-            Source.source_type == SourceType.local_upload,
-            Source.reference_class == item.reference_class,
-            Source.s3_bucket == item.bucket,
-            Source.s3_object_key == item.object.key,
-        )
-        .limit(1)
-    ).scalar_one_or_none()
-    db.rollback()
-    return exists is not None
-
-
 def apply_reconciliation_plan(
     db: Session,
     *,
@@ -294,9 +272,6 @@ def apply_reconciliation_plan(
     failed = 0
     storages: dict[str, object] = {}
     for item in scan.candidates:
-        if _object_became_authoritative(db, owner_user_id, item):
-            failed += 1
-            continue
         try:
             storage = storages.get(item.reference_class)
             if storage is None:
@@ -304,13 +279,23 @@ def apply_reconciliation_plan(
                 storages[item.reference_class] = storage
             head = storage.head_object(item.object.key)
             if (
-                head.size_bytes != item.object.size_bytes
+                not item.object.etag
+                or head.size_bytes != item.object.size_bytes
                 or head.etag != item.object.etag
                 or head.last_modified is None
                 or _as_utc(head.last_modified) != _as_utc(item.object.last_modified)
             ):
                 failed += 1
                 continue
+        except Exception:
+            failed += 1
+            continue
+        referenced = _referenced_storage_keys(db, bucket=item.bucket, keys=(item.object.key,))
+        db.rollback()
+        if referenced:
+            failed += 1
+            continue
+        try:
             if not storage.delete_object_verified(item.object.key, bucket=item.bucket):
                 failed += 1
                 continue
