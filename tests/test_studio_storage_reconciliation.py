@@ -73,11 +73,11 @@ class InventoryStorage:
         self.objects = {item.key: item for item in objects}
         self.deleted = []
 
-    def list_objects_page(self, prefix, *, continuation_token=None, max_keys=100):
+    def list_objects_page(self, prefix, *, continuation_token=None, start_after=None, max_keys=100):
         from studio_api.source_storage import StoredObjectPage
 
         rows = sorted(
-            (item for item in self.objects.values() if item.key.startswith(prefix)),
+            (item for item in self.objects.values() if item.key.startswith(prefix) and item.key > (start_after or "")),
             key=lambda item: item.key,
         )
         start = int(continuation_token or "0")
@@ -463,3 +463,93 @@ def test_storage_scan_looks_up_only_each_page_and_protects_pending_deletions(sql
     assert all("sources.s3_object_key IN" in statement and len(parameters) <= 10 for statement, parameters in queries)
     assert not any("SCAN sources" in plan for plan in plans)
     assert any("ix_sources_storage_identity" in plan for plan in plans)
+
+
+def test_automatic_sweep_advances_across_deleted_pages_and_buckets(sqlite_db):
+    from studio_api.source_storage import StoredObject
+    from studio_api.storage_reconciliation import AutomaticStorageReconciliation
+
+    m, user, project = _owner(sqlite_db)
+    now = datetime.now(timezone.utc)
+    old = now - timedelta(days=3)
+    prefix = f"transcription/users/{user.id}/projects/{project.id}/sources/"
+    first, second, protected, recent = [f"{prefix}00000000-0000-4000-8000-{i:012d}/source" for i in range(4)]
+    audio_key = first.replace("transcription/", "audio_processing/")
+    unknown = prefix + "unrecognized/source"
+    sqlite_db.add(m.Source(
+        project_id=project.id, source_type=m.SourceType.local_upload, original_filename="pending.mp3",
+        reference_class="transcription", s3_bucket="transcription-private", s3_object_key=protected,
+    ))
+    sqlite_db.commit()
+    storages = {
+        "transcription-private": InventoryStorage("transcription-private", [
+            StoredObject(key, 10, '"etag"', old) for key in (first, second, protected, unknown)
+        ] + [StoredObject(recent, 10, '"etag"', now - timedelta(hours=47))]),
+        "audio-private": InventoryStorage("audio-private", [StoredObject(audio_key, 10, '"etag"', old)]),
+    }
+    r2 = "https://synthetic.r2.cloudflarestorage.com"
+    settings = _settings(
+        source_s3_endpoint_url=r2, audio_reference_s3_endpoint_url=r2,
+        storage_reconciliation_page_size=1,
+    )
+    sweep = AutomaticStorageReconciliation()
+    for _ in range(10):
+        sweep.run_page(
+            sqlite_db, settings=settings, now=now, should_stop=lambda: False,
+            storage_factory=lambda selected: storages[selected.source_s3_bucket],
+        )
+    assert storages["transcription-private"].deleted == [first, second]
+    assert storages["audio-private"].deleted == [audio_key]
+    assert sweep.markers == {}
+
+
+@pytest.mark.parametrize("fault", ["generic_endpoint", "foreign_page", "changed_head", "reference_during_head", "stop"])
+def test_automatic_sweep_refuses_unsafe_deletion(sqlite_db, monkeypatch, fault):
+    from studio_api.source_storage import ObjectHead, StoredObject
+    from studio_api.storage_reconciliation import AutomaticStorageReconciliation, StorageReconciliationError
+
+    m, user, project = _owner(sqlite_db)
+    now = datetime.now(timezone.utc)
+    old = now - timedelta(days=3)
+    key = f"transcription/users/{user.id}/projects/{project.id}/sources/00000000-0000-4000-8000-000000000001/source"
+    storage = InventoryStorage("transcription-private", [StoredObject(key, 10, '"etag"', old)])
+    r2 = "https://synthetic.r2.cloudflarestorage.com"
+    settings = _settings(source_s3_endpoint_url=r2, audio_reference_s3_endpoint_url=r2)
+    if fault == "generic_endpoint":
+        settings.source_s3_endpoint_url = "https://other-storage.test"
+    if fault == "foreign_page":
+        from studio_api.source_storage import StoredObjectPage
+
+        monkeypatch.setattr(storage, "list_objects_page", lambda *a, **kw: StoredObjectPage(
+            (StoredObject("unrelated/object", 10, '"etag"', old),), None,
+        ))
+    stopped = False
+
+    def head(_):
+        nonlocal stopped
+        if fault == "reference_during_head":
+            sqlite_db.add(m.Source(
+                project_id=project.id, source_type=m.SourceType.local_upload,
+                original_filename="linked.mp3", reference_class="transcription",
+                s3_bucket="transcription-private", s3_object_key=key,
+            ))
+            sqlite_db.commit()
+        stopped = fault == "stop"
+        return ObjectHead(10, None, '"changed"' if fault == "changed_head" else '"etag"', old)
+
+    sqlite_db.commit()
+    monkeypatch.setattr(storage, "head_object", head)
+    sweep = AutomaticStorageReconciliation()
+
+    def run_page():
+        return sweep.run_page(
+            sqlite_db, settings=settings, now=now, should_stop=lambda: stopped,
+            storage_factory=lambda _: storage,
+        )
+
+    if fault in {"generic_endpoint", "foreign_page"}:
+        with pytest.raises(StorageReconciliationError, match="unavailable"):
+            run_page()
+    else:
+        assert run_page() == (0, 0)
+    assert not storage.deleted

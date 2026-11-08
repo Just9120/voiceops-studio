@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from datetime import datetime, timezone
+from time import monotonic
 
 
 class WorkerBackground:
@@ -24,6 +25,8 @@ class WorkerBackground:
         self.job_notification_runner = job_notification_runner
         self.provider_file_cleanup_runner = provider_file_cleanup_runner
         self.last_alert_evaluation_at = None
+        self.last_storage_reconciliation_at = None
+        self.storage_reconciliation = None
         self.thread = None
 
     def start(self):
@@ -165,4 +168,29 @@ class WorkerBackground:
                 deliver_alert(session_factory=session_factory, settings=settings, now=alert_now)
             except Exception:
                 logger.warning("studio_worker_alert_delivery_failed", extra={"event": "studio_worker_alert_delivery_failed"})
+            if not stop_event.is_set() and getattr(settings, "storage_orphan_worker_enabled", False):
+                self.reconcile_storage_page()
         self.last_alert_evaluation_at = last_alert_evaluation_at
+
+    def reconcile_storage_page(self):
+        from .storage_reconciliation import AutomaticStorageReconciliation
+
+        tick = monotonic()
+        previous = self.last_storage_reconciliation_at
+        if previous is not None and tick - previous < 60:
+            return
+        self.last_storage_reconciliation_at = tick
+        if self.storage_reconciliation is None:
+            self.storage_reconciliation = AutomaticStorageReconciliation()
+        try:
+            with self.session_factory() as db:
+                deleted, failed = self.storage_reconciliation.run_page(
+                    db, settings=self.settings, now=datetime.now(timezone.utc), should_stop=self.stop_event.is_set,
+                )
+            if deleted or failed:
+                self.logger.info(
+                    "studio_worker_orphan_storage_reconciled",
+                    extra={"deleted_count": deleted, "failed_count": failed},
+                )
+        except Exception:
+            self.logger.warning("studio_worker_orphan_storage_reconciliation_failed")

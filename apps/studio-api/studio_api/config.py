@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     source_multipart_threshold_bytes: int = Field(default=16777216, ge=5242880, le=2147483647)
     source_multipart_part_size_bytes: int = Field(default=8388608, ge=5242880, le=134217728)
     storage_orphan_min_age_seconds: int = Field(default=86400, ge=3600, le=2592000)
+    storage_orphan_worker_enabled: bool = False
     storage_reconciliation_scan_limit: int = Field(default=500, ge=1, le=5000)
     storage_reconciliation_page_size: int = Field(default=100, ge=1, le=1000)
     storage_reconciliation_plan_ttl_seconds: int = Field(default=600, ge=60, le=1800)

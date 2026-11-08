@@ -6,7 +6,7 @@ import uuid
 
 _TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,100}\Z")
 _TOKENS = {"event", "stage", "error_type", "reason", "final_job_status", "status", "workflow", "operation"}
-_COUNTS = {"attempt_count", "required_source_count", "persisted_output_count", "processed_source_count", "checkpoint_count", "draft_count", "output_created", "completion_occurred"}
+_COUNTS = {"attempt_count", "required_source_count", "persisted_output_count", "processed_source_count", "checkpoint_count", "draft_count", "output_created", "completion_occurred", "deleted_count", "failed_count"}
 
 
 def safe_error_type(exc):
