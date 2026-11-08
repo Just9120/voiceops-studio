@@ -19,6 +19,7 @@ Commercial production включён в durable product scope; его факти
 
 - Colab: `elevenlabs_api.py`, `elevenlabs_realtime.py`, thin launchers в `notebooks/`; generated protobuf сохраняет собственные entrypoints/upstream.
 - Studio: React 18 / TypeScript 5.6 / Vite 6 в `apps/studio`; Python/FastAPI, SQLAlchemy/Alembic и worker в `apps/studio-api`; PostgreSQL, Redis, FFmpeg; deployment files в `deploy/studio`, операции в `scripts`.
+- Windows-клиент Studio: `scripts/voiceops_companion.py`, протокол и обработка в `scripts/local_worker`, упаковка в `deploy/companion`. Клиент выполняет задания на компьютере владельца с Nemotron или Parakeet. Установщик, привязка и ручной запуск описаны в [runbook Windows-клиента](docs/runbooks/local-worker.md).
 - Пакеты: npm с `apps/studio/package-lock.json`; engines из `apps/studio/package.json`. Python CI 3.11, `requirements-dev.txt` + `constraints-dev.txt`, API requirements/constraints в `apps/studio-api`. Constraints фиксируют версии и не являются hash-integrity lock. Окружение и setup — [validation](docs/runbooks/validation.md).
 
 ## Быстрый старт и validation
@@ -73,7 +74,7 @@ Colab batch запускается вручную через `notebooks/elevenla
 | [docs/runbooks/validation.md](docs/runbooks/validation.md) | Repository и component validation commands. |
 | [docs/runbooks/studio-platform-ops.md](docs/runbooks/studio-platform-ops.md) | Studio rollout и production operations. |
 | [docs/runbooks/realtime-colab.md](docs/runbooks/realtime-colab.md) | Realtime Colab prototype, диагностика и ограничения runtime-проверок. |
-| [docs/runbooks/local-worker.md](docs/runbooks/local-worker.md) | Personal Nemotron на компьютере владельца: pairing, запуск, ограничения и recovery. |
+| [docs/runbooks/local-worker.md](docs/runbooks/local-worker.md) | Windows-клиент personal: установка, привязка, локальные модели и восстановление. |
 
 ## Historical и supporting evidence
 

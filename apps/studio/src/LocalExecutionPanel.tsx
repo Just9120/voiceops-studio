@@ -68,6 +68,10 @@ export function LocalExecutionPanel({ csrf, onCsrf }: { csrf: string; onCsrf: (v
         <li>На компьютере запустите <code>python scripts/voiceops_local_worker.py pair</code>. Ключ вводится скрыто в запрос обработчика.</li>
         <li>Запустите <code>python scripts/voiceops_local_worker.py run</code> и дождитесь статуса «Готов к работе».</li></ol>
       <p>Ключ даёт обработчику доступ только к назначенным ему задачам. Не передавайте его другим людям.</p>
+      <form onSubmit={event => { event.preventDefault(); if (label.trim() || attempt) void apply("pair"); }}>
+        <label>Название компьютера<input value={attempt?.label ?? label} disabled={pending || !!attempt} maxLength={80} autoComplete="off" onChange={event => setLabel(event.target.value)} placeholder="Например, домашний ПК" /></label>
+        <div className="actions"><button type="submit" disabled={pending || (!attempt && (!label.trim() || devices.items.length >= 8))} aria-busy={pending || undefined}>{pending ? "Подтверждаем…" : attempt ? "Повторить тот же запрос подключения" : "Создать ключ для ручного подключения"}</button></div>
+      </form>
     </details>
     {devices.error && <p role="alert" className="notice">{devices.error}</p>}
     <div className="actions"><button type="button" disabled={devices.loading || pending} onClick={() => void devices.refresh()}>{devices.loading ? "Обновляем компьютеры…" : "Обновить компьютеры"}</button></div>
@@ -79,10 +83,6 @@ export function LocalExecutionPanel({ csrf, onCsrf }: { csrf: string; onCsrf: (v
         { id: "revoke", label: "Отозвать доступ", danger: true, onSelect: () => { setConfirmError(""); setConfirm({ row, action: "revoke" }); } },
       ]} />
     </li>)}</ul>
-    <form onSubmit={event => { event.preventDefault(); if (label.trim() || attempt) void apply("pair"); }}>
-      <label>Название компьютера<input value={attempt?.label ?? label} disabled={pending || !!attempt} maxLength={80} autoComplete="off" onChange={event => setLabel(event.target.value)} placeholder="Например, домашний ПК" /></label>
-      <div className="actions"><button type="submit" disabled={pending || (!attempt && (!label.trim() || devices.items.length >= 8))} aria-busy={pending || undefined}>{pending ? "Подтверждаем…" : attempt ? "Повторить тот же запрос подключения" : "Подключить компьютер"}</button></div>
-    </form>
     {message && <p role="status" className="notice">{message}</p>}
     {secret && <section className="notice" aria-label="Одноразовый ключ компьютера">
       <p>Ключ для «{secret.label}» показывается только сейчас. После закрытия его нельзя прочитать повторно.</p>

@@ -58,6 +58,7 @@ class LocalExecutionDevice(Base):
     runtime_status: Mapped[str] = mapped_column(String(24), nullable=False, default="unknown", server_default=text("'unknown'"))
     runtime_version: Mapped[str|None] = mapped_column(String(80))
     model: Mapped[str|None] = mapped_column(String(80))
+    model_revision: Mapped[str|None] = mapped_column(String(40))
     last_seen_at: Mapped[datetime|None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now, onupdate=now)

@@ -38,6 +38,47 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
   });
 }
 
+function luminance(rgb: string) {
+  const channels = rgb.match(/\d+/g)!.slice(0, 3).map(value => {
+    const channel = Number(value) / 255;
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+}
+
+function contrast(first: string, second: string) {
+  const colors = [luminance(first), luminance(second)];
+  return (Math.max(...colors) + 0.05) / (Math.min(...colors) + 0.05);
+}
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test(`login fields and keyboard focus have visible boundaries in ${colorScheme}`, async ({page}) => {
+    await page.emulateMedia({colorScheme});
+    await page.route('**/api/**', route => {
+      if (new URL(route.request().url()).pathname === '/api/auth/bootstrap-status') {
+        return route.fulfill({json: {bootstrap_required: false}});
+      }
+      return route.fulfill({status: 401, json: {detail: 'Not authenticated'}});
+    });
+    await page.goto('/');
+    const input = page.getByRole('textbox', {name: 'Email'});
+    await expect(input).toBeVisible();
+    const colors = await input.evaluate(element => ({
+      border: getComputedStyle(element).borderTopColor,
+      input: getComputedStyle(element).backgroundColor,
+      card: getComputedStyle(element.closest('form')!).backgroundColor,
+    }));
+    expect(contrast(colors.border, colors.input)).toBeGreaterThanOrEqual(3);
+    expect(contrast(colors.border, colors.card)).toBeGreaterThanOrEqual(3);
+    await page.keyboard.press('Tab');
+    await expect(input).toBeFocused();
+    await expect(input).toHaveCSS('outline-style', 'solid');
+    await expect(input).toHaveCSS('outline-width', '3px');
+    const outline = await input.evaluate(element => getComputedStyle(element).outlineColor);
+    expect(contrast(outline, colors.card)).toBeGreaterThanOrEqual(3);
+  });
+}
+
 const project = {id: 'synthetic-layout', title: 'Studio', description: '',
   created_at: '2026-10-11T12:00:00Z', updated_at: '2026-10-11T12:00:00Z', archived_at: null,
   output_drive_folder_id: null, output_drive_folder_url: null, output_drive_folder_name: null};
@@ -433,8 +474,14 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
     await expect(confirm).toBeVisible(); await noHorizontalOverflow(page);
     await page.keyboard.press('Escape'); await expect(confirm).not.toBeVisible();
     await expect(actions).toBeFocused();
-    await panel.getByLabel('Название компьютера',{exact:true}).fill('Тестовый компьютер');
-    await panel.getByRole('button',{name:'Подключить компьютер',exact:true}).click();
+    const computerName = panel.getByLabel('Название компьютера',{exact:true});
+    await expect(computerName).toBeHidden();
+    const manualSetup = panel.getByText('Ручная настройка существующего обработчика',{exact:true});
+    await manualSetup.focus();
+    await page.keyboard.press('Enter');
+    await expect(computerName).toBeVisible();
+    await computerName.fill('Тестовый компьютер');
+    await panel.getByRole('button',{name:'Создать ключ для ручного подключения',exact:true}).click();
     const secret = panel.getByLabel('Ключ подключения',{exact:true});
     await expect(secret).toHaveAttribute('type','password'); await expect(secret).toHaveValue(token);
     await noHorizontalOverflow(page);

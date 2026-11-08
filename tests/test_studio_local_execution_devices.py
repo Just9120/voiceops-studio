@@ -19,7 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps/studio-api"))
 os.environ.setdefault("STUDIO_DATABASE_URL", "sqlite+pysqlite:///:memory:")
 
 from studio_api.local_execution_devices import authenticate_device, device_payload, pair_device
-from studio_api.local_model_identity import MODEL_REVISIONS, PARAKEET_MODEL
+from studio_api.local_model_identity import (
+    LEGACY_NEMOTRON_REVISION, MODEL_REVISIONS, PARAKEET_MODEL, SUPPORTED_MODEL_REVISIONS, job_model_identity,
+)
 from studio_api.models import AuditEvent, Base, LocalExecutionDevice, Session, User, UserStatus
 from studio_api.nemotron_local_result import NEMOTRON_MODEL
 from studio_api.security import token_hash
@@ -69,6 +71,19 @@ def local_app(monkeypatch):
 OWNER_HEADERS = {"origin": "https://studio.test", "x-csrf-token": "test-csrf"}
 BASE = "/api/local-execution"
 READY = {"runtime_status": "ready", "runtime_version": "0.2.0+nightly.66d50d9", "model": NEMOTRON_MODEL}
+
+
+def test_promoting_catalog_default_preserves_explicit_and_legacy_job_versions(monkeypatch):
+    previous = LEGACY_NEMOTRON_REVISION
+    promoted = "a" * 40
+    monkeypatch.setitem(MODEL_REVISIONS, NEMOTRON_MODEL, promoted)
+    monkeypatch.setitem(SUPPORTED_MODEL_REVISIONS, NEMOTRON_MODEL, frozenset((previous, promoted)))
+    assert job_model_identity(json.dumps({"_stt_model": NEMOTRON_MODEL})) == (NEMOTRON_MODEL, previous)
+    for revision in (previous, promoted):
+        assert job_model_identity(json.dumps({"_stt_model": NEMOTRON_MODEL, "_local_model_revision": revision})) == (
+            NEMOTRON_MODEL, revision,
+        )
+    assert job_model_identity(json.dumps({"_stt_model": NEMOTRON_MODEL, "_local_model_revision": "b" * 40})) == (None, None)
 
 
 def test_closed_installer_download_checks_owner_release_identity_and_bytes(local_app, tmp_path):
@@ -123,8 +138,10 @@ def test_hub_catalog_paginates_without_trusting_external_navigation(local_app, m
         linked_host = "untrusted.example" if ("cursor", "opaque=") in params else "huggingface.co"
         yield httpx.Response(200, request=httpx.Request("GET", url),
             headers={"link": f'<https://{linked_host}/api/models?cursor=opaque%3D>; rel="next"'},
-            json=[{"id": "nvidia/parakeet-tdt-0.6b-v3", "tags": ["ru", "license:cc-by-4.0"]},
-                  {"id": "other/model", "tags": ["ru"], "likes": 10},
+            json=[{"id": "nvidia/parakeet-tdt-0.6b-v3", "tags": ["ru", "license:cc-by-4.0"], "pipeline_tag": catalog.TASK, "gated": False},
+                  {"id": "other/model", "tags": ["ru"], "likes": 10, "pipeline_tag": catalog.TASK, "gated": "manual"},
+                  {"id": "other/diarization", "pipeline_tag": "audio-to-audio", "tags": ["speaker-diarization", catalog.TASK]},
+                  {"id": "other/unknown", "tags": ["ru", "speaker-diarization"]},
                   {"id": "https://unexpected.test"}])
 
     monkeypatch.setattr(catalog.httpx, "stream", stream)
@@ -135,10 +152,48 @@ def test_hub_catalog_paginates_without_trusting_external_navigation(local_app, m
         first = client.get(query).json()
         assert [item["id"] for item in first["items"]] == ["nvidia/parakeet-tdt-0.6b-v3", "other/model"]
         assert first["items"][0]["studio"]["download_bytes"] == 713975456
+        assert first["items"][0]["access"] == "public"
+        assert first["items"][1]["access"] == "gated"
         assert first["items"][1]["studio"] is None and first["next_cursor"] == "opaque="
         assert client.get(query + "&cursor=opaque%3D").json()["next_cursor"] is None
     finally:
         catalog._page.cache_clear()
+
+
+def test_studio_catalog_sorts_current_metrics_and_links_exact_weights(monkeypatch):
+    from studio_api import local_model_catalog as catalog
+    supported_ids = list(catalog.STUDIO_PROFILES)
+    nemotron_id, parakeet_id = supported_ids
+    nemotron = catalog.STUDIO_PROFILES[nemotron_id]
+    parakeet = catalog.STUDIO_PROFILES[parakeet_id]
+    metrics = {
+        nemotron["weights_repository"]: (100, 10),
+        parakeet["weights_repository"]: (20, 50),
+    }
+
+    def hub_json(url, params):
+        repo = url.removeprefix(catalog.HUB_MODELS + "/")
+        assert ("expand", "gated") in params
+        downloads, likes = metrics[repo]
+        return {"id": repo, "pipeline_tag": catalog.TASK, "gated": False,
+                "downloads": downloads, "likes": likes, "sha": "b" * 40}, ""
+
+    monkeypatch.setattr(catalog, "_hub_json", hub_json)
+    catalog._studio_profile_item.cache_clear()
+    try:
+        downloads = catalog.catalog_page(search="", language="ru", sort="downloads", cursor="", supported=True)["items"]
+        likes = catalog.catalog_page(search="", language="ru", sort="likes", cursor="", supported=True)["items"]
+        assert [item["id"] for item in downloads] == supported_ids
+        assert [item["id"] for item in likes] == supported_ids[::-1]
+        for item, profile in zip(downloads, (nemotron, parakeet), strict=True):
+            assert item["studio"]["weights_url"] == (
+                f"https://huggingface.co/{profile['weights_repository']}/tree/{profile['revision']}"
+            )
+            assert item["studio"]["min_ram_bytes"] is None
+        assert downloads[0]["hub_revision"] is None
+        assert downloads[1]["studio"]["max_audio_seconds"] == 1440
+    finally:
+        catalog._studio_profile_item.cache_clear()
 
 
 def test_inventory_is_only_readable_by_owner_and_rotated_with_capability(local_app, monkeypatch):
@@ -158,6 +213,22 @@ def test_inventory_is_only_readable_by_owner_and_rotated_with_capability(local_a
     assert client.get(reader).json() == {"inventory": None}
     assert client.post(BASE + "/companion/inventory", headers=headers, json=inventory).status_code == 200
     assert client.get(reader).json()["inventory"]["installed"] == [PARAKEET_MODEL]
+    assert client.get(reader).json()["inventory"]["verified_installations"] == []
+    inventory["verified_installations"] = [PARAKEET_MODEL]
+    assert client.post(BASE + "/companion/inventory", headers=headers, json=inventory).status_code == 200
+    assert client.get(reader).json()["inventory"]["verified_installations"] == [PARAKEET_MODEL]
+    original = MODEL_REVISIONS[PARAKEET_MODEL]
+    assert client.get(reader).json()["inventory"]["model_versions"] == [{
+        "model": PARAKEET_MODEL, "revision": original, "verified": True, "probe": None,
+    }]
+    newer = "a" * 40
+    inventory["model_versions"] = [{"model": PARAKEET_MODEL, "revision": newer, "verified": True}]
+    assert client.post(BASE + "/companion/inventory", headers=headers, json=inventory).status_code == 422
+    monkeypatch.setitem(SUPPORTED_MODEL_REVISIONS, PARAKEET_MODEL, frozenset((original, newer)))
+    assert client.post(BASE + "/companion/inventory", headers=headers, json=inventory).status_code == 200
+    assert client.get(reader).json()["inventory"]["model_versions"] == [{
+        "model": PARAKEET_MODEL, "revision": newer, "verified": True, "probe": None,
+    }]
     client.cookies.set(settings.cookie_name, "other-session")
     assert client.get(reader).status_code == 404
     client.cookies.set(settings.cookie_name, "owner-session")
@@ -454,18 +525,33 @@ def test_only_assigned_pc_can_claim_and_vps_cannot_seize_inference(local_app):
         with pytest.raises(JobLeaseError):
             acquire_job_lease(db, job_id=job_ids[0], lease_owner_id="vps-worker", now=now, lease_ttl=timedelta(minutes=1))
     assert client.post(BASE + "/companion/claim", headers=other_headers).json() == {"job": None}
-    first = client.post(BASE + "/companion/claim", headers=headers)
+    foreign_trace = "trace_" + "f" * 32
+    first = client.post(BASE + "/companion/claim", headers={**headers, "x-trace-id": foreign_trace})
     assert first.status_code == 200
     claimed = first.json()["job"]
     assert claimed["id"] == job_ids[0] and claimed["model"] == NEMOTRON_MODEL
+    trace = claimed["trace_id"]
+    assert trace.startswith("trace_") and trace != foreign_trace and first.headers["x-trace-id"] == trace
     assert claimed["progress"] is None  # No fabricated elapsed percentage.
     replay = client.post(BASE + "/companion/claim", headers=headers)
     assert replay.json()["job"] == claimed
+    assert replay.headers["x-trace-id"] == trace
+    assert replay.headers["x-request-id"] != first.headers["x-request-id"]
+    path = f"{BASE}/companion/jobs/{claimed['id']}/heartbeat"
+    beat = {"generation": claimed["lease_generation"], "sequence": 1, "stage": "source_download"}
+    denied = client.post(path, headers={**other_headers, "x-trace-id": trace}, json=beat)
+    assert denied.status_code == 404 and denied.headers["x-trace-id"] != trace
+    stale = client.post(path, headers={**headers, "x-trace-id": foreign_trace},
+                        json={**beat, "generation": beat["generation"] + 1})
+    assert stale.status_code == 409 and stale.headers["x-trace-id"] not in {trace, foreign_trace}
+    accepted = client.post(path, headers={**headers, "x-trace-id": foreign_trace}, json=beat)
+    assert accepted.status_code == 200 and accepted.headers["x-trace-id"] == trace
     with maker() as db:
         from studio_api.models import JobStatus, TranscriptionJob
         assert db.get(TranscriptionJob, job_ids[0]).attempt_count == 1
         assert db.get(TranscriptionJob, job_ids[1]).status == JobStatus.queued
         assert db.get(TranscriptionJob, job_ids[0]).source_access_started_at is not None
+        assert db.get(TranscriptionJob, job_ids[0]).trace_id == trace
 
 
 @pytest.mark.parametrize("blocked_by", ["other_model", "expired_source"])
@@ -544,13 +630,13 @@ def test_local_cancel_is_acknowledged_without_cloud_or_second_job(local_app):
 
 
 def test_sleeping_pc_becomes_recoverable_failure_instead_of_automatic_dispatch(local_app):
-    from studio_api.job_retry_recovery import compute_explicit_retry_readiness
+    from studio_api.job_retry_recovery import compute_explicit_retry_readiness, queue_retry
     from studio_api.models import JobStatus, TranscriptionJob
     from studio_api.worker_recovery import recover_expired_worker_jobs
     client, maker, _, (owner_id, _) = local_app
     device_id, headers = prepare_pc(client)
     job_id = seed_local_jobs(maker, owner_id, device_id)[0]
-    client.post(BASE + "/companion/claim", headers=headers)
+    first = client.post(BASE + "/companion/claim", headers=headers).json()["job"]
     now = datetime.now(timezone.utc) + timedelta(seconds=100)
     with maker() as db:
         assert recover_expired_worker_jobs(db, now=now) == 1
@@ -559,6 +645,11 @@ def test_sleeping_pc_becomes_recoverable_failure_instead_of_automatic_dispatch(l
         assert row.status == JobStatus.failed and row.error_code == "local_device_offline"
         assert row.lease_owner_id is None and row.retry_not_before_at is None
         assert compute_explicit_retry_readiness(db, row, now=now).available
+        assert row.trace_id == first["trace_id"]
+        queue_retry(db, owner_user_id=owner_id, job_id=job_id, now=now)
+        db.commit()
+    again = client.post(BASE + "/companion/claim", headers=headers).json()["job"]
+    assert again["lease_generation"] > first["lease_generation"] and again["trace_id"] == first["trace_id"]
 
 
 @pytest.mark.parametrize("action", ["rotate", "revoke"])
@@ -634,7 +725,8 @@ def stage_local_input(client, maker, owner_id, monkeypatch, model=NEMOTRON_MODEL
     import hashlib
     raw, closed = input_fixture(monkeypatch)
     device_id, headers = prepare_pc(client)
-    job_id = seed_local_jobs(maker, owner_id, device_id)[0]
+    trace = "trace_" + uuid4().hex
+    job_id = seed_local_jobs(maker, owner_id, device_id, trace_id=trace)[0]
     if model != NEMOTRON_MODEL:
         from studio_api.models import TranscriptionJob
         with maker() as db:
@@ -648,15 +740,18 @@ def stage_local_input(client, maker, owner_id, monkeypatch, model=NEMOTRON_MODEL
         assert ready.status_code == 200, ready.text
     claimed = client.post(BASE + "/companion/claim", headers=headers).json()["job"]
     assert claimed["model"] == model and claimed["model_revision"] == MODEL_REVISIONS[model]
+    assert claimed["trace_id"] == trace
     generation = claimed["lease_generation"]
     source = client.get(f"{BASE}/companion/jobs/{job_id}/source", params={"generation": generation}, headers=headers)
     assert source.status_code == 200, source.text
+    assert source.headers["x-trace-id"] == claimed["trace_id"]
     assert source.content == raw and len(closed) == 1
     sha = hashlib.sha256(raw).hexdigest()
     assert source.headers["x-voiceops-input-sha256"] == sha
     prepared = client.post(f"{BASE}/companion/jobs/{job_id}/prepare", headers=headers,
         json={"generation": generation, "source_sha256": sha, "source_duration_seconds": 1.0})
     assert prepared.status_code == 200, prepared.text
+    assert prepared.headers["x-trace-id"] == claimed["trace_id"]
     assert prepared.json()["prepared_duration_seconds"] == 1
     return device_id, headers, job_id, generation, sha
 
@@ -673,6 +768,51 @@ def post_native(client, headers, job_id, envelope):
     import json
     return client.post(f"{BASE}/companion/jobs/{job_id}/result",
         headers={**headers, "content-type": "application/gzip"}, content=gzip.compress(json.dumps(envelope).encode()))
+
+
+def test_retained_revision_can_finish_queued_work_after_catalog_promotion(local_app, monkeypatch):
+    from studio_api.models import TranscriptionJob
+
+    client, maker, _, (owner_id, _) = local_app
+    previous = LEGACY_NEMOTRON_REVISION
+    promoted = "a" * 40
+    raw, _ = input_fixture(monkeypatch)
+    device_id, headers = prepare_pc(client)
+    job_id = seed_local_jobs(maker, owner_id, device_id)[0]
+    with maker.begin() as db:
+        job = db.get(TranscriptionJob, job_id)
+        job.options_json = json.dumps({**json.loads(job.options_json), "_local_model_revision": previous})
+    monkeypatch.setitem(MODEL_REVISIONS, NEMOTRON_MODEL, promoted)
+    monkeypatch.setitem(SUPPORTED_MODEL_REVISIONS, NEMOTRON_MODEL, frozenset((previous, promoted)))
+
+    def heartbeat(revision):
+        return client.post(BASE + "/companion/heartbeat", headers=headers, json={**READY, "model_revision": revision})
+
+    def remove(revision):
+        return client.post(BASE + "/companion/model-removal", headers=headers,
+            json={"model": NEMOTRON_MODEL, "revision": revision})
+
+    assert heartbeat(promoted).json()["device"]["model_revision"] == promoted
+    assert client.post(BASE + "/companion/claim", headers=headers).json() == {"job": None}
+    assert remove(previous).status_code == 409
+    assert heartbeat(previous).json()["device"]["model_revision"] == previous
+    assert remove(promoted).json() == {"allowed": True}
+    claim = client.post(BASE + "/companion/claim", headers=headers).json()["job"]
+    assert claim["id"] == job_id and claim["model_revision"] == previous
+    assert heartbeat(promoted).status_code == 409
+    generation = claim["lease_generation"]
+    source = client.get(f"{BASE}/companion/jobs/{job_id}/source", params={"generation": generation}, headers=headers)
+    sha = hashlib.sha256(raw).hexdigest()
+    assert source.headers["x-voiceops-input-sha256"] == sha
+    prepared = client.post(f"{BASE}/companion/jobs/{job_id}/prepare", headers=headers,
+        json={"generation": generation, "source_sha256": sha, "source_duration_seconds": 1.0})
+    assert prepared.status_code == 200
+    envelope = {**native_envelope(generation, sha), "model": NEMOTRON_MODEL, "model_revision": promoted}
+    assert post_native(client, headers, job_id, envelope).status_code == 409
+    assert post_native(client, headers, job_id, {**envelope, "model_revision": previous}).json() == {
+        "accepted": True, "already_accepted": False,
+    }
+    assert remove(previous).json() == {"allowed": True}
 
 
 @pytest.mark.parametrize("model", [NEMOTRON_MODEL, PARAKEET_MODEL])
@@ -726,6 +866,8 @@ def test_complete_local_result_is_encrypted_idempotent_and_exported_without_inpu
         assert job.attempt_count == 2 and job.provider_credential_id is None
     replay = post_native(client, headers, job_id, envelope)
     assert replay.status_code == 200 and replay.json()["already_accepted"]
+    assert replay.headers["x-trace-id"] == accepted.headers["x-trace-id"] == job.trace_id
+    assert replay.headers["x-request-id"] != accepted.headers["x-request-id"]
     changed = native_envelope(generation, sha)
     changed["result"]["text"] = "Different result"
     assert post_native(client, headers, job_id, changed).status_code == 409

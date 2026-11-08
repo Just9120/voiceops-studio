@@ -9,7 +9,7 @@ from .job_claim_lease import acquire_job_lease, is_lease_active, renew_job_lease
 from .job_claim_readiness import build_claim_readiness
 from .job_processing_lifecycle import acknowledge_job_cancellation, begin_job_processing, fail_job_processing
 from .job_retry_recovery import classify_source_attempt_failure, prepare_current_attempt_sources
-from .local_execution_devices import _utc, device_payload
+from .local_execution_devices import _utc, device_model_identity, device_payload
 from .models import JobSourceStatus, JobStatus, Project, TranscriptionJob
 from .local_model_identity import job_model_identity
 
@@ -20,7 +20,7 @@ LOCAL_FAILURES = frozenset({"local_input_unavailable", "local_model_unavailable"
                             "local_processing_failed", "local_worker_interrupted", "local_result_invalid"})
 
 
-def device_model_in_use(db, device, model, *, active_only=False):
+def device_model_in_use(db, device, model, revision, *, active_only=False):
     statuses = (JobStatus.processing,) if active_only else (JobStatus.queued, JobStatus.processing)
     rows = db.scalars(select(TranscriptionJob.options_json).where(
         TranscriptionJob.owner_user_id == device.owner_user_id,
@@ -28,7 +28,7 @@ def device_model_in_use(db, device, model, *, active_only=False):
         TranscriptionJob.local_result_ready_at.is_(None), TranscriptionJob.status.in_(statuses),
     ).execution_options(yield_per=100))
     try:
-        return any(job_model_identity(options)[0] == model for options in rows)
+        return any(job_model_identity(options) == (model, revision) for options in rows)
     finally:
         rows.close()
 
@@ -43,28 +43,31 @@ def local_job_payload(job):
     except (TypeError, ValueError):
         options = {}
     model, revision = job_model_identity(job.options_json)
-    return {"id": job.id, "lease_generation": job.lease_generation,
+    return {"id": job.id, "trace_id": job.trace_id, "lease_generation": job.lease_generation,
             "lease_expires_at": _utc(job.lease_expires_at).isoformat(),
             "source_id": source.id, "source_name": source.original_filename, "size_bytes": source.size_bytes,
             "model": model, "model_revision": revision, "language": job.language or "detect", "diarize": options.get("diarize", False),
             "progress": json.loads(job.work_progress_json) if job.work_progress_json else None}
 
 
-def _scope(db, *, device, job_id, generation, now, allow_cancel=False):
+def _scope(db, *, device, job_id, generation, now, allow_cancel=False, on_scoped=None):
     job = db.scalar(select(TranscriptionJob).where(TranscriptionJob.id == job_id,
         TranscriptionJob.owner_user_id == device.owner_user_id, TranscriptionJob.local_device_id == device.id
     ).with_for_update().execution_options(populate_existing=True))
     project = db.get(Project, job.project_id) if job is not None else None
     if job is None or project is None or project.owner_user_id != device.owner_user_id or project.archived_at is not None:
         raise HTTPException(404, detail={"reason": "local_job_unavailable"})
-    model, _ = job_model_identity(job.options_json)
-    if (job.provider != "nemotron" or model is None or model != device.model or job.media_timeline_version != 2
+    model, revision = job_model_identity(job.options_json)
+    if (job.provider != "nemotron" or model is None or (model, revision) != device_model_identity(device)
+            or job.media_timeline_version != 2
             or job.status != JobStatus.processing or job.local_result_ready_at is not None
             or job.lease_owner_id != "local:" + device.id or job.lease_generation != generation
             or not is_lease_active(job, now)):
         raise HTTPException(409, detail={"reason": "local_job_lease_changed"})
     if job.cancel_requested_at is not None and not allow_cancel:
         raise HTTPException(409, detail={"reason": "local_job_cancelled"})
+    if on_scoped is not None:
+        on_scoped(job)
     return job
 
 
@@ -124,13 +127,13 @@ def claim_local_job(db, *, device, now):
 
 
 def _matches_local_claim(job, device, now):
-    return (job_model_identity(job.options_json)[0] == device.model
+    return (job_model_identity(job.options_json) == device_model_identity(device)
             and sum(relation.status != JobSourceStatus.skipped for relation in job.sources) == 1
             and build_claim_readiness(job, now=now)["ready_for_future_claim"])
 
 
-def heartbeat_local_job(db, *, device, job_id, generation, stage, sequence, completed, total, unit, now):
-    job = _scope(db, device=device, job_id=job_id, generation=generation, now=now, allow_cancel=True)
+def heartbeat_local_job(db, *, device, job_id, generation, stage, sequence, completed, total, unit, now, on_scoped=None):
+    job = _scope(db, device=device, job_id=job_id, generation=generation, now=now, allow_cancel=True, on_scoped=on_scoped)
     if job.cancel_requested_at is not None:
         acknowledge_job_cancellation(db, job_id=job.id, lease_owner_id="local:" + device.id,
             lease_generation=generation, now=now, retire_part_checkpoints=False)
@@ -167,10 +170,10 @@ def heartbeat_local_job(db, *, device, job_id, generation, stage, sequence, comp
     return {"cancelled": False, "lease_expires_at": _utc(job.lease_expires_at).isoformat()}
 
 
-def fail_local_job(db, *, device, job_id, generation, reason, now):
+def fail_local_job(db, *, device, job_id, generation, reason, now, on_scoped=None):
     if reason not in LOCAL_FAILURES:
         raise HTTPException(422, detail={"reason": "local_failure_invalid"})
-    job = _scope(db, device=device, job_id=job_id, generation=generation, now=now, allow_cancel=True)
+    job = _scope(db, device=device, job_id=job_id, generation=generation, now=now, allow_cancel=True, on_scoped=on_scoped)
     if job.cancel_requested_at is not None:
         acknowledge_job_cancellation(db, job_id=job.id, lease_owner_id="local:" + device.id,
             lease_generation=generation, now=now, retire_part_checkpoints=False)

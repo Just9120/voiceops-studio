@@ -1,5 +1,4 @@
 """Download only the files and revisions that ship as Studio profiles."""
-from dataclasses import dataclass
 from pathlib import Path
 import re
 import shutil
@@ -7,40 +6,8 @@ from urllib.error import URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from .native import DECODER_SHA256, ENCODER_SHA256
-from .protocol import MODEL, MODEL_REVISIONS, PARAKEET_BYTES, PARAKEET_MODEL, PARAKEET_SHA256, WorkerError, file_sha256
-
-
-@dataclass(frozen=True)
-class ModelFile:
-    name: str
-    size: int
-    sha256: str
-
-
-@dataclass(frozen=True)
-class ModelProfile:
-    name: str
-    repo: str
-    revision: str
-    files: tuple[ModelFile, ...]
-
-
-PROFILES = {
-    "nemotron-transcribe-iq4-nl": ModelProfile(
-        "Nemotron 3.5 Transcribe IQ4_NL", "AtomicChat/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
-        MODEL_REVISIONS[MODEL], (
-            ModelFile("NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-AD-IQ4_NL.gguf", 19678656672, DECODER_SHA256),
-            ModelFile("NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf", 1670410080, ENCODER_SHA256),
-        ),
-    ),
-    "parakeet-tdt-v3-q8": ModelProfile(
-        "Parakeet TDT 0.6B v3 Q8", "nvidia/parakeet-tdt-0.6b-v3",
-        MODEL_REVISIONS[PARAKEET_MODEL], (
-            ModelFile("parakeet-tdt-0.6b-v3.q8_0.gguf", PARAKEET_BYTES, PARAKEET_SHA256),
-        ),
-    ),
-}
+from .model_profiles import PROFILES, RETAINED_PROFILES
+from .protocol import WorkerError, file_sha256
 
 
 def _trusted_download(url):
@@ -98,8 +65,17 @@ def _download(opener, url, temporary, expected, offset, *, check, progress):
         raise WorkerError("local_model_download_interrupted") from exc
 
 
-def install_profile(profile_id, root, *, check, progress):
-    profile = PROFILES[profile_id]
+def _version(profile_id, revision):
+    profile = PROFILES.get(profile_id)
+    if revision is not None and (profile is None or profile.revision != revision):
+        profile = RETAINED_PROFILES.get((profile_id, revision))
+    if profile is None:
+        raise WorkerError("local_model_unavailable")
+    return profile
+
+
+def install_profile(profile_id, root, *, check, progress, revision=None):
+    profile = _version(profile_id, revision)
     directory = Path(root) / "VoiceOpsModels" / profile_id / profile.revision
     for path in (directory.parent.parent, directory.parent, directory):
         if path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction()):
@@ -127,10 +103,12 @@ def install_profile(profile_id, root, *, check, progress):
             _download(opener, f"https://huggingface.co/{profile.repo}/resolve/{profile.revision}/{spec.name}",
                       partial, spec.size, offset, check=check, progress=lambda current: progress(completed + current, total))
             if file_sha256(partial, check) != spec.sha256:
-                # A bad partial is never promoted or resumed. It is retained as
-                # evidence so another attempt cannot overwrite unknown files.
+                # Retain at most one rejected download. Every bad partial must
+                # leave the resumable slot free for the next attempt.
                 rejected = partial.with_suffix(".invalid")
-                if not rejected.exists():
+                if rejected.exists() or rejected.is_symlink():
+                    partial.unlink()
+                else:
                     partial.rename(rejected)
                 raise WorkerError("local_model_file_invalid")
             partial.rename(final)
@@ -141,15 +119,18 @@ def install_profile(profile_id, root, *, check, progress):
     return directory
 
 
-def remove_managed_profile(profile_id, root, selected_decoder, *, check):
-    profile = PROFILES[profile_id]
+def remove_managed_profile(profile_id, root, selected_decoder, *, check, revision=None):
+    profile = _version(profile_id, revision)
     directory = Path(root).resolve(strict=True) / "VoiceOpsModels" / profile_id / profile.revision
     if directory.resolve(strict=True) != directory or directory != Path(selected_decoder).parent:
         raise WorkerError("local_model_file_invalid")
     files = [directory / spec.name for spec in profile.files]
     for spec, target in zip(profile.files, files, strict=True):
-        if _size_if_regular(target) != spec.size or file_sha256(target, check) != spec.sha256:
+        size = _size_if_regular(target)
+        if size == 0 and not target.exists():
+            continue
+        if size != spec.size or file_sha256(target, check) != spec.sha256:
             raise WorkerError("local_model_file_invalid")
     check()
     for target in files:
-        target.unlink()
+        target.unlink(missing_ok=True)

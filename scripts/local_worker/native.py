@@ -14,14 +14,11 @@ import time
 import urllib.error
 import urllib.request
 
+from .model_profiles import INITIAL_MODEL_REVISIONS, model_profile
 from .process import OwnedProcess
-from .protocol import MODEL, RUNTIME_VERSION, MAX_NATIVE_RESPONSE_BYTES, PARAKEET_BYTES, PARAKEET_MODEL, PARAKEET_SHA256, NoRedirect, WorkerError, complete_native_result, file_sha256, strict_json
+from .protocol import MODEL, RUNTIME_VERSION, MAX_NATIVE_RESPONSE_BYTES, PARAKEET_MODEL, NoRedirect, WorkerError, complete_native_result, file_sha256, strict_json
 
-RUNTIME_SHA256 = "8d90b48e4ed4f60a7847b86a983dafc183b3448bcf2722777d3209546cb0c1e4"
-DECODER_SHA256 = "0c47d4ab6c783e7606ec03714b354fab0b2052027a7ea1991e7e2d3009c345ad"
-ENCODER_SHA256 = "4221029c8a565c4a80c507ffa760c716e595acf663f9f4273ce69910050e7ba2"
-PINNED_FILES = {"runtime": (1850880, RUNTIME_SHA256), "decoder": (19678656672, DECODER_SHA256),
-                "encoder": (1670410080, ENCODER_SHA256)}
+RUNTIME_FILE = (1850880, "8d90b48e4ed4f60a7847b86a983dafc183b3448bcf2722777d3209546cb0c1e4")
 
 
 def model_scratch_root(root, paths):
@@ -54,10 +51,16 @@ class NativePaths:
             raise WorkerError("local_runtime_missing") from None
 
 
-def verify_installation(paths, *, check=lambda: None, verified_files=None, model=MODEL):
+def verify_installation(paths, *, check=lambda: None, verified_files=None, model=MODEL, revision=None, cached_only=False):
     verified_files = verified_files if isinstance(verified_files, dict) else {}
     verified = {}
-    files = PINNED_FILES if model == MODEL else {"runtime": PINNED_FILES["runtime"], "decoder": (PARAKEET_BYTES, PARAKEET_SHA256)}
+    profile = model_profile(model, INITIAL_MODEL_REVISIONS.get(model) if revision is None else revision)
+    if profile is None:
+        raise WorkerError("local_model_unavailable")
+    roles = ("decoder", "encoder") if model == MODEL else ("decoder",)
+    files = {"runtime": RUNTIME_FILE, **{
+        role: (spec.size, spec.sha256) for role, spec in zip(roles, profile.files, strict=True)
+    }}
     for field, (size, digest) in files.items():
         path = getattr(paths, field)
         try:
@@ -66,9 +69,10 @@ def verify_installation(paths, *, check=lambda: None, verified_files=None, model
             saved = verified_files.get(field)
             # Only a current-user sealed proof can skip rereading unchanged
             # multi-gigabyte weights. The small executable is hashed every run.
-            cached = (field != "runtime" and before.st_ino > 0 and isinstance(saved, dict)
+            cached = ((field != "runtime" or cached_only) and before.st_ino > 0 and isinstance(saved, dict)
                       and saved.get("sha256") == digest and saved.get("stat") == stamp)
-            if not path.is_file() or before.st_size != size or (not cached and file_sha256(path, check) != digest):
+            if (not path.is_file() or before.st_size != size
+                    or (not cached and (cached_only or file_sha256(path, check) != digest))):
                 raise ValueError()
             after = path.stat()
             if stamp != [after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns]:

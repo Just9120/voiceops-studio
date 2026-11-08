@@ -3,11 +3,12 @@ from typing import Literal
 import json
 from uuid import UUID, uuid4
 from contextlib import ExitStack
+from functools import partial
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
-from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, field_validator, model_validator
 from redis.exceptions import RedisError
 from sqlalchemy import select
 
@@ -19,13 +20,14 @@ from .client_ip import get_client_ip
 from .deps import current_session, require_csrf
 from .local_device_enrollment import DeviceEnrollment, PAIRING_SECONDS
 from .local_model_catalog import CatalogUnavailable, catalog_page
-from .local_model_identity import MODEL_REVISIONS, PARAKEET_MODEL
+from .local_model_identity import INITIAL_MODEL_REVISIONS, LEGACY_NEMOTRON_REVISION, MODEL_REVISIONS, PARAKEET_MODEL, is_supported_model_revision
 from .local_execution_devices import (
-    authenticate_device, device_payload, owned_device, pair_device, revoke_device, rotate_device,
+    authenticate_device, device_model_identity, device_payload, owned_device, pair_device, revoke_device, rotate_device,
 )
 from .models import LocalExecutionDevice
 from .nemotron_local_result import NEMOTRON_MODEL
 from .security import utcnow
+from .trace_context import new_trace_id, set_current_trace_id, valid_trace_id
 from .local_execution_jobs import claim_local_job, device_model_in_use, fail_local_job, fence_device_jobs, heartbeat_local_job, local_job_payload
 from .local_execution_transfer import accept_local_result, decode_local_result, open_local_input, prepare_local_input
 
@@ -91,6 +93,18 @@ class LocalModelVersionIn(BaseModel):
     revision: str = Field(pattern=r"^[0-9a-f]{40}$")
 
 
+class LocalModelInventoryVersionIn(LocalModelVersionIn):
+    verified: StrictBool
+    probe: LocalModelProbeIn | None = None
+
+    @model_validator(mode="after")
+    def validate_version(self):
+        if (not is_supported_model_revision(self.model, self.revision)
+                or (self.probe is not None and (not self.verified or self.probe.model != self.model))):
+            raise ValueError("Invalid model version inventory")
+        return self
+
+
 class LocalInventoryIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cpu: str = Field(min_length=1, max_length=120)
@@ -100,7 +114,16 @@ class LocalInventoryIn(BaseModel):
     disk_free_bytes: StrictInt | None = Field(default=None, ge=0, le=2**60)
     execution: list[Literal["cpu"]] = Field(max_length=1)
     installed: list[Literal[NEMOTRON_MODEL, PARAKEET_MODEL]] = Field(max_length=2)
+    verified_installations: list[Literal[NEMOTRON_MODEL, PARAKEET_MODEL]] = Field(default_factory=list, max_length=2)
     probes: list[LocalModelProbeIn] = Field(default_factory=list, max_length=2)
+    model_versions: list[LocalModelInventoryVersionIn] | None = Field(default=None, max_length=16)
+
+    @field_validator("model_versions")
+    @classmethod
+    def unique_versions(cls, value):
+        if value is not None and len({(item.model, item.revision) for item in value}) != len(value):
+            raise ValueError("Duplicate model version")
+        return value
 
 
 def _inventory_key(device):
@@ -164,6 +187,14 @@ def companion_device(request: Request, db=Depends(get_db)):
     return device
 
 
+def _bind_job_trace(request, job):
+    # Called only after owner, device and lease (or exact result replay) are checked.
+    if not valid_trace_id(job.trace_id):
+        job.trace_id = new_trace_id()
+    request.state.job_trace_id = job.trace_id
+    set_current_trace_id(job.trace_id)
+
+
 def require_companion_enrollment_request(request):
     if request.headers.get("origin") or request.headers.get("x-voiceops-local-protocol") != "1":
         raise HTTPException(403, detail={"reason": "local_device_protocol_required"}, headers=NO_STORE)
@@ -210,7 +241,15 @@ def build_router(*, recent_auth, limiter):
             raw = limiter.redis.get(_inventory_key(row))
         except RedisError:
             raise HTTPException(503, "Сведения о компьютере временно недоступны", headers=NO_STORE) from None
-        return {"inventory": json.loads(raw) if raw is not None else None}
+        inventory = json.loads(raw) if raw is not None else None
+        if inventory is not None and inventory.get("model_versions") is None:
+            verified = set(inventory.get("verified_installations", []))
+            probes = {item["model"]: item for item in inventory.get("probes", [])}
+            inventory["model_versions"] = [{
+                "model": model, "revision": INITIAL_MODEL_REVISIONS[model], "verified": model in verified,
+                "probe": probes.get(model) if model in verified else None,
+            } for model in dict.fromkeys(inventory["installed"])]
+        return {"inventory": inventory}
 
     @router.post("/api/local-execution/devices/{device_id}/model-install")
     def request_model_install(device_id: UUID, data: LocalModelVersionIn, response: Response,
@@ -327,13 +366,17 @@ def build_router(*, recent_auth, limiter):
     def heartbeat(data: DeviceHeartbeatIn, response: Response,
                   device=Depends(companion_device), db=Depends(get_db)):
         limiter.check("local-device:heartbeat:" + device.id, 120, 60)
-        legacy = data.model == NEMOTRON_MODEL and data.model_revision is None
-        if data.runtime_status == "ready" and (data.model not in MODEL_REVISIONS or data.runtime_version is None
-                or (not legacy and data.model_revision != MODEL_REVISIONS[data.model])):
+        revision = data.model_revision
+        if revision is None and data.model == NEMOTRON_MODEL:
+            revision = LEGACY_NEMOTRON_REVISION
+        if ((revision is not None and not is_supported_model_revision(data.model, revision))
+                or (data.runtime_status == "ready" and (revision is None or data.runtime_version is None))):
             raise HTTPException(422, detail={"reason": "local_runtime_identity_required"}, headers=NO_STORE)
-        if device.model is not None and data.model != device.model and device_model_in_use(db, device, device.model, active_only=True):
+        active = device_model_identity(device)
+        if active[0] is not None and (data.model, revision) != active and device_model_in_use(db, device, *active, active_only=True):
             raise HTTPException(409, detail={"reason": "local_model_in_use"}, headers=NO_STORE)
         device.runtime_status, device.runtime_version, device.model = data.runtime_status, data.runtime_version, data.model
+        device.model_revision = revision
         device.last_seen_at = device.updated_at = utcnow()
         db.commit()
         response.headers.update(NO_STORE)
@@ -354,9 +397,10 @@ def build_router(*, recent_auth, limiter):
     @router.post("/api/local-execution/companion/model-removal")
     def model_removal(data: LocalModelVersionIn, response: Response, device=Depends(companion_device), db=Depends(get_db)):
         limiter.check("local-device:model-removal:" + device.id, 10, 60)
-        if data.revision != MODEL_REVISIONS[data.model] or device_model_in_use(db, device, data.model):
+        if (not is_supported_model_revision(data.model, data.revision)
+                or device_model_in_use(db, device, data.model, data.revision)):
             raise HTTPException(409, detail={"reason": "local_model_in_use"}, headers=NO_STORE)
-        if device.model == data.model:
+        if device_model_identity(device) == (data.model, data.revision):
             device.runtime_status = "unknown"
             device.last_seen_at = None
             device.updated_at = utcnow()
@@ -391,30 +435,33 @@ def build_router(*, recent_auth, limiter):
         return {"device": device_payload(device, now=utcnow())}
 
     @router.post("/api/local-execution/companion/claim")
-    def claim(response: Response, device=Depends(companion_device), db=Depends(get_db)):
+    def claim(request: Request, response: Response, device=Depends(companion_device), db=Depends(get_db)):
         limiter.check("local-device:claim:" + device.id, 30, 60)
         job = claim_local_job(db, device=device, now=utcnow())
+        if job is not None:
+            _bind_job_trace(request, job)
         payload = local_job_payload(job) if job is not None else None
         db.commit()
         response.headers.update(NO_STORE)
         return {"job": payload}
 
     @router.post("/api/local-execution/companion/jobs/{job_id}/heartbeat")
-    def job_heartbeat(job_id: UUID, data: LocalJobHeartbeatIn, response: Response,
+    def job_heartbeat(job_id: UUID, data: LocalJobHeartbeatIn, request: Request, response: Response,
                       device=Depends(companion_device), db=Depends(get_db)):
         limiter.check("local-device:job-heartbeat:" + device.id, 120, 60)
         result = heartbeat_local_job(db, device=device, job_id=str(job_id), generation=data.generation,
-            stage=data.stage, sequence=data.sequence, completed=data.completed, total=data.total, unit=data.unit, now=utcnow())
+            stage=data.stage, sequence=data.sequence, completed=data.completed, total=data.total, unit=data.unit, now=utcnow(),
+            on_scoped=partial(_bind_job_trace, request))
         db.commit()
         response.headers.update(NO_STORE)
         return result
 
     @router.post("/api/local-execution/companion/jobs/{job_id}/failure")
-    def job_failure(job_id: UUID, data: LocalJobFailureIn, response: Response,
+    def job_failure(job_id: UUID, data: LocalJobFailureIn, request: Request, response: Response,
                     device=Depends(companion_device), db=Depends(get_db)):
         limiter.check("local-device:failure:" + device.id, 30, 60)
         result = fail_local_job(db, device=device, job_id=str(job_id), generation=data.generation,
-            reason=data.reason, now=utcnow())
+            reason=data.reason, now=utcnow(), on_scoped=partial(_bind_job_trace, request))
         db.commit()
         response.headers.update(NO_STORE)
         return result
@@ -428,7 +475,8 @@ def build_router(*, recent_auth, limiter):
         stack = ExitStack()
         try:
             chunks, receipt = stack.enter_context(open_local_input(db, device=device,
-                raw_token=request.headers["authorization"][7:], job_id=str(job_id), generation=generation, settings=settings))
+                raw_token=request.headers["authorization"][7:], job_id=str(job_id), generation=generation, settings=settings,
+                on_scoped=partial(_bind_job_trace, request)))
             return LocalInputResponse(chunks, cleanup=stack.close, headers={**NO_STORE,
                 "Content-Length": str(receipt["byte_count"]), "X-VoiceOps-Input-SHA256": receipt["source_sha256"],
                 "Content-Disposition": 'attachment; filename="input.media"'})
@@ -437,11 +485,12 @@ def build_router(*, recent_auth, limiter):
             raise
 
     @router.post("/api/local-execution/companion/jobs/{job_id}/prepare")
-    def prepare(job_id: UUID, data: LocalInputPrepareIn, response: Response,
+    def prepare(job_id: UUID, data: LocalInputPrepareIn, request: Request, response: Response,
                 device=Depends(companion_device), db=Depends(get_db), settings=Depends(get_settings)):
         limiter.check("local-device:prepare:" + device.id, 30, 60)
         result = prepare_local_input(db, device=device, job_id=str(job_id), generation=data.generation,
-            source_sha256=data.source_sha256, source_duration_seconds=data.source_duration_seconds, settings=settings, now=utcnow())
+            source_sha256=data.source_sha256, source_duration_seconds=data.source_duration_seconds, settings=settings,
+            now=utcnow(), on_scoped=partial(_bind_job_trace, request))
         db.commit()
         response.headers.update(NO_STORE)
         return result
@@ -456,7 +505,7 @@ def build_router(*, recent_auth, limiter):
         # only this authenticated boundary expands to a bounded full JSON result.
         envelope, digest = decode_local_result(body)
         result = accept_local_result(db, device=device, job_id=str(job_id), envelope=envelope,
-            digest=digest, settings=settings, now=utcnow())
+            digest=digest, settings=settings, now=utcnow(), on_scoped=partial(_bind_job_trace, request))
         db.commit()
         response.headers.update(NO_STORE)
         return result

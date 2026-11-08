@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LocalExecutionPanel } from "./LocalExecutionPanel";
 import { LOCAL_MODEL } from "./localExecutionContracts";
@@ -8,7 +8,13 @@ const device = (extra = {}) => ({ id: "00000000-0000-4000-8000-000000000001", la
   last_seen_at: new Date().toISOString(), revoked_at: null, ...extra });
 const token = `vs-local.${device().id}.${"a".repeat(43)}`;
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); sessionStorage.clear(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); sessionStorage.clear(); });
+
+function requestManualPairing() {
+  fireEvent.click(screen.getByText("Ручная настройка существующего обработчика"));
+  fireEvent.change(screen.getByLabelText("Название компьютера"), { target: { value: "Домашний ПК" } });
+  fireEvent.click(screen.getByRole("button", { name: "Создать ключ для ручного подключения" }));
+}
 
 describe("local computer pairing", () => {
   it("shows the checksum and a same-origin download for the approved closed release", async () => {
@@ -22,11 +28,43 @@ describe("local computer pairing", () => {
     expect(screen.getByText(/Установщик не подписан/)).toBeVisible();
   });
 
-  it("keeps the download hidden when the closed release is unavailable", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/companion-release")
-      ? json({}, 404) : json({ devices: [] })));
+  it.each([
+    [404, "Установщик Windows сейчас недоступен."],
+    [200, "Данные об установщике не прошли проверку. Скачивание недоступно."],
+  ])("shows a safe retry when release metadata is unavailable (%s)", async (status, message) => {
+    let releaseReads = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (!url.endsWith("/companion-release")) return json({ devices: [] });
+      return ++releaseReads === 1 ? json({}, status)
+        : json({ version: "0.1.0", sha256: "a".repeat(64), bytes: 100, signed: false });
+    }));
     render(<LocalExecutionPanel csrf="csrf" onCsrf={() => {}} />);
-    await screen.findByText("Компьютеры ещё не подключены.");
+    expect(screen.getByText("Проверяем доступность установщика Windows…")).toBeVisible();
+    expect(await screen.findByText(message)).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Скачать установщик Windows" })).not.toBeInTheDocument();
+    const manualSetup = screen.getByText("Ручная настройка существующего обработчика").closest("details");
+    expect(manualSetup).not.toHaveAttribute("open");
+    expect(manualSetup).toHaveTextContent("Создать ключ для ручного подключения");
+    fireEvent.click(screen.getByRole("button", { name: "Проверить установщик снова" }));
+    expect(await screen.findByRole("link", { name: "Скачать установщик Windows" })).toBeVisible();
+  });
+
+  it("times out the installer read and ignores its late response", async () => {
+    vi.useFakeTimers();
+    let finish: ((value: Response) => void) | undefined;
+    let releaseSignal: AbortSignal | null | undefined;
+    vi.stubGlobal("fetch", vi.fn((url: string, options?: RequestInit) => {
+      if (!url.endsWith("/companion-release")) return Promise.resolve(json({ devices: [] }));
+      releaseSignal = options?.signal;
+      return new Promise<Response>(resolve => { finish = resolve; });
+    }));
+    render(<LocalExecutionPanel csrf="csrf" onCsrf={() => {}} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+    expect(releaseSignal?.aborted).toBe(true);
+    expect(screen.getByText(/Studio не дождалась ответа об установщике/)).toBeVisible();
+    await act(async () => {
+      finish?.(json({ version: "0.1.0", sha256: "a".repeat(64), bytes: 100, signed: false }));
+    });
     expect(screen.queryByRole("link", { name: "Скачать установщик Windows" })).not.toBeInTheDocument();
   });
 
@@ -88,8 +126,7 @@ describe("local computer pairing", () => {
     }));
     render(<LocalExecutionPanel csrf="csrf" onCsrf={() => {}} />);
     await screen.findByText("Компьютеры ещё не подключены.");
-    fireEvent.change(screen.getByLabelText("Название компьютера"), { target: { value: "Домашний ПК" } });
-    fireEvent.click(screen.getByRole("button", { name: "Подключить компьютер" }));
+    requestManualPairing();
     const retry = await screen.findByRole("button", { name: "Повторить тот же запрос подключения" });
     fireEvent.click(retry);
     expect(await screen.findByText(/Этот компьютер уже подключён/)).toBeInTheDocument();
@@ -105,8 +142,7 @@ describe("local computer pairing", () => {
     }));
     render(<LocalExecutionPanel csrf="csrf" onCsrf={() => {}} />);
     await screen.findByText("Компьютеры ещё не подключены.");
-    fireEvent.change(screen.getByLabelText("Название компьютера"), { target: { value: "Домашний ПК" } });
-    fireEvent.click(screen.getByRole("button", { name: "Подключить компьютер" }));
+    requestManualPairing();
     const secret = await screen.findByLabelText("Ключ подключения");
     expect(secret).toHaveAttribute("type", "password"); expect(secret).toHaveValue(token);
     expect(JSON.stringify([localStorage, sessionStorage])).not.toContain(token);
@@ -118,8 +154,7 @@ describe("local computer pairing", () => {
       ? json({ detail: { reason: "recent_reauthentication_required" } }, 403) : json({ devices: [] })));
     render(<LocalExecutionPanel csrf="csrf" onCsrf={() => {}} />);
     await screen.findByText("Компьютеры ещё не подключены.");
-    fireEvent.change(screen.getByLabelText("Название компьютера"), { target: { value: "Домашний ПК" } });
-    fireEvent.click(screen.getByRole("button", { name: "Подключить компьютер" }));
+    requestManualPairing();
     expect(await screen.findByText(/Подтвердите пароль и 2FA/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Ключ подключения")).not.toBeInTheDocument();
   });

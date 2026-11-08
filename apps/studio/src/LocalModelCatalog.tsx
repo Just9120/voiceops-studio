@@ -4,16 +4,23 @@ import type { LocalExecutionDevice } from "./localExecutionContracts";
 
 type CatalogItem = {
   id: string; source_url: string; hub_revision: string | null; license: string | null;
+  access?: "public" | "gated" | "unknown";
   languages: string[]; downloads: number | null; likes: number | null;
   studio: { name: string; model: string; revision: string; languages: string[]; diarization: boolean;
-    word_timestamps: boolean; download_bytes: number } | null;
+    word_timestamps: boolean; download_bytes: number; weights_url?: string;
+    platform?: string; execution?: string; min_ram_bytes?: number | null; max_audio_seconds?: number | null } | null;
 };
 type CatalogPage = { items: CatalogItem[]; next_cursor: string | null };
+type CatalogQuery = { key: string; parameters: string; supported: boolean; speakers: boolean; timestamps: boolean; compatible: boolean };
 
+type Probe = { model: string; audio_seconds: number; elapsed_seconds: number };
+type InstalledVersion = { model: string; revision: string; verified: boolean; probe: Probe | null };
 type Inventory = {
   cpu: string; cpu_threads: number | null; ram_bytes: number | null; disk_free_bytes: number | null;
   gpus: { name: string; vram_bytes: number | null }[]; installed: string[]; execution: string[];
-  probes: { model: string; audio_seconds: number; elapsed_seconds: number }[];
+  verified_installations?: string[];
+  probes: Probe[];
+  model_versions?: InstalledVersion[];
 };
 
 function gib(bytes: number | null) {
@@ -23,10 +30,25 @@ function gib(bytes: number | null) {
 function suitability(item: CatalogItem, inventory: Inventory | null) {
   if (!item.studio) return "Недостаточно данных";
   if (!inventory) return "Недостаточно данных";
-  if (inventory.probes.some(probe => probe.model === item.studio?.model)) return "Подходит по короткой пробе";
-  if (inventory.installed.includes(item.studio.model)) return "С ограничениями · скорость не измерена";
+  const version = installedVersion(inventory, item.studio);
+  if (version?.verified) {
+    return version.probe
+      ? "Подходит по короткой пробе" : "С ограничениями · скорость не измерена";
+  }
   if (inventory.disk_free_bytes !== null && inventory.disk_free_bytes < item.studio.download_bytes) return "Не подходит · недостаточно места";
   return "Недостаточно данных · требуется проба на ПК";
+}
+
+function installedVersion(inventory: Inventory | null, studio: CatalogItem["studio"]) {
+  if (!inventory || !studio) return undefined;
+  const { model, revision } = studio;
+  if (inventory.model_versions) {
+    return inventory.model_versions.find(item => item.model === model && item.revision === revision);
+  }
+  // An older API can serve the Web during rollout. It only knows the original profiles.
+  if (!inventory.installed.includes(model)) return undefined;
+  const verified = inventory.verified_installations?.includes(model) ?? false;
+  return { model, revision, verified, probe: verified ? inventory.probes.find(item => item.model === model) ?? null : null };
 }
 
 export function LocalModelCatalog({ devices, csrf, onCsrf }: {
@@ -47,8 +69,14 @@ export function LocalModelCatalog({ devices, csrf, onCsrf }: {
   const [pending, setPending] = useState(false);
   const [installPending, setInstallPending] = useState(false);
   const [installStatus, setInstallStatus] = useState("");
-  const lastQuery = useRef("");
+  const [appliedQuery, setAppliedQuery] = useState<CatalogQuery | null>(null);
   const busy = useRef(false);
+  const parameters = new URLSearchParams({
+    search: search.trim(), language, sort, supported: String(supported || speakers || timestamps || compatible),
+  }).toString();
+  const draftQuery = { parameters, supported, speakers, timestamps, compatible,
+    key: JSON.stringify([parameters, supported, speakers, timestamps, compatible]) };
+  const queryChanged = appliedQuery !== null && appliedQuery.key !== draftQuery.key;
   async function requestInstall(profile: NonNullable<CatalogItem["studio"]>) {
     if (!device || installPending) return;
     setInstallPending(true); setInstallStatus("");
@@ -81,14 +109,14 @@ export function LocalModelCatalog({ devices, csrf, onCsrf }: {
   }, [device]);
 
   async function load(cursor?: string) {
-    if (busy.current) return;
+    const requested = cursor ? appliedQuery : draftQuery;
+    if (busy.current || !requested || (cursor && queryChanged)) return;
     busy.current = true; setPending(true); setError("");
-    const query = cursor ? new URLSearchParams(lastQuery.current)
-      : new URLSearchParams({ search: search.trim(), language, sort, supported: String(supported || speakers || timestamps || compatible) });
+    const query = new URLSearchParams(requested.parameters);
     if (cursor) query.set("cursor", cursor);
     try {
       const page = await api<CatalogPage>(`/local-execution/catalog?${query}`);
-      if (!cursor) lastQuery.current = query.toString();
+      if (!cursor) setAppliedQuery(requested);
       setItems(previous => cursor ? [...(previous ?? []), ...page.items.filter(item => !previous?.some(row => row.id === item.id))] : page.items);
       setNext(page.next_cursor);
     } catch {
@@ -97,9 +125,9 @@ export function LocalModelCatalog({ devices, csrf, onCsrf }: {
       busy.current = false; setPending(false);
     }
   }
-  const visible = items?.filter(item => (!supported || item.studio)
-    && (!speakers || item.studio?.diarization) && (!timestamps || item.studio?.word_timestamps)
-    && (!compatible || suitability(item, inventory).startsWith("Подходит")));
+  const visible = items?.filter(item => (!appliedQuery?.supported || item.studio)
+    && (!appliedQuery?.speakers || item.studio?.diarization) && (!appliedQuery?.timestamps || item.studio?.word_timestamps)
+    && (!appliedQuery?.compatible || suitability(item, inventory).startsWith("Подходит")));
   return <details>
     <summary>Каталог локальных речевых моделей</summary>
     <p>Поиск по всем моделям распознавания речи Hugging Face. Запуск в Studio доступен для поддерживаемых профилей.</p>
@@ -127,25 +155,40 @@ export function LocalModelCatalog({ devices, csrf, onCsrf }: {
     {pending && <p role="status">Загружаем каталог…</p>}
     {error && <p role="alert">{error}</p>}
     {installStatus && <p role="status">{installStatus}</p>}
+    {queryChanged && <p>Показаны результаты предыдущего поиска. Нажмите «Найти модели», чтобы применить новые параметры.</p>}
     {!pending && visible?.length === 0 && <p>На этой странице нет моделей по заданным фильтрам.</p>}
     {visible && <ul className="local-device-list">{visible.map(item => {
-      const probe = inventory?.probes.find(value => value.model === item.studio?.model);
+      const version = installedVersion(inventory, item.studio);
+      const probe = version?.verified ? version.probe : null;
+      const otherVersions = inventory?.model_versions?.filter(value => value.model === item.studio?.model
+        && value.revision !== item.studio?.revision) ?? [];
+      const installationLabel = !inventory ? "нет данных" : version?.verified ? "файлы проверены"
+        : version ? "файлы обнаружены, проверка не подтверждена" : "не подтверждена";
       return <li key={item.id}>
       <p><a href={item.source_url} target="_blank" rel="noreferrer">{item.studio?.name ?? item.id}</a></p>
       <p>{item.studio ? "Есть профиль Studio" : "Запуск в Studio пока не поддерживается"}</p>
-      {item.studio && <p>Совместимость: {suitability(item, inventory)}. Установка: {inventory
-        ? (inventory.installed.includes(item.studio.model) ? "файлы проверены" : "не подтверждена") : "нет данных"}.</p>}
+      {item.studio && <p>Совместимость: {suitability(item, inventory)}. Установка: {installationLabel}.</p>}
+      {otherVersions.length > 0 && <p>Другие версии на ПК: {otherVersions.map(value =>
+        `${value.revision.slice(0, 12)} (${value.verified ? "проверена" : "проверка не подтверждена"})`).join(", ")}.</p>}
       {item.studio && <p className="muted">Профиль использует CPU. {item.studio.diarization
         ? "Nemotron требует больше ресурсов и поддерживает разделение спикеров."
         : "Parakeet занимает меньше места. Этот профиль без разделения спикеров."}</p>}
       {probe && <p>Проба с холодным запуском: {probe.audio_seconds.toFixed(1)} с записи за {probe.elapsed_seconds.toFixed(1)} с.</p>}
-      {item.studio && device && !inventory?.installed.includes(item.studio.model) && <button type="button"
+      {item.studio && device && !version?.verified && <button type="button"
         disabled={installPending} onClick={() => { if (item.studio) void requestInstall(item.studio); }}>Установить на выбранном ПК</button>}
       <p>Языки {((item.studio?.languages ?? item.languages).join(", ")) || "не указаны"} · Лицензия {item.license ?? "не указана"}</p>
+      <p>Доступ на Hugging Face: {item.access === "public" ? "открытый"
+        : item.access === "gated" ? "по запросу или после принятия условий" : "не подтверждён"}.</p>
+      {item.studio && <p>Требования: {item.studio.platform ?? "платформа не указана"} · {item.studio.execution ?? "режим не указан"} ·
+        RAM {gib(item.studio.min_ram_bytes ?? null)} · предел записи {item.studio.max_audio_seconds == null
+          ? "не указан" : `${item.studio.max_audio_seconds / 60} мин`}.</p>}
+      {item.studio?.weights_url && <p><a href={item.studio.weights_url} target="_blank" rel="noreferrer">
+        Файлы закреплённой ревизии и условия использования
+      </a></p>}
       <p>Таймкоды {item.studio ? (item.studio.word_timestamps ? "есть" : "нет") : "не проверены"} · Разделение спикеров {item.studio ? (item.studio.diarization ? "есть" : "нет") : "не проверено"}</p>
       <p>Размер загрузки {item.studio ? `${(item.studio.download_bytes / 1073741824).toFixed(2)} ГиБ` : "не указан"} · Версия {(item.studio?.revision ?? item.hub_revision)?.slice(0, 12) ?? "не указана"}</p>
     </li>;
     })}</ul>}
-    {next && <button type="button" disabled={pending} onClick={() => void load(next)}>Показать ещё модели</button>}
+    {next && <button type="button" disabled={pending || queryChanged} onClick={() => void load(next)}>Показать ещё модели</button>}
   </details>;
 }

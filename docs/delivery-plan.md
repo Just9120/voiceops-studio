@@ -2,6 +2,14 @@
 
 ## Current work и checkpoint
 
+### PERSONAL-AUDIT-20261107 — Windows и recovery
+
+В рамках единой некоммерческой Goal этот этап покрывает F19, F92–F96, F98, F115 и UXR38/39. База `067065b353bf18397a69f194aa78c296793468de`, ветка `codex/personal-audit-20261107-windows`. F91 уже поставлен через PR #350, F87–F89 через PR #351. Следующие этапы общего аудита и их локальные материалы ведутся отдельно.
+
+Validation Plan и Evidence. Целевые portable Python checks из корня подтверждают точную ревизию устройства и задачи, recovery и trace (320 проверок API/схем в отдельном срезе, 94 проверки API/клиента/observability). В `apps/studio` прошли 13 Vitest, ESLint, TypeScript и production build. Два локальных Chromium сценария подтвердили контраст и фокус; запуск в Windows пришлось остановить после зависания на завершении. Smoke `0.1.3` подтвердил установку на Windows владельца, хеши FFmpeg/FFprobe и загрузку отдельного `pystray`. После F115 замороженный EXE повторно прошёл `--self-test`. Этим тестам соответствуют `c845eba`, `075e1ee`, `b834c9b`, `02b1933`, `e177515` и `e781481`.
+
+Оставшиеся gates. Перед merge требуются точные результаты `ci-required` и migration rehearsal для `0045_personal_audit` → `0046_local_model_revision` по [validation](runbooks/validation.md). Linux/PostgreSQL — обязательная проверка, Windows shell preflight не запустился из-за отсутствующего компонента Git Bash. Перед применимым CD выполнить защищённую миграцию по [operations](runbooks/studio-platform-ops.md). Сначала поставить совместимый API, затем публиковать обычный установщик, собранный из чистой merge revision. Для F96/LSTT-07 ещё требуется чистая Windows x64 и штатная привязка, Hyper-V текущего ПК не доступен. Smoke-артефакты не предназначены для выдачи. Готовность по `main` пересчитывается после merge. Ниже сохранён исходный checkpoint Windows-этапа PR #349.
+
 ### PERSONAL-WINDOWS-STT-20261107 — IN_PROGRESS
 
 Основание 07Nov: владелец поручил весь остаток personal одной Goal и одним основным PR. Встроенная Goal активирована. Scope — LSTT-01…16 по требованиям от 5 ноября, регрессия NEM-01…04. База `f2e222e8e4173c86dd70e9f5934629948703ba62`, существующая локальная ветка `codex/windows-stt-device-enrollment`. PR348 уже в базе и в personal. Закрытый выпуск: версия Windows x64 скачивается из авторизованного Studio владельцем, маркирована как неподписанная и сопровождается SHA-256. Покупка сертификата не входит в scope.

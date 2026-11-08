@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from .models import LocalExecutionDevice, User, UserStatus
-from .local_model_identity import MODEL_REVISIONS
+from .local_model_identity import INITIAL_MODEL_REVISIONS, is_supported_model_revision
 
 DEVICE_ONLINE_SECONDS = 90
 MAX_ACTIVE_DEVICES = 8
@@ -26,13 +26,20 @@ def _secret(device_id):
     return raw, hashlib.sha256(raw.encode("ascii")).hexdigest()
 
 
+def device_model_identity(row):
+    # Rows written before explicit revision tracking can only represent the
+    # original revision. A later catalog promotion must not change their meaning.
+    return row.model, row.model_revision or INITIAL_MODEL_REVISIONS.get(row.model)
+
+
 def device_payload(row, *, now):
     online = bool(row.revoked_at is None and row.last_seen_at is not None
                   and _utc(now) - timedelta(seconds=DEVICE_ONLINE_SECONDS) <= _utc(row.last_seen_at) <= _utc(now))
+    model, revision = device_model_identity(row)
     return {"id": row.id, "label": row.label, "credential_revision": row.credential_revision,
-            "online": online, "ready": bool(online and row.runtime_status == "ready" and row.model in MODEL_REVISIONS),
-            "runtime_status": row.runtime_status, "runtime_version": row.runtime_version, "model": row.model,
-            "model_revision": MODEL_REVISIONS.get(row.model),
+            "online": online, "ready": bool(online and row.runtime_status == "ready" and is_supported_model_revision(model, revision)),
+            "runtime_status": row.runtime_status, "runtime_version": row.runtime_version, "model": model,
+            "model_revision": revision,
             "last_seen_at": _utc(row.last_seen_at).isoformat() if row.last_seen_at else None,
             "revoked_at": _utc(row.revoked_at).isoformat() if row.revoked_at else None}
 
@@ -82,13 +89,13 @@ def owned_device(db, *, owner_user_id, device_id, lock=False):
     return row
 
 
-def require_ready_device(db, *, owner_user_id, device_id, now, lock=False, model=None):
+def require_ready_device(db, *, owner_user_id, device_id, now, model, revision, lock=False):
     if not device_id:
         raise HTTPException(422, detail={"reason": "local_device_required"})
     row = owned_device(db, owner_user_id=owner_user_id, device_id=device_id, lock=lock)
     if not device_payload(row, now=now)["ready"]:
         raise HTTPException(409, detail={"reason": "local_device_not_ready"})
-    if model is not None and row.model != model:
+    if device_model_identity(row) != (model, revision):
         raise HTTPException(409, detail={"reason": "local_device_model_changed"})
     return row
 
@@ -100,7 +107,7 @@ def rotate_device(row, *, expected_revision, now):
     row.credential_revision += 1
     row.last_seen_at = None
     row.runtime_status = "unknown"
-    row.runtime_version = row.model = None
+    row.runtime_version = row.model = row.model_revision = None
     row.updated_at = now
     return raw
 
