@@ -39,7 +39,7 @@ with patch("socket.socket.connect", side_effect=AssertionError("Unexpected netwo
 """
 
 
-def main() -> None:
+def colab_lock_name() -> str:
     version = sys.version_info[:2]
     if (
         platform.system() != "Linux"
@@ -48,22 +48,31 @@ def main() -> None:
         or version not in {(3, 12), (3, 13)}
     ):
         raise SystemExit("Colab dependency qualification requires Linux x86_64 with CPython 3.12 or 3.13.")
-    lock = ROOT / f"requirements-colab-linux-x64-py{version[0]}.{version[1]}.lock"
+    return f"requirements-colab-linux-x64-py{version[0]}.{version[1]}.lock"
+
+
+def install_locked_colab_python(lock: Path, directory: Path) -> Path:
+    venv.EnvBuilder(with_pip=True).create(directory)
+    interpreter = directory / "bin" / "python"
+    environment = dict(os.environ, PIP_CONFIG_FILE=os.devnull)
+    pip = [str(interpreter), "-I", "-m", "pip", "--isolated", "--disable-pip-version-check"]
+    subprocess.run(
+        [
+            *pip, "install", "--no-input", "--require-hashes", "--only-binary=:all:",
+            "--index-url", "https://pypi.org/simple", "-r", str(lock),
+        ],
+        env=environment, check=True, timeout=300,
+    )
+    subprocess.run([*pip, "check"], env=environment, check=True, timeout=30)
+    return interpreter
+
+
+def main() -> None:
+    lock = ROOT / colab_lock_name()
     with TemporaryDirectory(prefix="voiceops-colab-dependencies-") as directory:
-        venv.EnvBuilder(with_pip=True).create(directory)
-        interpreter = Path(directory) / "bin" / "python"
-        environment = dict(os.environ, PIP_CONFIG_FILE=os.devnull)
-        pip = [str(interpreter), "-I", "-m", "pip", "--isolated", "--disable-pip-version-check"]
-        subprocess.run(
-            [
-                *pip, "install", "--no-input", "--require-hashes", "--only-binary=:all:",
-                "--index-url", "https://pypi.org/simple", "-r", str(lock),
-            ],
-            env=environment, check=True, timeout=300,
-        )
-        subprocess.run([*pip, "check"], env=environment, check=True, timeout=30)
+        interpreter = install_locked_colab_python(lock, Path(directory))
         subprocess.run([str(interpreter), "-I", "-c", SMOKE], check=True, timeout=30)
-    print(f"Colab {version[0]}.{version[1]} isolated dependency qualification passed.")
+    print(f"Colab isolated dependency qualification passed for {lock.name}.")
 
 
 if __name__ == "__main__":
