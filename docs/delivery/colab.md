@@ -18,7 +18,7 @@
 | `CB-10` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `CB-11` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `CB-12` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
-| `CB-13` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
+| `CB-13` | READY | PASS | PASS | PASS | PR351/main `067065b`, exact CI42419498462: atomic guard, concurrent dispatch, lost acknowledgment and explicit recovery. Published launcher pin/hash PASS. Shared guard setup required before a paid run. |
 | `CB-14` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `CB-15` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `CB-16` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
@@ -27,8 +27,8 @@
 | `CB-19` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `CB-20` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `CB-21` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
-| `CB-22` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
-| `CB-23` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
+| `CB-22` | READY | PASS | PASS | PASS | PR351/main `067065b`, exact CI confirms known date retained and unknown omitted. Published launcher pin/hash PASS. |
+| `CB-23` | READY | PASS | PASS | PASS | PR351/main `067065b`, exact CI verifies folder preview, stale revision and atomic rejection. Published launcher pin/hash PASS. |
 | `CB-24` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 
 ### `COLAB-REALTIME-01`
@@ -40,7 +40,7 @@
 | `CR-03` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `CR-04` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
 | `CR-05` | READY | ✅ | ◐ | ✅ | Код реализован; subsystem checks есть, полный сценарий LIVE отдельно не проверен |
-| `CR-06` | READY | ✅ | ◐ | ✅ | CODE 84ae25f: elevenlabs_realtime.py:375–405 — attempt ownership, cleanup, abort; timeout/source-end/backpressure guards. Static tests есть; full physical capture matrix отдельно не наблюдалась |
+| `CR-06` | IN_PROGRESS | PASS | PARTIAL | PASS | 08Nov, Windows Chrome 157 и runtime `067065b`: 6/6 loopback cycles с synthetic MediaStream и committed response. Denial и Stop при pending capture проверены с подменой media APIs. Матрица с реальными разрешениями/источниками, Colab proxy и ElevenLabs остаётся открыта. |
 
 ### `COLAB-LIFECYCLE-02`
 
