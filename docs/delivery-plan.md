@@ -2,9 +2,11 @@
 
 ## Current work и checkpoint
 
-### PERSONAL-AUDIT-20261107 — F99 / STORAG-04
+### PERSONAL-AUDIT-20261107 — release candidate
 
 Base `d4f2f247123901db53bf0201f95c7c7dc7902c37`, ветка `codex/personal-audit-storage`, отдельный worktree `.tmp/personal-audit-storage`. Поставка этапа #353 подтверждена main CI42460137150. Selector 42460171518 пропустил production для docs-only изменений. Предыдущие локальные материалы аудита сохранены отдельно.
+
+Scope кандидата: F90, CR-06, F97, F99/STORAG-04. Локальная validation всего diff: 422 focused portable pytest PASS, lightweight CI PASS, `git diff --check` PASS. Exact Batch digest guard отверг повреждённый checksum. Required: exact PR `ci-required`, merge commit с сохранением Colab pins, exact main CI, raw readback Colab, применимая поставка API/worker по runbook. Параметры Cloudflare и activation orphan cleanup остаются вне этой поставки. Независимые незавершённые F62/F66/F96 остаются в общей Goal.
 
 Локальный этап F99 защищает ручную сверку. Ограничены запросы листинга при пустых страницах с меняющимся cursor. Проверка физического ключа учитывает ссылки обоих классов и всех владельцев, в том числе ссылки, появившиеся во время HEAD. Отсутствие ETag запрещает удаление кандидата. Portable Python: 29 PASS для `test_studio_storage_reconciliation.py` и `test_studio_reference_storage.py` с synthetic SQLite и подменой storage. Lightweight CI checks и `git diff --check` PASS. Поставки нет.
 
@@ -36,9 +38,7 @@ F91 поставлен в PR #350 на `ddd2e97`. F87–F89 поставлены
 
 На main `7d02060` подтверждены 459 из 493 действующих некоммерческих AC. Все 345 унаследованных READY квалифицированы индивидуально. В этом срезе 34 AC остаются открыты. Подробное Evidence по критериям находится в реестрах. Редакция Q331 зафиксирована в [source trace](spec/source-trace.md#сверка-от-7-ноября-2026).
 
-Текущий этап F19/F42/F86. База `7d020606293b1773e80883e7a348076347a58181`, ветка `codex/personal-audit-register`. Объём — правила репозитория, канонические процедуры и реестр AC/findings. DoD включает проверку маршрутизации документов, идентичности AC, применимых правил, обязательный GitHub CI и merge. CD для документационного diff неприменим. После merge остаются F62, F66, F90, F96, F97, F99 и связанные с ними проверки. CR-06 имеет синтетическое browser evidence, фактический сценарий Colab и Windows ещё открыт.
-
-Validation Plan. REQUIRED локально из корня — `git diff --check`, `python scripts/ci_checks.py`, сверка изменённых относительных ссылок, стабильных AC и scope. REQUIRED remote — `ci-required` для PR и main согласно [validation runbook](runbooks/validation.md). Production CD для этого PR — N/A по отсутствию изменений runtime.
+Документационный этап F19/F42/F86 опубликован PR #353. После merge остаются F62, F66, F90, F96, F97, F99 и связанные с ними проверки. CR-06 имеет синтетическое browser evidence, фактический сценарий Colab и Windows ещё открыт. Проверки поставки выполняются согласно [validation runbook](runbooks/validation.md).
 
 ### PERSONAL-WINDOWS-STT-20261107 — IN_PROGRESS
 

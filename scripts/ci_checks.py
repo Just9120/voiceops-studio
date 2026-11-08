@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import ast
+import hashlib
 import json
 import re
 import shutil
@@ -74,7 +76,33 @@ def check_colab_release_refs() -> None:
         )
         if ancestor.returncode:
             fail(f"{path.name} release {refs[0]} is outside the checked-out branch history.")
+        if path == NOTEBOOK_PATH:
+            check_batch_artifact_hashes(git, refs[0], source)
     print("[ci-checks] Colab release ancestry checks passed.")
+
+
+def check_batch_artifact_hashes(git: str, revision: str, source: str) -> None:
+    assignments = [
+        node.value for node in ast.parse(source).body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "ARTIFACT_SHA256" for target in node.targets)
+    ]
+    if len(assignments) != 1:
+        fail("Batch Colab launcher must define one artifact manifest.")
+    try:
+        manifest = ast.literal_eval(assignments[0])
+    except (ValueError, TypeError):
+        fail("Batch Colab artifact manifest must be a literal mapping.")
+    if not isinstance(manifest, dict) or not manifest:
+        fail("Batch Colab artifact manifest is empty or invalid.")
+    for artifact, digest in manifest.items():
+        if not isinstance(artifact, str) or not isinstance(digest, str):
+            fail("Batch Colab artifact names and digests must be strings.")
+        result = subprocess.run(
+            [git, "show", f"{revision}:{artifact}"], cwd=ROOT, capture_output=True,
+        )
+        if result.returncode or hashlib.sha256(result.stdout).hexdigest() != digest:
+            fail(f"Batch Colab artifact {artifact} does not match the reviewed release digest.")
 
 
 def check_launcher_notebook() -> None:
