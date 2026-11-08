@@ -2,6 +2,12 @@
 
 ## Current work и checkpoint
 
+### Ротация предмиграционных снимков Studio
+
+Поручение владельца 08Nov2026: сохранить Restic и оставить пять последних предмиграционных снимков. Base `dc0eb90`, ветка `codex/studio-restic-retention`. DoD: штатная ротация после успешной поставки миграции, безопасная разовая очистка текущего набора с проверкой сохраняемых снимков и итогового количества. Плановые снимки и CloudKeep вне scope. REQUIRED: Bash syntax и целевые backup/migration tests из корня, `ci-required` для PR, read-only preview Restic и readback на Contabo. Новая миграция для проверки политики не требуется.
+
+Contabo dry-run: 28 предмиграционных снимков, 5 сохраняемых PostgreSQL-архивов читаются, 23 кандидата, 20 плановых снимков вне политики. Bash syntax на Linux, lightweight и локальные статические проверки PASS. Полный сценарий Bash проходит в Linux CI: в локальном Windows отсутствует исполняемый файл Git Bash. Required CI и merge ожидаются.
+
 ### PERSONAL-AUDIT-20261107 — release candidate
 
 Base `d4f2f247123901db53bf0201f95c7c7dc7902c37`, ветка `codex/personal-audit-storage`, отдельный worktree `.tmp/personal-audit-storage`. Поставка этапа #353 подтверждена main CI42460137150. Selector 42460171518 пропустил production для docs-only изменений. Предыдущие локальные материалы аудита сохранены отдельно.

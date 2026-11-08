@@ -547,9 +547,12 @@ The historical Studio backup schedule is defined by
 [studio-postgres-backup.timer](../../deploy/studio/systemd/studio-postgres-backup.timer):
 every 10 hours after the previous activation. The
 [backup script](../../scripts/backup_studio_postgres_r2.sh) keeps scheduled
-snapshots within 7 days, 30 daily and 12 monthly snapshots; pre-migration
-snapshots are kept within 90 days. These retention rules are not a fixed expiry
-for every snapshot. Repository configuration alone does not prove that the
+snapshots within 7 days, 30 daily and 12 monthly snapshots. After a successful
+migration release and its post-checks, Restic keeps the latest five snapshots
+for `studio-postgres` with both `studio-postgres` and `pre-migration` tags and
+prunes unreferenced data. A retention warning requires checking the snapshot
+list and repository before retrying cleanup. It does not invalidate a completed
+migration or justify repeating it. Repository configuration alone does not prove that the
 host timer is enabled or that a scheduled backup succeeded. Confirm those
 conditions and the latest snapshot age from host/backup records before recovery.
 The former fixed12-hour personal RPO and10-hour Studio schedule were superseded
