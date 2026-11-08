@@ -14,6 +14,8 @@ Base `d4f2f247123901db53bf0201f95c7c7dc7902c37`, ветка `codex/personal-audi
 
 F90: локальный Realtime launcher закреплён на `d4f2f24`, достижимом из `origin/main`. Realtime runtime побайтово совпадает с прежним pin `09a21c9`; его SHA-256 не меняется. Batch pin `613f20b` также в ancestry main. Три raw-файла обоих лаунчеров проверены по публичному HTTP200 и SHA-256, 65 launcher/realtime tests и lightweight checks PASS. Открытая часть F90 — воспроизводимые batch-зависимости без замены пакетов ядра и бесплатная проверка запуска в чистой сессии Colab. Платные операции не запускались.
 
+F90 qualification: существующая lightweight CI-проверка в полном checkout отклоняет pins вне истории HEAD. Реальные pins проходят, прежний realtime pin отклонён в negative probe. Batch candidate в отдельном CPython 3.12 Windows venv без system site-packages установлен офлайн из 21 проверенного wheel через `--require-hashes`, `pip check` PASS. Изолированные Google/requests imports, построение Drive и Docs requests через встроенные discovery docs и STT multipart с повторяемыми keyterms проверены без OAuth и сети. OAuthlib отсутствует в минимальном кандидате. Результат подтверждает сам пакетный граф, но не интеграцию с живым Colab kernel/auth/widget lifecycle. Локальный артефакт вне tracked tree, `.tmp/f90-native-proof`. Следующий шаг — безопасная граница Batch bootstrap и проверка на Colab Linux.
+
 ### PERSONAL-AUDIT-20261107 — ACTIVE
 
 Владелец выбрал весь некоммерческий остаток аудита от 7 ноября. Goal охватывает F19, F42, F62, F66, F86–F99, UXR38–UXR39 и перечисленные в реестрах критерии. Проверка F42 охватывает все 345 унаследованных READY. Платный эксперимент и внешняя почта зависят от отдельных условий. Commercial и отозванная идентификация спикеров вне Goal.

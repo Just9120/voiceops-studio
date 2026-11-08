@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -45,6 +47,34 @@ def check_notebooks() -> None:
                 fail(f"Notebook has execution_count set: {rel} cell #{idx} -> {exec_count}")
 
     print(f"[ci-checks] Notebook JSON + clean output checks passed ({len(notebook_paths)} file(s)).")
+
+
+def check_colab_release_refs() -> None:
+    git = shutil.which("git")
+    if git is None:
+        print("[ci-checks] Colab release ancestry requires Git; skipped.")
+        return
+    checkout = subprocess.run(
+        [git, "rev-parse", "--is-shallow-repository"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    if checkout.returncode or checkout.stdout.strip() != "false":
+        print("[ci-checks] Colab release ancestry requires full Git history; skipped.")
+        return
+
+    for path in (NOTEBOOK_PATH, REALTIME_NOTEBOOK_PATH):
+        notebook = json.loads(path.read_text(encoding="utf-8"))
+        source = "\n".join("".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code")
+        refs = re.findall(r'^GITHUB_REF\s*=\s*["\']([0-9a-f]{40})["\']', source, re.MULTILINE)
+        if len(refs) != 1:
+            fail(f"{path.name} must pin exactly one full Git commit.")
+        ancestor = subprocess.run(
+            [git, "merge-base", "--is-ancestor", refs[0], "HEAD"],
+            cwd=ROOT, capture_output=True,
+        )
+        if ancestor.returncode:
+            fail(f"{path.name} release {refs[0]} is outside the checked-out branch history.")
+    print("[ci-checks] Colab release ancestry checks passed.")
 
 
 def check_launcher_notebook() -> None:
@@ -252,6 +282,7 @@ def main() -> int:
         check_notebooks()
         check_launcher_notebook()
         check_realtime_launcher_notebook()
+        check_colab_release_refs()
         check_realtime_runtime_boundaries()
         check_no_raw_provider_body_logging()
         check_temp_cleanup_patterns()
