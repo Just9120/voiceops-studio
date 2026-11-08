@@ -558,6 +558,41 @@ def test_realtime_mixed_source_stale_acquisition_cleanup_and_source_reset() -> N
     assert "setSourceControlsDisabled(false); updateSourceUi();" in js
 
 
+def test_capture_cancelled_between_permission_and_registration_releases_both_streams() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available for generated JavaScript validation")
+    js = realtime.build_realtime_frontend_javascript(None, realtime.create_realtime_colab_root_id())
+    cleanup = js[js.index("  function stopStream("):js.index("  function resetUiAfterAttempt(")]
+    capture = js[js.index("  async function buildCaptureStream("):js.index("  function isPermissionCancellation(")]
+    setup = """
+const assert = require('node:assert/strict');
+const stopped = [];
+const makeStream = name => ({getTracks: () => [{
+    addEventListener() {},
+    stop() { stopped.push(name); },
+}]});
+const attempt = {active: true, mediaStreams: [], trackEndListeners: []};
+const isAttemptActive = a => a.active;
+const assertAttemptActive = a => { if (!isAttemptActive(a)) throw Error('STALE_ATTEMPT'); };
+const hasDisplayAudio = () => true;
+const hasInputAudio = () => true;
+const getDisplayAudioStream = async () => makeStream('display');
+const getInputAudioStream = async () => {
+    queueMicrotask(() => { attempt.active = false; });
+    return makeStream('input');
+};
+"""
+    verify = """
+(async () => {
+    await assert.rejects(buildCaptureStream(attempt), /STALE_ATTEMPT/);
+    assert.deepEqual(stopped, ['input', 'display']);
+    assert.equal(attempt.mediaStreams.length, 1);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    subprocess.run([node, "-"], input=setup + cleanup + capture + verify, encoding="utf-8", check=True, timeout=10)
+
+
 def test_realtime_source_track_end_stops_entire_attempt_and_removes_listeners() -> None:
     js = realtime.build_realtime_frontend_javascript("temporary-token", realtime.create_realtime_colab_root_id())
 

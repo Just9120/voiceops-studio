@@ -477,7 +477,7 @@ def _build_realtime_app_javascript(root_id: str, config_setup_js: str, *, async_
   async function buildCaptureStream(attempt) {{
     const streams = [];
     function registerCapturedStream(stream, sourceLabel) {{
-      assertAttemptActive(attempt);
+      if (!isAttemptActive(attempt)) {{ stopStream(stream); throw new Error('STALE_ATTEMPT'); }}
       stream.getTracks().forEach((track) => {{
         const listener = () => handleCapturedTrackEnded(attempt, sourceLabel);
         track.addEventListener('ended', listener, {{once: true}});
