@@ -2,7 +2,11 @@ import ast
 import hashlib
 from io import BytesIO
 import json
+import os
 from pathlib import Path
+import runpy
+import subprocess
+import sys
 from types import SimpleNamespace
 import urllib.request
 
@@ -82,3 +86,35 @@ def test_batch_launcher_wires_only_verified_lock_and_runtime(monkeypatch, capsys
         exec(code, {})
         assert "BATCH READY" in capsys.readouterr().out
         assert fetched == list(artifacts)
+
+
+def test_batch_install_uses_kernel_pip_when_target_has_no_ensurepip(monkeypatch, tmp_path):
+    installer = runpy.run_path("scripts/check_colab_dependency_install.py")
+    directory = tmp_path / "isolated"
+    lock = tmp_path / "synthetic.lock"
+    target = directory / "bin" / "python"
+    environments = []
+    calls = []
+
+    def create(builder, path):
+        assert path == directory
+        environments.append(builder)
+
+    def run(args, *, env, check, timeout):
+        assert env["PIP_CONFIG_FILE"] == os.devnull and check
+        assert "PYTHONPATH" not in env and "_PIP_RUNNING_IN_SUBPROCESS" not in env
+        calls.append((args, timeout))
+
+    monkeypatch.setenv("PYTHONPATH", "inherited-kernel-path")
+    monkeypatch.setenv("_PIP_RUNNING_IN_SUBPROCESS", "1")
+    monkeypatch.setattr(installer["venv"].EnvBuilder, "create", create)
+    monkeypatch.setattr(subprocess, "run", run)
+    assert installer["install_locked_colab_python"](lock, directory) == target
+    assert len(environments) == 1
+    assert not environments[0].with_pip and not environments[0].system_site_packages
+    pip = [sys.executable, "-I", "-m", "pip", "--python", str(target), "--isolated", "--disable-pip-version-check"]
+    assert calls == [
+        (pip + ["install", "--no-input", "--require-hashes", "--only-binary=:all:",
+                "--index-url", "https://pypi.org/simple", "-r", str(lock)], 300),
+        (pip + ["check"], 30),
+    ]

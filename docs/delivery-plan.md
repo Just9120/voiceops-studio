@@ -2,6 +2,12 @@
 
 ## Current work и checkpoint
 
+### F90 — запуск Batch на Google Colab
+
+08Nov2026, встроенный браузер, свежая CPU-среда Colab с CPython 3.13.18. Опубликованный launcher с pin `e868c48` остановился до Google auth и UI: `venv` вызывает отсутствующий `ensurepip`. Диагностическая установка исходного lock через pip ядра с `--python` в пустое окружение прошла, `pip check` и тестовый виджет PASS. Вызовов STT не было.
+
+Base `20ba0c5`, ветка `codex/colab-bootstrap-f90`, один PR. Scope: исправить установщик и pin Batch, сохранив hash-locked wheel-only установку и изоляцию. REQUIRED: focused tests и lightweight checks из корня, `ci-required`, публичная сверка pin/hash и свежий запуск Batch во встроенном Colab до виджетов после Google auth. Realtime, VPS и платные вызовы вне scope.
+
 ### Ротация предмиграционных снимков Studio
 
 Поручение владельца 08Nov2026: сохранить Restic и оставить пять последних предмиграционных снимков. Base `dc0eb90`, ветка `codex/studio-restic-retention`. DoD: штатная ротация после успешной поставки миграции, безопасная разовая очистка текущего набора с проверкой сохраняемых снимков и итогового количества. Плановые снимки и CloudKeep вне scope. REQUIRED: Bash syntax и целевые backup/migration tests из корня, `ci-required` для PR, read-only preview Restic и readback на Contabo. Новая миграция для проверки политики не требуется.

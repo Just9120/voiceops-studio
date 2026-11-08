@@ -52,10 +52,19 @@ def colab_lock_name() -> str:
 
 
 def install_locked_colab_python(lock: Path, directory: Path) -> Path:
-    venv.EnvBuilder(with_pip=True).create(directory)
+    # Hosted Colab supplies pip in the kernel but may omit ensurepip.
+    venv.EnvBuilder(with_pip=False).create(directory)
     interpreter = directory / "bin" / "python"
-    environment = dict(os.environ, PIP_CONFIG_FILE=os.devnull)
-    pip = [str(interpreter), "-I", "-m", "pip", "--isolated", "--disable-pip-version-check"]
+    # pip relaunches under the target interpreter without inheriting Python's -I.
+    environment = {
+        name: value for name, value in os.environ.items()
+        if not name.startswith("PYTHON") and name != "_PIP_RUNNING_IN_SUBPROCESS"
+    }
+    environment["PIP_CONFIG_FILE"] = os.devnull
+    pip = [
+        sys.executable, "-I", "-m", "pip", "--python", str(interpreter),
+        "--isolated", "--disable-pip-version-check",
+    ]
     subprocess.run(
         [
             *pip, "install", "--no-input", "--require-hashes", "--only-binary=:all:",
