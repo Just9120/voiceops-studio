@@ -2,6 +2,12 @@
 
 ## Current work и checkpoint
 
+### F96 — привязка из чистой Windows Sandbox
+
+10Nov2026: Windows Sandbox x64 без VoiceOps, Python и FFmpeg. Установлен выданный Studio артефакт 0.1.3, SHA-256 совпал. FFmpeg/FFprobe и `--self-test` PASS. DNS и `/api/healthz` доступны из гостя. Начало привязки из Companion отклонено Cloudflare HTTP 403 / 1010. С тем же тестовым телом явный User-Agent VoiceOps достигает валидации Studio (`422`), стандартный Python urllib — нет. Реальное устройство не создано.
+
+Base `977dcd8`, ветка `codex/f96-companion-user-agent`. Scope: идентифицировать клиент на запросах enrollment и companion, сохранить авторизацию и конфигурацию edge. REQUIRED: целевые protocol/enrollment tests, lightweight checks и `ci-required`; чистая Windows и повторная привязка проверяются на исправленном Setup. Без платного STT.
+
 ### F90 — запуск Batch на Google Colab
 
 08Nov2026, встроенный браузер, свежая CPU-среда Colab с CPython 3.13.18. Опубликованный launcher с pin `e868c48` остановился до Google auth и UI: `venv` вызывает отсутствующий `ensurepip`. Диагностическая установка исходного lock через pip ядра с `--python` в пустое окружение прошла, `pip check` и тестовый виджет PASS. Вызовов STT не было.

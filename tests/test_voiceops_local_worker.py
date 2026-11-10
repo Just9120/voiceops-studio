@@ -109,6 +109,32 @@ def test_worker_forwards_only_a_valid_trace_for_the_claimed_job(monkeypatch):
     assert client.open("/heartbeat") is None
 
 
+def test_studio_requests_identify_the_companion_during_and_after_enrollment(monkeypatch):
+    from local_worker import enrollment, protocol
+
+    request_id = str(uuid4())
+    replies = [
+        {"request_id": request_id, "expires_in": 300},
+        {"status": "connected", "device": {"id": request_id}},
+        {"ready": True},
+    ]
+    paths = []
+
+    class Capture:
+        def open(self, request, *, timeout):
+            assert request.get_header("User-agent") == "VoiceOpsStudio-Companion/1"
+            assert request.get_header("X-voiceops-local-protocol") == "1"
+            paths.append(request.selector)
+            return io.BytesIO(json.dumps(replies.pop(0)).encode())
+
+    monkeypatch.setattr(protocol.urllib.request, "build_opener", lambda *_: Capture())
+    base = "https://studio.test"
+    identity = enrollment.begin_enrollment("Sandbox", studio_origin=base).finish()
+    assert StudioClient(base, identity["token"]).json("/heartbeat") == {"ready": True}
+    assert paths == [enrollment.ENROLLMENT_PATH, f"{enrollment.ENROLLMENT_PATH}/{request_id}/finish",
+                     f"{protocol.COMPANION_PATH}/heartbeat"]
+
+
 def test_companion_keeps_active_revision_when_another_is_installed_or_removed(tmp_path, monkeypatch):
     pytest.importorskip("tkinter")
     from queue import SimpleQueue
