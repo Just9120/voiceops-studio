@@ -317,10 +317,9 @@ def merge_elevenlabs_transcript_results(
         drop_count = 0
         if index:
             try:
-                drop_count = max(
-                    _duplicate_prefix_word_count(merged_words, current_words),
-                    _owned_overlap_prefix_count(current_words, overlap_seconds),
-                )
+                # Ownership ends at the actual overlap boundary. Identical
+                # words after that boundary are separate speech.
+                drop_count = _owned_overlap_prefix_count(current_words, overlap_seconds)
             except ElevenLabsTranscriptionError as exc:
                 raise ElevenLabsTranscriptionError(
                     exc.reason, assembly_code="transcript_overlap_timestamps_missing",
@@ -412,19 +411,6 @@ def _optional_timestamp(value: Any) -> float | None:
     return float(value)
 
 
-def _duplicate_prefix_word_count(
-    previous_words: Sequence[_WordData],
-    current_words: Sequence[_WordData],
-) -> int:
-    max_overlap = min(24, len(previous_words), len(current_words))
-    for count in range(max_overlap, 0, -1):
-        previous = _normalized_word_window(previous_words[-count:])
-        current = _normalized_word_window(current_words[:count])
-        if previous and previous == current:
-            return count
-    return 0
-
-
 def _owned_overlap_prefix_count(
     words: Sequence[_WordData],
     overlap_seconds: float,
@@ -448,17 +434,6 @@ def _owned_overlap_prefix_count(
             ElevenLabsTranscriptionReason.malformed_provider_response,
         )
     return drop_count
-
-
-def _normalized_word_window(words: Sequence[_WordData]) -> str:
-    return " ".join(
-        token
-        for token in (
-            " ".join(word.text.split()).casefold()
-            for word in words
-        )
-        if token
-    )
 
 
 def _shift_timestamp(value: float | None, offset: float) -> float | None:

@@ -1,9 +1,13 @@
 """Shared read/resolve contract for an acknowledged later transcription result."""
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from .models import JobStatus, TranscriptionJob, TranscriptionJobOutput, TranscriptionJobSource
-from .transcript_catalog import TRANSCRIPT_OUTPUT_KINDS
+from .models import (
+    JobSourceStatus, JobStatus, OutputReconciliationStatus, TranscriptionJob,
+    TranscriptionJobOutput, TranscriptionJobSource, TranscriptionOutputReconciliation,
+)
+from .transcript_catalog import GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND
+from .transcript_docx import DOCX_OUTPUT_KIND
 
 
 def confirmed_later_results_query(db: Session, job: TranscriptionJob):
@@ -15,15 +19,34 @@ def confirmed_later_results_query(db: Session, job: TranscriptionJob):
         .correlate(TranscriptionJob)
         .scalar_subquery()
     )
-    output_exists = (
-        select(TranscriptionJobOutput.id)
+    google_receipt = (
+        select(TranscriptionOutputReconciliation.id)
         .where(
-            TranscriptionJobOutput.job_id == TranscriptionJob.id,
-            TranscriptionJobOutput.output_kind.in_(TRANSCRIPT_OUTPUT_KINDS),
+            TranscriptionOutputReconciliation.resolved_output_id == TranscriptionJobOutput.id,
+            TranscriptionOutputReconciliation.status == OutputReconciliationStatus.resolved,
+            TranscriptionOutputReconciliation.expected_output_provider == "google_drive",
+            TranscriptionOutputReconciliation.expected_document_sha256.is_not(None),
         )
-        .correlate(TranscriptionJob)
+        .correlate(TranscriptionJobOutput)
         .exists()
     )
+    verified_output = (
+        select(TranscriptionJobOutput.id)
+        .where(
+            TranscriptionJobOutput.job_source_id == TranscriptionJobSource.id,
+            TranscriptionJobOutput.job_id == TranscriptionJobSource.job_id,
+            or_(
+                TranscriptionJobOutput.output_kind == DOCX_OUTPUT_KIND,
+                (TranscriptionJobOutput.output_kind == GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND) & google_receipt,
+            ),
+        )
+        .correlate(TranscriptionJobSource)
+        .exists()
+    )
+    required_source = select(TranscriptionJobSource.id).where(
+        TranscriptionJobSource.job_id == TranscriptionJob.id,
+        TranscriptionJobSource.status != JobSourceStatus.skipped,
+    ).correlate(TranscriptionJob)
     query = db.query(TranscriptionJob).filter(
         TranscriptionJob.owner_user_id == job.owner_user_id,
         TranscriptionJob.project_id == job.project_id,
@@ -33,7 +56,8 @@ def confirmed_later_results_query(db: Session, job: TranscriptionJob):
         TranscriptionJob.media_clip_start_seconds.is_not_distinct_from(job.media_clip_start_seconds),
         TranscriptionJob.media_clip_end_seconds.is_not_distinct_from(job.media_clip_end_seconds),
         source_count == len(sources),
-        output_exists,
+        required_source.exists(),
+        ~required_source.where(~verified_output).exists(),
     )
     if not sources:
         return query.filter(False)

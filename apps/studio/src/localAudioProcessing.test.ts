@@ -17,6 +17,20 @@ function pcm(values: number[][], sampleRate = 10): PcmAudio {
   return { sampleRate, channels: values.map((channel) => Float32Array.from(channel)) };
 }
 
+function wavFile(filename: string, samples = 2, rate = 48_000) {
+  const blob = encodeWav({ sampleRate: rate, channels: [new Float32Array(samples)] });
+  const file = new File([blob], filename, { type: "audio/wav" });
+  Object.defineProperty(file, "arrayBuffer", {
+    value: () => new Promise<ArrayBuffer>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener("load", () => resolve(reader.result as ArrayBuffer));
+      reader.addEventListener("error", () => reject(reader.error));
+      reader.readAsArrayBuffer(blob);
+    }),
+  });
+  return file;
+}
+
 describe("browser-local audio processing", () => {
   afterEach(() => vi.unstubAllGlobals());
 
@@ -80,6 +94,7 @@ describe("browser-local audio processing", () => {
   it("keeps the orchestration browser-local and closes the decoder context", async () => {
     const close = vi.fn(async () => undefined);
     class FakeAudioContext {
+      sampleRate = 48_000;
       close = close;
       async decodeAudioData() {
         const channels = [Float32Array.from([0.2, -0.2])];
@@ -92,10 +107,7 @@ describe("browser-local audio processing", () => {
       }
     }
     vi.stubGlobal("AudioContext", FakeAudioContext);
-    const file = new File(["encoded"], "input.webm", { type: "audio/webm" });
-    Object.defineProperty(file, "arrayBuffer", {
-      value: async () => new TextEncoder().encode("encoded").buffer,
-    });
+    const file = wavFile("input.wav");
     const progress: number[] = [];
 
     const results = await processLocalAudioFiles(
@@ -111,8 +123,30 @@ describe("browser-local audio processing", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
-  it.each(["Исходная запись.webm", "Лекция 1. Тема.webm", "Лекция 1. Тема"])("uses the full source title for %s when the result name is empty", async (filename) => {
+  it("rejects unbounded formats and resampling above the memory limit before decoding", async () => {
+    const decode = vi.fn();
+    const close = vi.fn(async () => undefined);
     class FakeAudioContext {
+      sampleRate = 192_000;
+      decodeAudioData = decode;
+      close = close;
+    }
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    const compressed = new File(["OggS"], "compressed.ogg", { type: "audio/ogg" });
+    Object.defineProperty(compressed, "arrayBuffer", {
+      value: async () => new TextEncoder().encode("OggS").buffer,
+    });
+
+    await expect(processLocalAudioFiles([compressed], options())).rejects.toThrow("local_audio_unbounded_format");
+    await expect(processLocalAudioFiles([wavFile("resampled.wav", 790_000, 3_000)], options()))
+      .rejects.toThrow("local_audio_memory_limit");
+    expect(decode).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["Исходная запись.wav", "Лекция 1. Тема.wav", "Лекция 1. Тема"])("uses the full source title for %s when the result name is empty", async (filename) => {
+    class FakeAudioContext {
+      sampleRate = 48_000;
       async close() { return undefined; }
       async decodeAudioData() {
         const channel = Float32Array.from([0.2, -0.2]);
@@ -125,16 +159,13 @@ describe("browser-local audio processing", () => {
       }
     }
     vi.stubGlobal("AudioContext", FakeAudioContext);
-    const file = new File(["encoded"], filename, { type: "audio/webm" });
-    Object.defineProperty(file, "arrayBuffer", {
-      value: async () => new TextEncoder().encode("encoded").buffer,
-    });
+    const file = wavFile(filename);
 
     const [result] = await processLocalAudioFiles(
       [file],
       options({ operationMode: "separate", title: "" }),
     );
 
-    expect(result.filename).toBe(`${filename.endsWith(".webm") ? filename.slice(0, -5) : filename}.wav`);
+    expect(result.filename).toBe(`${filename.endsWith(".wav") ? filename.slice(0, -4) : filename}.wav`);
   });
 });

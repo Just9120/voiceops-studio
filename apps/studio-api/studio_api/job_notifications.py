@@ -9,18 +9,18 @@ import secrets
 import smtplib
 import socket
 import ssl
+from functools import partial
 from types import SimpleNamespace
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from typing import Callable
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
+from .job_notification_telegram import JobNotificationTransport, send_telegram_job_notification
 from .models import (
     JobNotificationDelivery,
     JobStatus,
@@ -60,6 +60,14 @@ def _utc_naive(value: datetime | None = None) -> datetime:
     if current.tzinfo is not None:
         current = current.astimezone(timezone.utc).replace(tzinfo=None)
     return current
+
+
+def lock_owner_notification_preferences(db: Session, owner_user_id: str) -> None:
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:owner_scope, 0))"),
+            {"owner_scope": f"job-notification-preferences:{owner_user_id}"},
+        )
 
 
 def notification_preference(db: Session, *, owner_user_id: str, now: datetime | None = None) -> UserNotificationPreference:
@@ -264,12 +272,7 @@ def suppress_obsolete_job_notification_intents(
         )
     ).scalars().all()
     for row in rows:
-        row.state = "suppressed"
-        row.error_code = "delivery_state_changed"
-        row.claim_token = None
-        row.claim_expires_at = None
-        row.next_attempt_at = None
-        row.updated_at = current
+        _suppress_delivery(row, current)
     if rows:
         db.flush()
     return len(rows)
@@ -289,6 +292,29 @@ def telegram_owner_allowed(settings, owner_user_id: str) -> bool:
 
 def _channel_enabled(preference: UserNotificationPreference, channel: str) -> bool:
     return bool(getattr(preference, f"{channel}_enabled", False))
+
+
+def _suppress_delivery(row: JobNotificationDelivery, current: datetime) -> None:
+    row.state = "suppressed"
+    row.error_code = "delivery_state_changed"
+    row.claim_token = None
+    row.claim_expires_at = None
+    row.next_attempt_at = None
+    row.updated_at = current
+
+
+def _delivery_is_current(row, job, preference, user, settings) -> bool:
+    return bool(
+        job
+        and preference
+        and user and user.status == UserStatus.active
+        and job.owner_user_id == row.owner_user_id
+        and job.status.value == row.terminal_status
+        and int(job.attempt_count or 0) == row.attempt_number
+        and row.channel == "telegram"
+        and _channel_enabled(preference, row.channel)
+        and telegram_owner_allowed(settings, row.owner_user_id)
+    )
 
 
 @dataclass(frozen=True)
@@ -345,26 +371,11 @@ def claim_next_job_notification(
         job = db.get(TranscriptionJob, row.job_id)
         preference = db.get(UserNotificationPreference, row.owner_user_id)
         user = db.get(User, row.owner_user_id)
-        valid = bool(
-            job
-            and preference
-            and user and user.status == UserStatus.active
-            and job.owner_user_id == row.owner_user_id
-            and job.status.value == row.terminal_status
-            and int(job.attempt_count or 0) == row.attempt_number
-            and _channel_enabled(preference, row.channel)
-            and telegram_owner_allowed(settings, row.owner_user_id)
-        )
-        if not valid or (
+        if not _delivery_is_current(row, job, preference, user, settings) or (
             row.state == "claimed"
             and row.attempt_count >= settings.job_notification_max_attempts
         ):
-            row.state = "suppressed"
-            row.error_code = "delivery_state_changed"
-            row.claim_token = None
-            row.claim_expires_at = None
-            row.next_attempt_at = None
-            row.updated_at = current
+            _suppress_delivery(row, current)
             db.flush()
             continue
         token = secrets.token_hex(24)
@@ -482,65 +493,6 @@ def _send_email(
     return True, None
 
 
-def _send_telegram(
-    claim: JobNotificationClaim,
-    *,
-    settings,
-    post: Callable | None = None,
-) -> tuple[bool, str | None]:
-    try:
-        token, chat_id = settings.job_telegram_credentials()
-    except Exception:
-        return False, "configuration_unavailable"
-    payload = _notification_payload(claim)
-    text = f"VoiceOps Studio\n{payload['title']}\n{payload['body']}"
-    # Owner-approved public entrypoint only; never include job/file identifiers.
-    if getattr(settings, "app_origin", "").rstrip("/") == "https://studio.cloud-nodes.net":
-        text += "\nhttps://studio.cloud-nodes.net/transcriptions"
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    body = {"chat_id": chat_id, "text": text}
-    timeout = float(settings.job_telegram_timeout_seconds)
-    if post is not None:
-        try:
-            response = post(url, json=body, timeout=timeout)
-        except (TimeoutError, socket.timeout):
-            return False, "transport_timeout"
-        except OSError:
-            return False, "transport_unavailable"
-        try:
-            ack = response.json()
-        except (AttributeError, ValueError, TypeError):
-            return False, "transport_rejected"
-        return (True, None) if 200 <= int(response.status_code) < 300 and _telegram_acknowledged(ack) else (False, "transport_rejected")
-    request = Request(
-        url,
-        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed HTTPS origin
-            status_code = int(response.status)
-            ack = json.loads(response.read(65537))
-    except HTTPError:
-        return False, "transport_rejected"
-    except (TimeoutError, socket.timeout):
-        return False, "transport_timeout"
-    except URLError as exc:
-        return (False, "transport_timeout") if isinstance(exc.reason, (TimeoutError, socket.timeout)) else (False, "transport_unavailable")
-    except OSError:
-        return False, "transport_unavailable"
-    except (ValueError, UnicodeError):
-        return False, "transport_rejected"
-    return (True, None) if 200 <= status_code < 300 and _telegram_acknowledged(ack) else (False, "transport_rejected")
-
-
-def _telegram_acknowledged(ack) -> bool:
-    result = ack.get("result") if isinstance(ack, dict) and ack.get("ok") is True else None
-    message_id = result.get("message_id") if isinstance(result, dict) else None
-    return type(message_id) is int and message_id > 0
-
-
 def complete_job_notification(
     db: Session,
     *,
@@ -590,6 +542,41 @@ def complete_job_notification(
     return True
 
 
+def _dispatch_claim(
+    db: Session,
+    *,
+    claim: JobNotificationClaim,
+    settings,
+    transport: JobNotificationTransport,
+    now: datetime | None,
+) -> bool:
+    # Retry changes the job before suppressing its old deliveries. Lock in that
+    # order and hold both rows through the bounded send and acknowledgement.
+    job = db.get(TranscriptionJob, claim.job_id, with_for_update=True)
+    row = db.get(JobNotificationDelivery, claim.delivery_id, with_for_update=True)
+    current = _utc_naive(now)
+    if (
+        row is None
+        or row.state != "claimed"
+        or row.claim_token != claim.claim_token
+        or row.claim_expires_at is None
+        or row.claim_expires_at <= current
+    ):
+        return False
+    lock_owner_notification_preferences(db, row.owner_user_id)
+    user = db.get(User, row.owner_user_id)
+    preference = db.get(UserNotificationPreference, row.owner_user_id)
+    if not _delivery_is_current(row, job, preference, user, settings):
+        _suppress_delivery(row, current)
+        return True
+    if row.claim_expires_at <= _utc_naive(now):
+        return False
+    success, error_code = transport(_notification_payload(claim), settings=settings)
+    return complete_job_notification(
+        db, claim=claim, success=success, error_code=error_code, settings=settings, now=now,
+    )
+
+
 def process_one_job_notification(
     *,
     session_factory,
@@ -598,6 +585,7 @@ def process_one_job_notification(
     web_push_sender: Callable | None = None,
     smtp_factory: Callable | None = None,
     telegram_post: Callable | None = None,
+    transport: JobNotificationTransport | None = None,
 ) -> bool:
     if not _configured_channels(settings):
         return False
@@ -613,15 +601,13 @@ def process_one_job_notification(
         claim_db.close()
     if claim is None:
         return False
-    success, error_code = _send_telegram(claim, settings=settings, post=telegram_post)
     finish_db = session_factory()
     try:
-        completed = complete_job_notification(
+        completed = _dispatch_claim(
             finish_db,
             claim=claim,
-            success=success,
-            error_code=error_code,
             settings=settings,
+            transport=transport or partial(send_telegram_job_notification, post=telegram_post),
             now=now,
         )
         finish_db.commit()

@@ -1537,6 +1537,18 @@ code {
     padding: 1rem;
   }
 }
+@media (max-width: 420px) {
+  .app-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .app-nav button {
+    min-height: 44px;
+    flex-direction: row;
+    gap: .5rem;
+    padding: .35rem .55rem;
+    text-align: left;
+  }
+}
 .preparation {
   display: grid;
   gap: 1rem;
@@ -3069,6 +3081,9 @@ code {
 .history-transcriptions .multi-transcription { padding: .65rem; }
 .history-transcriptions .source-card { box-shadow: none; padding: .65rem; }
 @media (max-width: 620px) {
+  .composer :is(input, select, textarea, button):focus:not(.composer-footer *) {
+    scroll-margin-block-end: min(10rem, 40dvh);
+  }
   .detail-drawer { width: 100%; border: 0; }
   .detail-drawer header { flex-wrap: wrap; }
   .action-menu-items { position: fixed; top: auto; bottom: 0; left: .5rem; right: .5rem; width: auto; max-height: 65dvh; border-radius: 1rem 1rem 0 0; padding: 1rem .75rem max(1rem, env(safe-area-inset-bottom)); z-index: 100; box-shadow: 0 -8px 32px rgb(0 0 0 / 25%); }

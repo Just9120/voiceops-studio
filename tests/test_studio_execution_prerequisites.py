@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -153,6 +154,51 @@ def test_output_destination_metadata_failures(db, models, meta, reason):
         verify_processing_job_output_destination(db, job_id=job.id, lease_owner_id="worker", lease_generation=7, settings=Settings(), now=now, token_resolver=lambda *a, **k: "ephemeral-token", metadata_fetcher=lambda *_: DriveFolderAuthorizationMetadata(*meta))
     assert str(exc.value) == reason
     assert "configured-folder" not in str(exc.value) and "ephemeral-token" not in str(exc.value)
+
+
+@pytest.mark.parametrize("status", [200, 403])
+def test_yandex_output_destination_checks_write_authority_without_creating_file(db, models, monkeypatch, status):
+    from studio_api import yandex_disk_access
+    from studio_api.job_output_destination import OutputDestinationError, verify_processing_job_output_destination
+    from studio_api.yandex_disk import YandexDiskClient, resource_from_payload
+
+    user, *_, job, now = make_job(db, models)
+    db.add(models.YandexDiskConnection(
+        user_id=user.id, account_uid="synthetic-account", token_ciphertext=b"token",
+        token_nonce=b"nonce", key_id="credential-key-v1",
+    ))
+    db.flush()
+    folder = {"path": "disk:/results", "resource_id": "result-folder", "name": "Results", "type": "dir"}
+    selection = yandex_disk_access.register_resource(db, owner_user_id=user.id, resource=resource_from_payload(folder))
+    job.output_provider = "yandex_disk"
+    job.output_drive_folder_id = selection.id
+    db.commit()
+    calls = []
+
+    def provider(request):
+        calls.append((request.method, request.url.path))
+        if request.url.path.endswith("/upload"):
+            assert request.url.params["path"].startswith("disk:/results/.voiceops-write-check-")
+            assert request.url.params["overwrite"] == "false"
+            return httpx.Response(status, json={"href": "https://uploader.disk.yandex.ru/test", "method": "PUT"})
+        return httpx.Response(200, json=folder)
+
+    monkeypatch.setattr(yandex_disk_access, "access_token", lambda *args, **kwargs: "synthetic")
+    original_verifier = yandex_disk_access.verify_selected_resource
+    with httpx.Client(transport=httpx.MockTransport(provider)) as client:
+        monkeypatch.setattr(
+            yandex_disk_access, "verify_selected_resource",
+            lambda *args, **kwargs: original_verifier(
+                *args, **kwargs, client_factory=lambda token: YandexDiskClient(token, client=client),
+            ),
+        )
+        kwargs = dict(db=db, job_id=job.id, lease_owner_id="worker", lease_generation=7, settings=Settings(), now=now)
+        if status == 403:
+            with pytest.raises(OutputDestinationError, match="output_folder_not_writable"):
+                verify_processing_job_output_destination(**kwargs)
+        else:
+            assert verify_processing_job_output_destination(**kwargs).drive_folder_id == selection.id
+    assert calls == [("GET", "/v1/disk/resources"), ("GET", "/v1/disk/resources/upload")]
 
 
 def test_output_destination_revalidates_after_io(db, models):

@@ -283,6 +283,17 @@ def test_timed_formatter_keeps_full_text_when_word_alignment_is_incomplete():
         assert build_timed_transcript([word], fallback_text="retained and otherwise omitted", diarize=diarize) == "retained and otherwise omitted"
 
 
+def document_readback(text, *, document_id="doc-private", style="HEADING_2"):
+    paragraphs = [
+        {"paragraph": {
+            "paragraphStyle": {"namedStyleType": style if index == 0 else "NORMAL_TEXT"},
+            "elements": [{"textRun": {"content": line + "\n"}}],
+        }}
+        for index, line in enumerate(text.split("\n"))
+    ]
+    return httpx.Response(200, json={"documentId": document_id, "body": {"content": paragraphs}})
+
+
 def test_transport_multipart_and_redaction():
     from studio_api.google_docs_output import GoogleDocsTranscriptTransport
     calls = []
@@ -294,7 +305,13 @@ def test_transport_multipart_and_redaction():
             else {"id":"doc-private","name":"Secret Title","mimeType":"application/vnd.google-apps.document","webViewLink":"https://docs.example/private","parents":["folder-private"]}
         )
         return httpx.Response(200, json=payload)
-    result = GoogleDocsTranscriptTransport(post=post).create_transcript_document(access_token="token-secret", folder_id="folder-private", title="Secret Title", document_text=CANONICAL_DOCUMENT_TEXT)
+    def get(url, **kwargs):
+        calls.append((url, kwargs))
+        return document_readback(CANONICAL_DOCUMENT_TEXT)
+    result = GoogleDocsTranscriptTransport(post=post, docs_get=get).create_transcript_document(
+        access_token="token-secret", folder_id="folder-private", title="Secret Title",
+        document_text=CANONICAL_DOCUMENT_TEXT,
+    )
     url, kwargs = calls[0]
     parsed = urlparse(url)
     assert parsed.scheme == "https" and parsed.netloc == "www.googleapis.com" and parsed.path == "/upload/drive/v3/files"
@@ -306,7 +323,11 @@ def test_transport_multipart_and_redaction():
     assert body.index(b"application/json") < body.index(b"text/plain; charset=UTF-8")
     assert b'"name":"Secret Title"' in body and b'"mimeType":"application/vnd.google-apps.document"' in body and b'"parents":["folder-private"]' in body
     assert CANONICAL_DOCUMENT_TEXT.encode() in body
-    assert len(calls) == 2
+    assert len(calls) == 3
+    read_url, read_kwargs = calls[2]
+    assert read_url == "https://docs.googleapis.com/v1/documents/doc-private"
+    assert read_kwargs["headers"]["Authorization"] == "Bearer token-secret"
+    assert read_kwargs["params"]["suggestionsViewMode"] == "PREVIEW_WITHOUT_SUGGESTIONS"
     docs_url, docs_kwargs = calls[1]
     assert docs_url == "https://docs.googleapis.com/v1/documents/doc-private:batchUpdate"
     assert docs_kwargs["headers"]["Authorization"] == "Bearer token-secret"
@@ -338,6 +359,33 @@ def test_transport_network_mapping_redacts(exc_obj, reason):
     def post(*a, **k): raise exc_obj
     with pytest.raises(GoogleDocsOutputError, match=reason):
         GoogleDocsTranscriptTransport(post=post).create_transcript_document(access_token="token-secret", folder_id="folder-private", title="Secret Title", document_text=CANONICAL_DOCUMENT_TEXT)
+
+
+@pytest.mark.parametrize("readback", ["empty", "truncated", "same_length_wrong", "unformatted", "different_id", "grant_rejected", "gone"])
+def test_transport_rejects_unconfirmed_document_after_successful_writes(readback):
+    from studio_api.google_docs_output import GoogleDocsOutputError, GoogleDocsTranscriptTransport
+
+    def post(url, **kwargs):
+        if url.endswith(":batchUpdate"):
+            return httpx.Response(200, json={"documentId": "doc-private"})
+        return httpx.Response(200, json={
+            "id": "doc-private", "name": "Title", "mimeType": "application/vnd.google-apps.document",
+            "webViewLink": "https://docs.example/private", "parents": ["folder-private"],
+        })
+
+    response = {
+        "empty": lambda: document_readback(""),
+        "truncated": lambda: document_readback(CANONICAL_DOCUMENT_TEXT[:-1]),
+        "same_length_wrong": lambda: document_readback(CANONICAL_DOCUMENT_TEXT[:-1] + "X"),
+        "unformatted": lambda: document_readback(CANONICAL_DOCUMENT_TEXT, style="NORMAL_TEXT"),
+        "different_id": lambda: document_readback(CANONICAL_DOCUMENT_TEXT, document_id="other"),
+        "grant_rejected": lambda: httpx.Response(403),
+        "gone": lambda: httpx.Response(404),
+    }[readback]
+    with pytest.raises(GoogleDocsOutputError, match="malformed_response"):
+        GoogleDocsTranscriptTransport(post=post, docs_get=lambda *args, **kwargs: response()).create_transcript_document(
+            access_token="token", folder_id="folder-private", title="Title", document_text=CANONICAL_DOCUMENT_TEXT,
+        )
 
 
 def test_transport_malformed_response_rejected():
@@ -373,7 +421,7 @@ def test_transport_fails_closed_when_rich_text_formatting_is_rejected():
             },
         )
 
-    with pytest.raises(GoogleDocsOutputError, match="request_rejected"):
+    with pytest.raises(GoogleDocsOutputError, match="malformed_response"):
         GoogleDocsTranscriptTransport(post=post).create_transcript_document(
             access_token="private-access",
             folder_id="folder-private",
@@ -573,7 +621,12 @@ def test_transport_adds_reconciliation_app_property_without_visible_token():
         payload = {"documentId": "doc-private"} if url.endswith("/doc-private:batchUpdate") else {"id":"doc-private","name":"Title","mimeType":"application/vnd.google-apps.document","webViewLink":"https://docs.example/private","parents":["folder-private"]}
         return httpx.Response(200, json=payload)
     token="or_opaqueRandomOnly"
-    GoogleDocsTranscriptTransport(post=post).create_transcript_document(access_token="access", folder_id="folder-private", title="Title", document_text=CANONICAL_DOCUMENT_TEXT, reconciliation_token=token)
+    GoogleDocsTranscriptTransport(
+        post=post, docs_get=lambda *args, **kwargs: document_readback(CANONICAL_DOCUMENT_TEXT),
+    ).create_transcript_document(
+        access_token="access", folder_id="folder-private", title="Title",
+        document_text=CANONICAL_DOCUMENT_TEXT, reconciliation_token=token,
+    )
     body=calls[0]["content"]
     assert f'"appProperties":{{"{OUTPUT_RECONCILIATION_APP_PROPERTY}":"{token}"}}'.encode() in body
     assert body.count(token.encode()) == 1

@@ -4,6 +4,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 from sqlalchemy import create_engine
@@ -76,7 +77,7 @@ def make_job(db, *, job_id: str | None = None, created_at: datetime | None = Non
     db.add(project)
     db.flush()
     job = m.TranscriptionJob(
-        id=job_id,
+        id=str(uuid5(NAMESPACE_URL, "voiceops-test-job:" + job_id)) if job_id else None,
         project_id=project.id,
         owner_user_id=user.id,
         status=m.JobStatus.queued,
@@ -154,10 +155,10 @@ def test_deterministic_selection_created_at_then_job_id(db):
     from studio_api.job_claim_lease import acquire_next_ready_job_lease
 
     t = datetime(2026, 1, 2)
-    make_job(db, job_id="b", created_at=t)
-    make_job(db, job_id="a", created_at=t)
+    first = make_job(db, job_id="b", created_at=t)
+    second = make_job(db, job_id="a", created_at=t)
     handle = acquire_next_ready_job_lease(db, lease_owner_id="worker", now=t + timedelta(hours=1), lease_ttl=timedelta(minutes=5))
-    assert handle.job_id == "a"
+    assert handle.job_id == min(first, second)
 
 
 def test_oldest_unready_and_active_lease_are_skipped_without_mutation(db):

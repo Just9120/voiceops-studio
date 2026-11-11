@@ -11,8 +11,9 @@ import hashlib
 
 from sqlalchemy.orm import Session, selectinload
 
-from .google_connection_access import GoogleConnectionAccessError, refresh_user_google_drive_access_token
-from .google_drive import GoogleDriveContentError, GoogleDriveContentReason, fetch_drive_file_content, fetch_drive_file_metadata
+from .google_connection_access import GoogleConnectionAccessError
+from .google_drive import GoogleDriveContentError, GoogleDriveContentReason
+from .integration_ports import get_cloud_files_provider
 from .job_claim_lease import is_lease_active
 from .job_source_availability import verify_processing_job_sources
 from .audio_timeline import AudioTimeline, AudioTimelineError
@@ -138,9 +139,9 @@ def materialize_processing_job_source(
     now: datetime | None = None,
     clock: Callable[[], datetime] | None = None,
     storage_factory: Callable = get_source_storage,
-    drive_token_resolver: Callable = refresh_user_google_drive_access_token,
-    drive_content_fetcher: Callable = fetch_drive_file_content,
-    drive_metadata_fetcher: Callable = fetch_drive_file_metadata,
+    drive_token_resolver: Callable | None = None,
+    drive_content_fetcher: Callable | None = None,
+    drive_metadata_fetcher: Callable | None = None,
     disk_resource_verifier: Callable = verify_selected_resource,
     disk_token_resolver: Callable = disk_access_token,
     disk_client_factory: Callable = YandexDiskClient,
@@ -148,6 +149,10 @@ def materialize_processing_job_source(
     clock = clock or (lambda: utcnow().replace(tzinfo=None))
     check_now = now or clock()
     temp: BinaryIO | None = None
+    drive = get_cloud_files_provider()
+    drive_token_resolver = drive_token_resolver or drive.access_token
+    drive_content_fetcher = drive_content_fetcher or drive.content
+    drive_metadata_fetcher = drive_metadata_fetcher or drive.metadata
     try:
         try:
             cached_token: dict[str, str] = {}

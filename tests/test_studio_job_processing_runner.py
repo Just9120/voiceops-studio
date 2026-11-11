@@ -111,26 +111,52 @@ def test_real_lease_integration_commits_before_fake_orchestrator(engine, db):
     assert seen == {"owner": "worker", "generation": 1, "status": m.JobStatus.queued}
 
 
-def test_job_claimed_diagnostic_after_lease_commit_with_correlation(monkeypatch, engine, db):
+def test_job_claimed_diagnostic_commits_with_lease(monkeypatch, engine, db):
     from studio_api import models as m
     import studio_api.job_processing_runner as runner
-    from studio_api.job_processing_runner import claim_and_orchestrate_processing_job
-    job_id = make_ready_job(db); SessionLocal = sessionmaker(bind=engine, expire_on_commit=False); events = []
+
+    job_id = make_ready_job(db)
+    SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
     monkeypatch.setattr(runner, "resolve_job_correlation_id", lambda **kw: "corr_abcdefghijklmnop")
-    def capture(**kw):
-        fresh = SessionLocal()
-        try:
+
+    def orchestrator(*args, **kwargs):
+        with SessionLocal() as fresh:
             job = fresh.get(m.TranscriptionJob, job_id)
-            events.append((kw, job.lease_owner_id, job.lease_generation))
-        finally:
-            fresh.close()
-    monkeypatch.setattr(runner, "write_diagnostic_event", capture)
-    result = claim_and_orchestrate_processing_job(db, job_id=job_id, lease_owner_id="worker", lease_ttl=timedelta(minutes=5), settings=Settings(), clock=Clock(), orchestrator=lambda *a, **k: safe_result(job_id))
+            event = fresh.query(m.DiagnosticEvent).filter_by(job_id=job_id, event_code="JOB_CLAIMED").one()
+            assert (job.lease_owner_id, job.lease_generation) == ("worker", 1)
+            assert event.correlation_id == "corr_abcdefghijklmnop"
+            assert event.metadata_json == "{}"
+        return safe_result(job_id)
+
+    result = runner.claim_and_orchestrate_processing_job(
+        db, job_id=job_id, lease_owner_id="worker", lease_ttl=timedelta(minutes=5),
+        settings=Settings(), clock=Clock(), orchestrator=orchestrator,
+    )
     assert result.job_id == job_id
-    assert events[0][0]["event_code"] == "JOB_CLAIMED"
-    assert events[0][0]["metadata"] == {}
-    assert events[0][0]["correlation_id"] == "corr_abcdefghijklmnop"
-    assert events[0][1:] == ("worker", 1)
+
+
+def test_failed_claim_event_rolls_back_lease_and_allows_retry(monkeypatch, db):
+    from studio_api import models as m
+    import studio_api.job_processing_runner as runner
+
+    job_id = make_ready_job(db)
+    def fail(**kwargs):
+        assert kwargs["transaction"] is db
+        raise RuntimeError("synthetic diagnostic failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(runner, "write_diagnostic_event", fail)
+        with pytest.raises(runner.JobProcessingRunnerError, match="claim_commit_failed"):
+            runner.claim_and_orchestrate_processing_job(
+                db, job_id=job_id, lease_owner_id="worker", lease_ttl=timedelta(minutes=5),
+                settings=Settings(), clock=Clock(), orchestrator=lambda *a, **k: pytest.fail("unrecorded lease"),
+            )
+    assert db.get(m.TranscriptionJob, job_id).lease_owner_id is None
+    runner.claim_and_orchestrate_processing_job(
+        db, job_id=job_id, lease_owner_id="worker", lease_ttl=timedelta(minutes=5),
+        settings=Settings(), clock=Clock(), orchestrator=lambda *a, **k: safe_result(job_id),
+    )
+    assert db.query(m.DiagnosticEvent).filter_by(job_id=job_id, event_code="JOB_CLAIMED").count() == 1
 
 
 def test_known_lease_error_rolls_back_preserves_type_and_skips_orchestrator(db):

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from enum import Enum
+
+import httpx
 from sqlalchemy.orm import Session
 
 from .google_oauth import (
@@ -90,6 +92,41 @@ def google_maintenance_token_aad(
         "maintenance-refresh",
         "google",
     )
+
+
+def revoke_google_connection_grants(conn: GoogleConnection, *, settings) -> str:
+    materials = (
+        (conn.refresh_token_ciphertext, conn.refresh_token_nonce, google_token_aad(conn.user_id, conn.id)),
+        (conn.maintenance_refresh_token_ciphertext, conn.maintenance_refresh_token_nonce,
+         google_maintenance_token_aad(conn.user_id, conn.id)),
+    )
+    if not any(ciphertext or nonce for ciphertext, nonce, _ in materials):
+        return "not_needed"
+    try:
+        key = master_key_from_b64(settings.master_key_b64())
+    except Exception:
+        return "unconfirmed"
+    tokens = set()
+    confirmed = True
+    for ciphertext, nonce, aad_value in materials:
+        if not ciphertext and not nonce:
+            continue
+        try:
+            tokens.add(decrypt(ciphertext, nonce, key, aad_value))
+        except Exception:
+            confirmed = False
+    # POST form data rather than query parameters so token values stay out of URLs.
+    with httpx.Client(timeout=httpx.Timeout(3.0, connect=2.0), follow_redirects=False, trust_env=False) as client:
+        for token in tokens:
+            try:
+                result = client.post("https://oauth2.googleapis.com/revoke", data={"token": token})
+                revoked = result.status_code == 200 or (
+                    result.status_code == 400 and result.json().get("error") == "invalid_token"
+                )
+            except (httpx.HTTPError, ValueError, AttributeError):
+                revoked = False
+            confirmed = confirmed and revoked
+    return "confirmed" if confirmed and tokens else "unconfirmed"
 
 
 def refresh_access_token(config, refresh_token: str) -> str:

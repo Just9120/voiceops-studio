@@ -19,6 +19,7 @@ from .google_docs_output import (
     GoogleDocsOutputReason,
     GoogleDocsTranscriptArtifact,
     new_google_docs_transcript_artifact,
+    transcript_document_digest,
 )
 from .job_claim_lease import is_lease_active
 from .job_output_destination import DriveFolderAuthorizationMetadata, OutputDestinationError, _fetch_drive_folder_authorization_metadata, _validate_metadata
@@ -177,7 +178,8 @@ def create_processing_job_google_doc_from_transcript(
             raise JobGoogleDocsOutputError(JobGoogleDocsOutputReason.selected_source_changed)
         _require_no_persisted_output(db, job_source_id)
         try:
-            case = prepare_output_reconciliation_case(db, job_id=job_id, job_source_id=job_source_id, lease_owner_id=lease_owner_id, lease_generation=lease_generation, document_title=formatted.title, character_count=len(formatted.body), now=clock())
+            case = prepare_output_reconciliation_case(db, job_id=job_id, job_source_id=job_source_id, lease_owner_id=lease_owner_id, lease_generation=lease_generation, document_title=formatted.title, character_count=len(formatted.body), now=clock(),
+                document_sha256=transcript_document_digest(formatted.body))
         except OutputReconciliationError as exc:
             if exc.reason == OutputReconciliationReason.existing_reconciliation_case:
                 try:

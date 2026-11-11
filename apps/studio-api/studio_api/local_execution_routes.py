@@ -479,7 +479,7 @@ def build_router(*, recent_auth, limiter):
                 on_scoped=partial(_bind_job_trace, request)))
             return LocalInputResponse(chunks, cleanup=stack.close, headers={**NO_STORE,
                 "Content-Length": str(receipt["byte_count"]), "X-VoiceOps-Input-SHA256": receipt["source_sha256"],
-                "Content-Disposition": 'attachment; filename="input.media"'})
+                "Content-Disposition": 'attachment; filename="input.media"', "X-Accel-Buffering": "no"})
         except Exception:
             stack.close()
             raise

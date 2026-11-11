@@ -862,6 +862,29 @@ Bootstrap is a separate root/operator action. Before enabling the workflow:
    never creates or rewrites a site/link; an absent canonical site needs operator
    bootstrap. Preflight reports `site_layout=trusted_root_symlink` when used.
 
+Before reopening task intake after an nginx/site change, verify the proxy
+temporary directory under the identity of a **running nginx worker**. Review
+the effective Studio TLS server and its `/api/` location in `nginx -T` for the
+inherited `proxy_temp_path`; if there is no override, use the build's
+`--http-proxy-temp-path` from `nginx -V`. Confirm the active worker UID/GID
+with `ps -eo user,group,args`. On the reviewed Contabo layout the read-only
+check is:
+
+```bash
+sudo -u www-data -g www-data -- test -d /var/lib/nginx/proxy &&
+sudo -u www-data -g www-data -- test -x /var/lib/nginx/proxy &&
+sudo -u www-data -g www-data -- test -w /var/lib/nginx/proxy
+```
+
+Use the path and identity observed on the target if either differs. On failure,
+stop and diagnose path traversal or ownership before reopening intake. The
+check creates no probe files and does not repair permissions. For the Studio
+Companion source-download endpoint, preserve upstream `X-Accel-Buffering`
+handling (no `proxy_ignore_headers X-Accel-Buffering`); this response streams
+directly and retains its expected byte count and checksum. Include a permitted
+synthetic download with byte-count and digest readback in the post-check when
+this path is affected.
+
 For a reviewed release, use `Studio Edge CD` manual dispatch with the full
 current `main` SHA. Approve only after repository/Studio CI for that SHA is
 green and the intended canonical snippet diff is reviewed. The workflow must
@@ -1212,9 +1235,14 @@ persists audio or the long-lived provider key. The exact nginx location disables
 access logging because the capability is in the WebSocket query. A new session
 always requires a fresh capability.
 
-The browser/OBS overlay receives only partial/committed text through a
-project-filtered local browser channel. YouTube closed-caption and generic
-HTTPS webhook destinations are explicit ephemeral per-tab values. Generic
+Open **Субтитры и внешние получатели → Открыть окно субтитров** in Live.
+The popup uses the same Studio browser profile and receives partial/committed
+text through a local channel dedicated to that Live panel. In OBS add a
+**Window Capture** source and select the opened Studio caption window. Start
+Live and confirm the same synthetic caption in both windows. OBS Browser Source
+opens a separate browser profile and cannot subscribe to this channel. The
+caption window does not require a server relay. YouTube closed-caption and
+generic HTTPS webhook destinations are explicit ephemeral per-tab values. Generic
 webhook hosts must be present in `STUDIO_REALTIME_WEBHOOK_ALLOWED_HOSTS`;
 private/non-HTTPS destinations and redirects fail closed. Consumer errors are
 shown locally and never stop the primary capture/STT session. Do not put an

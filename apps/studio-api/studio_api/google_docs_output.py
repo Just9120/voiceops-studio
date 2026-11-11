@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Never
 from urllib.parse import urlencode
 
 import httpx
@@ -16,6 +18,16 @@ GOOGLE_DOC_MIME_TYPE = "application/vnd.google-apps.document"
 GOOGLE_DRIVE_UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files"
 GOOGLE_DOCS_DOCUMENTS_URL = "https://docs.googleapis.com/v1/documents"
 OUTPUT_RECONCILIATION_APP_PROPERTY = "studioOutputReconciliationToken"
+_DOCUMENT_READ_FIELDS = (
+    "documentId,body(content(paragraph(paragraphStyle(namedStyleType),elements(textRun(content))))"
+    ")"
+)
+
+
+def transcript_document_digest(text: str) -> str:
+    # Google Docs adds a terminal paragraph newline during the text import.
+    canonical = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 class GoogleDocsOutputReason(str, Enum):
@@ -114,6 +126,8 @@ class GoogleDocsTranscriptTransport:
         repr=False,
     )
 
+    docs_get: Callable[..., httpx.Response] | None = field(default=None, repr=False)
+
     def create_transcript_document(self, *, access_token: str, folder_id: str, title: str, document_text: str, reconciliation_token: str | None = None) -> GoogleDocsCreateResult:
         try:
             style_requests = build_transcript_document_style_requests(
@@ -132,8 +146,8 @@ class GoogleDocsTranscriptTransport:
             "Content-Type": f"multipart/related; boundary={boundary}",
             "Accept": "application/json",
         }
-        response = self._post_response(
-            url,
+        response = self._response(
+            "POST", url,
             injected=self.post,
             headers=headers,
             content=body,
@@ -147,8 +161,8 @@ class GoogleDocsTranscriptTransport:
             payload,
             expected_folder_id=folder_id,
         )
-        style_response = self._post_response(
-            f"{self.docs_endpoint}/{result.document_id}:batchUpdate",
+        style_response = self._response(
+            "POST", f"{self.docs_endpoint}/{result.document_id}:batchUpdate",
             injected=self.docs_post or self.post,
             headers={
                 "Authorization": f"Bearer {access_token}",
@@ -159,24 +173,67 @@ class GoogleDocsTranscriptTransport:
                 "requests": style_requests
             },
         )
-        _raise_for_google_status(style_response.status_code)
         try:
+            _raise_for_google_status(style_response.status_code)
             style_payload = style_response.json()
-        except Exception as exc:
-            raise GoogleDocsOutputError(
-                GoogleDocsOutputReason.malformed_response
-            ) from exc
+        except (GoogleDocsOutputError, ValueError) as exc:
+            self._raise_after_create(exc)
         if (
             not isinstance(style_payload, Mapping)
             or style_payload.get("documentId") != result.document_id
         ):
-            raise GoogleDocsOutputError(
-                GoogleDocsOutputReason.malformed_response
-            )
+            raise GoogleDocsOutputError(GoogleDocsOutputReason.malformed_response)
+        try:
+            observed = self.read_document_digest(access_token=access_token, document_id=result.document_id)
+        except GoogleDocsOutputError as exc:
+            self._raise_after_create(exc)
+        if observed != transcript_document_digest(document_text):
+            raise GoogleDocsOutputError(GoogleDocsOutputReason.malformed_response)
         return result
 
-    def _post_response(
+    @staticmethod
+    def _raise_after_create(exc: Exception) -> Never:
+        # Once Drive returned a document ID, even a definite rejection from Docs
+        # leaves an existing file. Preserve the reconciliation path.
+        if isinstance(exc, GoogleDocsOutputError) and exc.reason in {
+            GoogleDocsOutputReason.timeout, GoogleDocsOutputReason.unavailable,
+        }:
+            raise exc
+        raise GoogleDocsOutputError(GoogleDocsOutputReason.malformed_response) from exc
+
+    def read_document_digest(self, *, access_token: str, document_id: str) -> str:
+        from .transcript_catalog_scan import CatalogGoogleReadError, extract_google_document_plain_text
+
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", document_id):
+            raise GoogleDocsOutputError(GoogleDocsOutputReason.malformed_response)
+        response = self._response(
+            "GET", f"{self.docs_endpoint}/{document_id}", injected=self.docs_get,
+            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
+            params={
+                "fields": _DOCUMENT_READ_FIELDS,
+                "includeTabsContent": "false",
+                "suggestionsViewMode": "PREVIEW_WITHOUT_SUGGESTIONS",
+            },
+        )
+        _raise_for_google_status(response.status_code)
+        try:
+            payload = response.json()
+            if not isinstance(payload, Mapping) or payload.get("documentId") != document_id:
+                raise ValueError("Document identity mismatch")
+            text = extract_google_document_plain_text(payload)
+            title = next(
+                item["paragraph"] for item in payload["body"]["content"]
+                if "paragraph" in item
+            )
+            if not text or title.get("paragraphStyle", {}).get("namedStyleType") != "HEADING_2":
+                raise ValueError("Formatted transcript document not confirmed")
+        except (CatalogGoogleReadError, ValueError, TypeError, KeyError, AttributeError, StopIteration) as exc:
+            raise GoogleDocsOutputError(GoogleDocsOutputReason.malformed_response) from exc
+        return transcript_document_digest(text)
+
+    def _response(
         self,
+        method: str,
         url: str,
         *,
         injected: Callable[..., httpx.Response] | None,
@@ -187,9 +244,9 @@ class GoogleDocsTranscriptTransport:
             if injected is not None:
                 return injected(url, **kwargs)
             if self.client is not None:
-                return self.client.post(url, **kwargs)
+                return self.client.request(method, url, **kwargs)
             with httpx.Client() as client:
-                return client.post(url, **kwargs)
+                return client.request(method, url, **kwargs)
         except httpx.TimeoutException as exc:
             raise GoogleDocsOutputError(
                 GoogleDocsOutputReason.timeout

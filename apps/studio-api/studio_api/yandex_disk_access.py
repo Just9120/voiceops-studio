@@ -96,15 +96,25 @@ def selected_resource(db,*,owner_user_id: str,resource_id: str,is_folder: bool|N
     return row
 
 
-def verify_selected_resource(db,*,owner_user_id: str,resource_id: str,settings,is_folder: bool|None=None,client_factory=YandexDiskClient):
+def verify_selected_resource(
+    db, *, owner_user_id: str, resource_id: str, settings, is_folder: bool | None = None,
+    require_write: bool = False, client_factory=YandexDiskClient,
+):
     row=selected_resource(db,owner_user_id=owner_user_id,resource_id=resource_id,is_folder=is_folder)
     path,version,account=row.path,row.version_fingerprint,row.account_uid
     token=access_token(db,user_id=owner_user_id,settings=settings)
     revision=active_connection(db,owner_user_id=owner_user_id).credential_revision
     db.rollback()
-    current=client_factory(token).metadata(path)
+    client = client_factory(token)
+    current = client.metadata(path)
+    if resource_fingerprint(current) != version:
+        raise YandexDiskError("resource_changed")
+    if require_write:
+        if not current.is_folder:
+            raise YandexDiskError("not_folder")
+        client.verify_folder_writable(path)
     row=selected_resource(db,owner_user_id=owner_user_id,resource_id=resource_id,is_folder=is_folder)
-    if (row.account_uid!=account or row.version_fingerprint!=version or resource_fingerprint(current)!=version
+    if (row.account_uid!=account or row.version_fingerprint!=version
             or active_connection(db,owner_user_id=owner_user_id).credential_revision!=revision):
         raise YandexDiskError("resource_changed")
     return current

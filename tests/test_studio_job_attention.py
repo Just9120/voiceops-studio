@@ -12,7 +12,10 @@ if "STUDIO_DATABASE_HOST" not in os.environ:
     os.environ.setdefault("STUDIO_DATABASE_URL", "sqlite+pysqlite:///:memory:")
 from studio_api.db import Base
 from studio_api.job_attention import confirmed_later_results_query, recent_attention_candidates
-from studio_api.models import JobStatus, TranscriptionJob, TranscriptionJobSource, TranscriptionJobOutput, User, Project, Source, SourceType
+from studio_api.models import (
+    JobStatus, OutputReconciliationStatus, Project, Source, SourceType, TranscriptionJob,
+    TranscriptionJobSource, TranscriptionJobOutput, TranscriptionOutputReconciliation, User,
+)
 
 
 @pytest.fixture
@@ -28,7 +31,7 @@ def db():
     engine.dispose()
 
 
-def add_job(db, key, *, owner="owner", project="project", sources=("source-a", "source-b"), hours=1, status=JobStatus.completed, start=None, end=None, output=True):
+def add_job(db, key, *, owner="owner", project="project", sources=("source-a", "source-b"), hours=1, status=JobStatus.completed, start=None, end=None, output=True, receipt=True):
     job = TranscriptionJob(id=key, owner_user_id=owner, project_id=project, status=status, created_at=datetime(2026,9,6)+timedelta(hours=hours), media_clip_start_seconds=start, media_clip_end_seconds=end, title=key)
     db.add(job)
     db.flush()
@@ -36,8 +39,24 @@ def add_job(db, key, *, owner="owner", project="project", sources=("source-a", "
         relation = TranscriptionJobSource(job_id=key, source_id=source_id, position=position)
         db.add(relation)
         db.flush()
-        if position == 0 and output:
-            db.add(TranscriptionJobOutput(job_id=key, job_source_id=relation.id, document_id=f"doc-{key}", web_view_url=f"https://docs.google.com/document/d/doc-{key}/edit", output_drive_folder_id="synthetic-folder", output_kind="google_docs_transcript", transcript_standard="transcript_doc", document_character_count=12, document_created_at=job.created_at, persisted_at=job.created_at, lease_generation=1))
+        if output and (output != "partial" or position == 0):
+            document = TranscriptionJobOutput(
+                job_id=key, job_source_id=relation.id, document_id=f"doc-{key}-{position}",
+                web_view_url=f"https://docs.google.com/document/d/doc-{key}-{position}/edit",
+                output_drive_folder_id="synthetic-folder", output_kind="google_docs_transcript",
+                transcript_standard="transcript_doc", document_character_count=12,
+                document_created_at=job.created_at, persisted_at=job.created_at, lease_generation=1,
+            )
+            db.add(document)
+            db.flush()
+            if receipt:
+                db.add(TranscriptionOutputReconciliation(
+                    owner_user_id=owner, project_id=project, job_id=key, job_source_id=relation.id,
+                    reconciliation_token=f"receipt-{key}-{position}", lease_generation=1,
+                    status=OutputReconciliationStatus.resolved, resolved_output_id=document.id,
+                    expected_output_drive_folder_id="synthetic-folder", expected_document_character_count=12,
+                    expected_document_sha256="a" * 64,
+                ))
     db.flush()
     return job
 
@@ -47,7 +66,7 @@ def add_job(db, key, *, owner="owner", project="project", sources=("source-a", "
     {"sources":("source-b","source-a")}, {"sources":("source-a",)},
     {"sources":()},
     {"hours":0}, {"hours":-1}, {"status":JobStatus.failed},
-    {"start":0,"end":12}, {"end":12}, {"output":False},
+    {"start":0,"end":12}, {"end":12}, {"output":False}, {"output":"partial"}, {"receipt":False},
 ])
 def test_candidates_exclude_different_owner_source_sequence_clip_or_unconfirmed_result(db, difference):
     original = add_job(db,"original",hours=0,status=JobStatus.failed,output=False)
@@ -68,9 +87,9 @@ def test_clip_match_and_recent_order_are_shared_by_listing_and_resolution(db):
 
 def test_confirmed_yandex_docx_is_a_result_for_attention_recovery(db):
     original = add_job(db, "original", hours=0, status=JobStatus.failed, output=False)
-    later = add_job(db, "later", hours=1)
+    later = add_job(db, "later", hours=1, receipt=False)
     later.output_provider = "yandex_disk"
-    output = db.query(TranscriptionJobOutput).filter_by(job_id=later.id).one()
-    output.output_kind = "yandex_disk_docx_transcript"
+    for output in db.query(TranscriptionJobOutput).filter_by(job_id=later.id):
+        output.output_kind = "yandex_disk_docx_transcript"
     db.flush()
     assert [item["id"] for item in recent_attention_candidates(db, original)] == [later.id]

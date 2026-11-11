@@ -27,7 +27,7 @@ automatic voice identification is not part of this contract.
 - PostgreSQL is the durable authority for jobs, job-source relations, leases, lifecycle state, output destinations, output rows, and completion decisions.
 - Redis is not the processing queue, lease authority, retry authority, scheduler, notification authority, or heartbeat authority.
 - Browser clients do not start internal processing directly and must not receive internal lease/claim metadata.
-- A worker process handles no more than one primary job at a time. A separate serial housekeeping thread uses its own sessions for cleanup, notifications and alerts while primary work is busy; it never dispatches STT. Primary claim priority rotates across audio, transcription and transcript maintenance. SIGTERM prevents new passes/claims and waits for active boundaries to finish; an operator observation timeout does not kill them.
+- A worker process handles no more than one primary job at a time. A separate serial housekeeping thread uses its own sessions for cleanup, notifications and alerts while primary work is busy; it never dispatches STT. Primary claim priority alternates between audio preparation and transcription. Maintenance is eligible only after both user-facing queues decline the claim. SIGTERM prevents new passes/claims and waits for active boundaries to finish; an operator observation timeout does not kill them.
 - Source-level code does not prove production-live processing; controlled rollout evidence is required.
 
 ## Runtime progress and preparation cancellation

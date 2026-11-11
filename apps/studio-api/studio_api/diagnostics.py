@@ -311,22 +311,28 @@ def _scope_valid(db, owner_user_id: str, project_id: str | None, job_id: str | N
             return False
     return True
 
-def _upsert_event(db, row_values: dict[str, Any], fp: str):
+def _upsert_event(db, row_values: dict[str, Any], fp: str, *, shared_transaction: bool = False):
     updated = db.execute(update(DiagnosticEvent).where(DiagnosticEvent.dedup_fingerprint == fp).values(occurrence_count=DiagnosticEvent.occurrence_count + 1, last_occurred_at=row_values["last_occurred_at"]))
     if getattr(updated, "rowcount", 0):
         return db.query(DiagnosticEvent.id).filter_by(dedup_fingerprint=fp).scalar()
     try:
-        db.add(DiagnosticEvent(**row_values))
-        db.flush()
+        if shared_transaction:
+            with db.begin_nested():
+                db.add(DiagnosticEvent(**row_values))
+                db.flush()
+        else:
+            db.add(DiagnosticEvent(**row_values))
+            db.flush()
         return row_values["id"]
     except IntegrityError:
-        _rollback(db)
+        if not shared_transaction:
+            _rollback(db)
         updated = db.execute(update(DiagnosticEvent).where(DiagnosticEvent.dedup_fingerprint == fp).values(occurrence_count=DiagnosticEvent.occurrence_count + 1, last_occurred_at=row_values["last_occurred_at"]))
         if not getattr(updated, "rowcount", 0):
             raise
         return db.query(DiagnosticEvent.id).filter_by(dedup_fingerprint=fp).scalar()
 
-def write_diagnostic_event(*, owner_user_id: str, component: str, event_code: str, level: str | None = None, project_id: str | None = None, job_id: str | None = None, trace_id: str | None = None, correlation_id: str | None = None, request_id: str | None = None, metadata: dict[str, Any] | None = None, session_factory=SessionLocal, now: datetime | None = None, allow_debug_override: bool = False) -> DiagnosticWriteResult:
+def write_diagnostic_event(*, owner_user_id: str, component: str, event_code: str, level: str | None = None, project_id: str | None = None, job_id: str | None = None, trace_id: str | None = None, correlation_id: str | None = None, request_id: str | None = None, metadata: dict[str, Any] | None = None, session_factory=SessionLocal, now: datetime | None = None, allow_debug_override: bool = False, transaction=None) -> DiagnosticWriteResult:
     db = None
     try:
         definition = REGISTRY.get(event_code)
@@ -343,15 +349,15 @@ def write_diagnostic_event(*, owner_user_id: str, component: str, event_code: st
         now_dt = _as_utc_naive(now); bucket = _bucket(now_dt)
         settings = _settings()
         fp = fingerprint(owner_user_id=owner_user_id, component=component, level=level, event_code=event_code, project_id=project_id, job_id=job_id, metadata=safe, bucket=bucket)
-        db = session_factory()
+        db = transaction if transaction is not None else session_factory()
         if not _scope_valid(db, owner_user_id, project_id, job_id):
-            _rollback(db); return DiagnosticWriteResult(False, reason="invalid_scope")
+            return DiagnosticWriteResult(False, reason="invalid_scope")
         job = None
         if job_id is not None:
             job = (db.get(AudioPreparationJob, job_id) if event_code == "AUDIO_PREPARATION_FAILED"
                    else db.get(TranscriptionJob, job_id) or db.get(AudioPreparationJob, job_id))
             if job is None or job.owner_user_id != owner_user_id or (project_id is not None and job.project_id != project_id):
-                _rollback(db); return DiagnosticWriteResult(False, reason="invalid_scope")
+                return DiagnosticWriteResult(False, reason="invalid_scope")
         audio_job_id = job_id if isinstance(job, AudioPreparationJob) else None
         if resolved_trace_id is None and job is not None:
             candidate = getattr(job, "trace_id", None) if job is not None else None
@@ -360,7 +366,9 @@ def write_diagnostic_event(*, owner_user_id: str, component: str, event_code: st
         row_values["audio_preparation_job_id"] = audio_job_id
         if audio_job_id is not None:
             row_values["job_id"] = None
-        event_id = _upsert_event(db, row_values, fp)
+        event_id = _upsert_event(db, row_values, fp, shared_transaction=transaction is not None)
+        if transaction is not None:
+            return DiagnosticWriteResult(True, True, event_id=event_id)
         db.commit()
         try:
             cleanup_expired_diagnostics(
@@ -371,11 +379,13 @@ def write_diagnostic_event(*, owner_user_id: str, component: str, event_code: st
             LOGGER.warning("diagnostic_cleanup_failed")
         return DiagnosticWriteResult(True, True, event_id=event_id)
     except Exception:
+        if transaction is not None:
+            raise
         if db is not None: _rollback(db)
         LOGGER.warning("diagnostic_write_failed")
         return _safe_fail()
     finally:
-        if db is not None: _close(db)
+        if db is not None and transaction is None: _close(db)
 
 def cleanup_expired_diagnostics(*, session_factory=SessionLocal, now: datetime | None = None, force=False) -> None:
     global _LAST_CLEANUP_SUCCESS
@@ -398,20 +408,22 @@ def cleanup_expired_diagnostics(*, session_factory=SessionLocal, now: datetime |
     finally:
         if db is not None: _close(db)
 
-def resolve_job_correlation_id(*, owner_user_id: str, job_id: str, session_factory=SessionLocal, now: datetime | None = None) -> str | None:
+def resolve_job_correlation_id(*, owner_user_id: str, job_id: str, session_factory=SessionLocal, now: datetime | None = None, transaction=None) -> str | None:
     db = None
     try:
         if not valid_uuid(owner_user_id) or not valid_uuid(job_id): return None
         now_dt = _as_utc_naive(now)
-        db = session_factory()
+        db = transaction if transaction is not None else session_factory()
         row = db.query(DiagnosticEvent.correlation_id).filter(DiagnosticEvent.owner_user_id == owner_user_id, DiagnosticEvent.job_id == job_id, DiagnosticEvent.event_code == "JOB_CREATED", DiagnosticEvent.expires_at > now_dt, DiagnosticEvent.correlation_id.isnot(None)).order_by(DiagnosticEvent.first_occurred_at.asc(), DiagnosticEvent.id.asc()).first()
         value = row[0] if row else None
         return value if valid_correlation_id(value) else None
     except Exception:
+        if transaction is not None:
+            raise
         LOGGER.warning("diagnostic_correlation_lookup_failed")
         return None
     finally:
-        if db is not None: _close(db)
+        if db is not None and transaction is None: _close(db)
 
 def resolve_job_trace_id(*, owner_user_id: str, job_id: str, session_factory=SessionLocal) -> str | None:
     db = None
