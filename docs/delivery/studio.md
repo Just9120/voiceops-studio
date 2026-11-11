@@ -246,7 +246,7 @@
 
 | AC | Состояние | CODE | TEST | CI | Остаток / Evidence |
 | --- | --- | --- | --- | --- | --- |
-| `PR-01` | BLOCKED | PARTIAL | PASS | PENDING | F42 · `8ad83e3`. Realtime controller tests assert getDisplayMedia parameters and no-audio rejection; internal browser had no Studio tab in this pass. Need native Windows/Chrome chooser evidence for tab/window/screen. No media capture or STT was triggered. |
+| `PR-01` | READY | PASS | PASS | PASS | `4ad1bb9`, CI 43098664442 и 12Nov Windows Sandbox / Chrome 157.0.8103.79. Нативный chooser с параметрами `getDisplayMedia` из Studio подтвердил `browser`, `window`, `monitor` на синтетических источниках. Все дорожки остановлены. Audio track подтверждён для вкладки. Системный звук окна и экрана и STT этим прогоном не проверены. |
 | `PR-02` | READY | PASS | PASS | PENDING | F42 · `8ad83e3`. Controller tests передают PCM из выбранного display stream и отклоняют stream без audio track до выдачи capability. Browser CI использует синтетический аудиоисточник. |
 | `PR-03` | READY | PASS | PASS | PENDING | F42 · `8ad83e3`. Две дорожки микшируются в одном AudioContext, микрофон opt-in. Controller и UI проверяют isolated levels, mixing и cleanup. |
 | `PR-04` | READY | PASS | PASS | PASS | F42 · `8ad83e3`. Controller/Panel: partial отдельно от committed, итоговый фрагмент появляется в UI, indexed correction не создаёт дубликат. Chromium CI с fake transport. |
