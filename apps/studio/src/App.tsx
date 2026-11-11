@@ -1673,6 +1673,38 @@ function PreparationPanel({
   clearBatchSubmission: (key: string) => void;
 }) {
   const googlePickerPanelId = useId();
+  const composerFormRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    const form = composerFormRef.current;
+    const viewport = window.visualViewport;
+    if (!form || !viewport) return;
+    let frame = 0;
+    const keepFocusedFieldVisible = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const field = document.activeElement;
+        if (window.innerWidth > 620 || viewport.scale !== 1 ||
+            !(field instanceof HTMLElement) || !form.contains(field) ||
+            !field.matches("input, textarea, select")) return;
+        const footer = form.querySelector(".composer-footer");
+        if (!footer) return;
+        const box = field.getBoundingClientRect();
+        const availableBottom = Math.min(viewport.offsetTop + viewport.height, footer.getBoundingClientRect().top);
+        const gap = 12;
+        const overlap = box.bottom + gap - availableBottom;
+        if (overlap > 0 && availableBottom - viewport.offsetTop > box.height + gap) {
+          window.scrollBy({ top: overlap, behavior: "instant" });
+        }
+      });
+    };
+    form.addEventListener("focusin", keepFocusedFieldVisible);
+    viewport.addEventListener("resize", keepFocusedFieldVisible);
+    return () => {
+      cancelAnimationFrame(frame);
+      form.removeEventListener("focusin", keepFocusedFieldVisible);
+      viewport.removeEventListener("resize", keepFocusedFieldVisible);
+    };
+  }, []);
   const [yandexPickerBusy, setYandexPickerBusy] = useState(false);
   const yandexPickerOperation = useRef<AbortController | null>(null);
   const yandexScope = useRef(project.id);
@@ -4837,6 +4869,7 @@ function PreparationPanel({
       )}
       <form
         className="job-creator composer"
+        ref={composerFormRef}
         onSubmit={createBatch}
         aria-label="Композитор пакетных задач"
       >

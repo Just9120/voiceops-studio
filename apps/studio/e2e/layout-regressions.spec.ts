@@ -550,9 +550,22 @@ test('Live caption popup displays only its own channel and project', async ({pag
 });
 
 test('Composer actions and validation remain reachable in a short mobile viewport', async ({page}) => {
-  await page.setViewportSize({width: 390, height: 365});
+  await page.addInitScript(() => sessionStorage.setItem('studio-form-draft:v1:batch:synthetic-layout', JSON.stringify({rows: [{
+    id: 'synthetic-row', source_id: '', output_folder: {folder_id: 'synthetic-root', name: 'Мой диск'}, segmentation_enabled: true,
+    segments: [{id: 'synthetic-segment', title: '', start_boundary: '0:00', end_boundary: '', ends_at_source_end: true, output_folder: null}],
+  }]})));
+  await page.setViewportSize({width: 390, height: 844});
   await fixtures(page);
   await page.goto('/transcriptions');
+  const field = page.getByRole('textbox', {name: 'Название фрагмента 1 задачи 1'});
+  await field.evaluate(node => node.scrollIntoView({block: 'center'}));
+  await field.focus();
+  await page.setViewportSize({width: 390, height: 365});
+  await expect.poll(async () => {
+    const [input, footer] = await Promise.all([field.boundingBox(), page.locator('.composer-footer').boundingBox()]);
+    return input !== null && footer !== null && input.y + input.height <= footer.y;
+  }).toBe(true);
+  await expect(field).toBeFocused();
   const viewport = page.locator('meta[name="viewport"]');
   await expect(viewport).toHaveAttribute('content', /interactive-widget=resizes-content/);
   const footer = page.locator('.composer-footer');
