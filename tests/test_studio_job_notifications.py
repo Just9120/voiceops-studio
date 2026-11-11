@@ -23,18 +23,21 @@ sys.path.insert(0, str(ROOT / "apps/studio-api"))
 os.environ.setdefault("STUDIO_DATABASE_URL", "sqlite+pysqlite:///:memory:")
 
 from studio_api.db import Base  # noqa: E402
-from studio_api import models as m  # noqa: E402
+from studio_api import job_notifications, models as m  # noqa: E402
 from studio_api.job_notifications import (  # noqa: E402
     JobNotificationClaim,
     _send_email,
-    _send_telegram,
+    _notification_payload,
     _send_web_push,
     claim_next_job_notification,
     complete_job_notification,
     ensure_terminal_notification_intents,
     normalize_web_push_subscription,
+    process_one_job_notification,
+    suppress_obsolete_job_notification_intents,
     upsert_web_push_subscription,
 )
+from studio_api.job_notification_telegram import send_telegram_job_notification  # noqa: E402
 from studio_api.job_retry_recovery import schedule_automatic_retry_if_safe  # noqa: E402
 from studio_api.security import decrypt, master_key_from_b64  # noqa: E402
 
@@ -410,7 +413,7 @@ def test_telegram_transport_covers_success_and_failure_without_job_content(
         app_origin="https://studio.cloud-nodes.net/",
     )
 
-    assert _send_telegram(claim, settings=transport_settings, post=post) == (
+    assert send_telegram_job_notification(_notification_payload(claim), settings=transport_settings, post=post) == (
         True,
         None,
     )
@@ -449,7 +452,7 @@ def test_telegram_cannot_deliver_for_wrong_or_inactive_owner(db, reason):
 def test_telegram_http_200_without_message_ack_is_not_delivered(ack):
     claim=JobNotificationClaim("delivery","claim","owner","job","completed",1,"telegram","configured")
     config=SimpleNamespace(job_telegram_credentials=lambda:("12345678901234567890:token","123"),job_telegram_timeout_seconds=5)
-    assert _send_telegram(claim,settings=config,post=lambda *a,**kw:SimpleNamespace(status_code=200,json=lambda:ack))==(False,"transport_rejected")
+    assert send_telegram_job_notification(_notification_payload(claim),settings=config,post=lambda *a,**kw:SimpleNamespace(status_code=200,json=lambda:ack))==(False,"transport_rejected")
 
 
 def test_automatic_retry_only_accepts_allowlisted_durable_transient_failure(db):
@@ -498,3 +501,69 @@ def test_automatic_retry_only_accepts_allowlisted_durable_transient_failure(db):
     db.commit()
     assert not schedule_automatic_retry_if_safe(db, job=job, now=NOW)
     assert job.status == m.JobStatus.failed
+
+
+@pytest.mark.parametrize("change", ["retried", "reclaimed", "opted_out", "expired"])
+def test_dispatch_rejects_stale_claim_before_calling_transport(db, monkeypatch, change):
+    owner, job, _relation = job_fixture(db)
+    config = settings(telegram=True, owner=owner.id)
+    db.add(m.UserNotificationPreference(user_id=owner.id, telegram_enabled=True))
+    db.commit()
+    ensure_terminal_notification_intents(db, job=job, now=NOW)
+    db.commit()
+    factory = sessionmaker(bind=db.get_bind(), expire_on_commit=False)
+    actual_claim = job_notifications.claim_next_job_notification
+    claimed_at = NOW - timedelta(seconds=61) if change in {"expired", "reclaimed"} else NOW
+
+    def change_after_claim(claim_db, *, settings, now):
+        stale = actual_claim(claim_db, settings=settings, now=claimed_at)
+        assert stale
+        claim_db.commit()
+        with factory.begin() as other_db:
+            if change == "retried":
+                other_db.get(m.TranscriptionJob, job.id).status = m.JobStatus.queued
+                suppress_obsolete_job_notification_intents(other_db, job_id=job.id, now=NOW)
+            elif change == "reclaimed":
+                newer = actual_claim(other_db, settings=settings, now=NOW)
+                assert newer and newer.claim_token != stale.claim_token
+                assert complete_job_notification(
+                    other_db, claim=newer, success=True, error_code=None, settings=settings, now=NOW,
+                )
+            elif change == "opted_out":
+                other_db.get(m.UserNotificationPreference, owner.id).telegram_enabled = False
+        return stale
+
+    def should_not_send(*args, **kwargs):
+        pytest.fail("a stale claim must not call the transport")
+
+    monkeypatch.setattr(job_notifications, "claim_next_job_notification", change_after_claim)
+    process_one_job_notification(session_factory=factory, settings=config, now=NOW, transport=should_not_send)
+    db.expire_all()
+    row = db.query(m.JobNotificationDelivery).one()
+    assert row.state == {
+        "retried": "suppressed", "reclaimed": "delivered", "opted_out": "suppressed", "expired": "claimed",
+    }[change]
+
+
+def test_dispatch_retries_with_injected_transport(db):
+    owner, job, _relation = job_fixture(db, status=m.JobStatus.completed)
+    config = settings(telegram=True, owner=owner.id)
+    db.add(m.UserNotificationPreference(user_id=owner.id, telegram_enabled=True))
+    db.commit()
+    ensure_terminal_notification_intents(db, job=job, now=NOW)
+    db.commit()
+    factory = sessionmaker(bind=db.get_bind(), expire_on_commit=False)
+    sent = []
+
+    def transport(payload, *, settings):
+        sent.append(payload)
+        return (False, "transport_rejected") if len(sent) == 1 else (True, None)
+
+    assert process_one_job_notification(session_factory=factory, settings=config, now=NOW, transport=transport)
+    assert not process_one_job_notification(session_factory=factory, settings=config, now=NOW, transport=transport)
+    assert process_one_job_notification(
+        session_factory=factory, settings=config, now=NOW + timedelta(seconds=30), transport=transport,
+    )
+    assert sent[0] == sent[1]
+    assert set(sent[0]) == {"title", "body", "url", "kind"}
+    assert db.query(m.JobNotificationDelivery).one().state == "delivered"

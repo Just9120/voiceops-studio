@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
+import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
@@ -70,6 +72,42 @@ def test_alternative_cloud_boundary_uses_authenticated_owner_and_safe_projection
     finally:
         main.app.dependency_overrides.pop(get_db, None)
         main.app.dependency_overrides.pop(current_session, None)
+
+
+@pytest.mark.parametrize("outcome", ["revoked", "timeout", "refused"])
+def test_google_revocation_uses_form_data_and_reports_safe_outcome(monkeypatch, outcome):
+    from studio_api import google_connection_access as access
+
+    connection = SimpleNamespace(
+        user_id="owner", id="connection", refresh_token_ciphertext=b"primary",
+        refresh_token_nonce=b"nonce", maintenance_refresh_token_ciphertext=b"maintenance",
+        maintenance_refresh_token_nonce=b"nonce",
+    )
+    seen = []
+    real_client = httpx.Client
+    monkeypatch.setattr(access, "master_key_from_b64", lambda value: b"key")
+    monkeypatch.setattr(access, "decrypt", lambda data, nonce, key, aad: data.decode())
+
+    def post(request):
+        assert request.method == "POST"
+        assert str(request.url) == "https://oauth2.googleapis.com/revoke"
+        assert request.headers["content-type"] == "application/x-www-form-urlencoded"
+        seen.append(request.content)
+        if outcome == "timeout":
+            raise httpx.ReadTimeout("synthetic")
+        if outcome == "refused":
+            return httpx.Response(400, json={"error": "invalid_request"})
+        if request.content == b"token=maintenance":
+            return httpx.Response(400, json={"error": "invalid_token"})
+        return httpx.Response(200)
+
+    monkeypatch.setattr(
+        access.httpx, "Client",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(post), **kwargs),
+    )
+    status = access.revoke_google_connection_grants(connection, settings=SimpleNamespace(master_key_b64=lambda: ""))
+    assert status == ("confirmed" if outcome == "revoked" else "unconfirmed")
+    assert set(seen) == {b"token=primary", b"token=maintenance"}
 
 
 def test_independent_document_boundary_preserves_creation_arguments(monkeypatch):

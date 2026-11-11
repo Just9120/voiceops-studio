@@ -4130,13 +4130,22 @@ def test_google_oauth_callback_stores_encrypted_token_and_safe_metadata_disconne
         db.commit()
     finally:
         db.close()
+    from studio_api import google_connection_access
+
+    revocations = []
+    monkeypatch.setattr(
+        google_connection_access, "revoke_google_connection_grants",
+        lambda connection, **kwargs: revocations.append(connection.id) or "unconfirmed",
+    )
     r = c.delete("/api/google/connection", headers={"origin": "https://studio.test", "x-csrf-token": csrf})
     assert r.status_code == 200
     assert r.json()["connected"] is False and r.json()["status"] == "revoked"
     first_disconnected = r.json()
+    assert first_disconnected.pop("provider_revocation") == "unconfirmed"
     replay = c.delete("/api/google/connection", headers={"origin": "https://studio.test", "x-csrf-token": csrf})
     assert replay.status_code == 200
     assert replay.json() == first_disconnected
+    assert len(revocations) == 1
     db = SessionLocal()
     try:
         from studio_api.models import GoogleConnection
@@ -5984,21 +5993,28 @@ def test_uncertain_job_attention_resolution_is_explicit_owner_scoped_and_replay_
         )
         db.add(relation)
         db.flush()
-        db.add(
-            TranscriptionJobOutput(
-                job_id=later_job.id,
-                job_source_id=relation.id,
-                document_id="confirmed-later-document",
-                web_view_url="https://docs.google.com/document/d/confirmed-later-document/edit",
-                output_drive_folder_id="confirmed-folder",
-                output_kind="google_docs_transcript",
-                transcript_standard="transcript_doc",
-                document_character_count=42,
-                document_created_at=later_job.finished_at,
-                persisted_at=later_job.finished_at,
-                lease_generation=1,
-            )
+        output = TranscriptionJobOutput(
+            job_id=later_job.id,
+            job_source_id=relation.id,
+            document_id="confirmed-later-document",
+            web_view_url="https://docs.google.com/document/d/confirmed-later-document/edit",
+            output_drive_folder_id="confirmed-folder",
+            output_kind="google_docs_transcript",
+            transcript_standard="transcript_doc",
+            document_character_count=42,
+            document_created_at=later_job.finished_at,
+            persisted_at=later_job.finished_at,
+            lease_generation=1,
         )
+        db.add(output)
+        db.flush()
+        db.add(TranscriptionOutputReconciliation(
+            owner_user_id=later_job.owner_user_id, project_id=project_id, job_id=later_job.id,
+            job_source_id=relation.id, reconciliation_token="or_confirmed_later_result",
+            lease_generation=1, status=OutputReconciliationStatus.resolved,
+            expected_output_drive_folder_id="confirmed-folder", expected_document_character_count=42,
+            expected_document_sha256="a" * 64, resolved_output_id=output.id,
+        ))
         db.commit()
         later_job_id = later_job.id
 

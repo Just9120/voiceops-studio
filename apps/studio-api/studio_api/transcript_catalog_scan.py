@@ -23,6 +23,7 @@ from .transcript_document import (
     LEGACY_TRANSCRIPT_METADATA_LABEL,
     TRANSCRIPT_BODY_LABEL,
     TRANSCRIPT_METADATA_LABEL,
+    segment_transcript_for_readability,
 )
 
 
@@ -559,6 +560,11 @@ def classify_transcript_document_standard(
                 and visible_created_at != expected_created_at
             )
         ):
+            return CatalogDocumentStandardStatus.outdated
+        body = "\n".join(normalized.split("\n")[transcript_index + 1:]).strip()
+        if not body:
+            return CatalogDocumentStandardStatus.unstructured
+        if segment_transcript_for_readability(body) != body:
             return CatalogDocumentStandardStatus.outdated
         return (
             CatalogDocumentStandardStatus.current

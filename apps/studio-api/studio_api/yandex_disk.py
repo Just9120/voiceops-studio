@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 import hashlib
 import json
+from uuid import uuid4
 from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
@@ -203,11 +204,21 @@ class YandexDiskClient:
         check()
         return size
 
+    def _upload_url(self, path: str) -> str:
+        link = self._json("/resources/upload", params={"path": path, "overwrite": "false"})
+        if link.get("method") != "PUT":
+            raise YandexDiskError("malformed_response")
+        return signed_content_url(link.get("href"))
+
+    def verify_folder_writable(self, folder_path: str) -> None:
+        folder = normalize_disk_path(folder_path)
+        probe = normalize_disk_path(f"{folder.rstrip('/')}/.voiceops-write-check-{uuid4().hex}.docx")
+        # The GET only grants upload authority. No PUT is sent for the probe.
+        self._upload_url(probe)
+
     def upload_new(self,path: str,content: bytes) -> DiskResource:
         path=normalize_disk_path(path)
-        link=self._json("/resources/upload",params={"path":path,"overwrite":"false"})
-        url=signed_content_url(link.get("href"))
-        if link.get("method")!="PUT":raise YandexDiskError("malformed_response")
+        url = self._upload_url(path)
         try:
             with self._http() as client:
                 response=client.put(url,content=content,headers={"Content-Type":"application/vnd.openxmlformats-officedocument.wordprocessingml.document"},follow_redirects=False)

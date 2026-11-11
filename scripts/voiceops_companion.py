@@ -35,6 +35,14 @@ def profile_identity(profile):
     return model, profile.get("model_revision", INITIAL_MODEL_REVISIONS[model])
 
 
+def model_for_identity(profile, identity, model, revision):
+    # The current Windows user's DPAPI profile holds the model files and
+    # verification proof. Pairing rotates credentials independently.
+    if profile["origin"] != identity["origin"] or profile_identity(profile) != (model, revision):
+        return None
+    return {**profile, **identity}
+
+
 def bundled_paths(model_dir, profile):
     # A frozen installer supplies trusted native tools next to the app resources.
     assets = Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) / "voiceops-tools"
@@ -431,8 +439,11 @@ class CompanionWindow:
             available.append(self.legacy_path)
         for candidate in available:
             if candidate.exists():
-                item = read_profile(candidate)
-                if legacy_identity(item) == identity and profile_identity(item) == (model, revision):
+                try:
+                    item = model_for_identity(read_profile(candidate), identity, model, revision)
+                except WorkerError:
+                    continue
+                if item is not None:
                     return item
         return None
 
@@ -498,8 +509,8 @@ class CompanionWindow:
                 installed = []
                 for target in self.stored_model_paths(model, revision):
                     if target.is_file():
-                        profile = read_profile(target)
-                        if legacy_identity(profile) == identity and profile_identity(profile) == (model, revision):
+                        profile = model_for_identity(read_profile(target), identity, model, revision)
+                        if profile is not None:
                             installed.append((target, profile))
                 if not installed:
                     self.events.put(("status", "Нет установленной через это приложение версии."))
@@ -514,7 +525,7 @@ class CompanionWindow:
                 if profile.get("managed_root"):
                     remove_managed_profile(profile_id, profile["managed_root"], profile["paths"]["decoder"],
                                            check=self.check_stop, revision=revision)
-                if active and legacy_identity(active) == identity and profile_identity(active) == (model, revision):
+                if active and model_for_identity(active, identity, model, revision) is not None:
                     self.runtime_path.unlink()
                 for target, _ in installed:
                     target.unlink()

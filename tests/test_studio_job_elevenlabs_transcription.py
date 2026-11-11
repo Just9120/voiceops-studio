@@ -1337,6 +1337,24 @@ def test_chunk_merge_uses_timeline_ownership_when_boundary_text_differs():
     assert [word.start for word in merged.words] == [9, 10.1]
 
 
+@pytest.mark.parametrize(("offset", "overlap", "repeat_start"), [(8, 2, 2.2), (10, 0, 0.2)])
+def test_chunk_merge_preserves_repeated_speech_outside_overlap(offset, overlap, repeat_start):
+    from studio_api.elevenlabs_transcription import (
+        merge_elevenlabs_transcript_results,
+        normalize_elevenlabs_transcript_response as normalize,
+    )
+
+    first = normalize({"text": "yes", "words": [{"text": "yes", "start": 9.15, "end": 9.5}]})
+    second = normalize({
+        "text": "yes",
+        "words": [{"text": "yes", "start": repeat_start, "end": repeat_start + 0.3}],
+    })
+    merged = merge_elevenlabs_transcript_results(((first, 0, 0), (second, offset, overlap)))
+
+    assert merged.text == "yes yes"
+    assert [word.start for word in merged.words] == pytest.approx([9.15, 10.2])
+
+
 def test_chunk_merge_fails_closed_without_word_timestamps():
     from studio_api.elevenlabs_transcription import (
         ElevenLabsTranscriptionError,

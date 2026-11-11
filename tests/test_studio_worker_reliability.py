@@ -79,18 +79,22 @@ def test_background_housekeeping_runs_while_primary_work_is_blocked(monkeypatch)
     assert events == ["cleanup", "closed", "email", "notification", "evaluate", "delivery"]
 
 
-def test_production_selector_rotates_priority_under_continuous_backlog(monkeypatch):
+def test_production_selector_prioritizes_foreground_work_under_continuous_backlog(monkeypatch):
     from studio_api import worker, audio_preparation_worker as selector
     seen = []; stop = threading.Event()
     def claim(db, **kwargs):
-        seen.append(kwargs["work_order"][0])
+        seen.append(kwargs["work_order"])
         if len(seen) == 3: stop.set()
         return SimpleNamespace(stage="completed", job_id=None, status="completed", output_created=True)
     monkeypatch.setattr(selector, "claim_next_studio_work", claim)
     settings = SimpleNamespace(worker_lease_ttl_seconds=3600, worker_poll_interval_seconds=5, worker_error_backoff_seconds=5)
     worker.run_worker_loop(settings=settings, session_factory=lambda: SimpleNamespace(close=lambda: None),
                            stop_event=stop, independent_background=True)
-    assert seen == ["audio", "transcription", "maintenance"]
+    assert seen == [
+        ("audio", "transcription", "maintenance"),
+        ("transcription", "audio", "maintenance"),
+        ("audio", "transcription", "maintenance"),
+    ]
 
 
 def test_background_storage_reconciliation_is_opt_in_and_rate_limited(monkeypatch):

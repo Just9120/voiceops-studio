@@ -528,6 +528,32 @@ def test_default_period_signed_cursor_can_be_used_without_repeating_period(db, m
     finally:
         main.app.dependency_overrides.clear()
 
+@pytest.mark.parametrize(("enabled", "sender", "expected"), [
+    (False, "studio@studio.example", "not_configured"),
+    (True, "studio@other.example", "invalid_configuration"),
+    (True, "studio@studio.example", "configured"),
+])
+def test_system_summary_reports_security_email_configuration_without_sending(
+    db, monkeypatch, enabled, sender, expected,
+):
+    import studio_api.main as main
+
+    user, _, _ = user_project_job(db)
+    monkeypatch.setattr(main, "settings", main.settings.model_copy(update={
+        "security_email_enabled": enabled,
+        "security_email_sender_domain": "studio.example",
+        "job_smtp_host": "mail.studio.example",
+        "job_smtp_from_email": sender,
+        "job_smtp_use_ssl": True,
+        "job_smtp_starttls": False,
+        "job_smtp_username": None,
+    }))
+    summary = main._system_summary(db, user)
+    assert summary["health"]["email"] == {"status": expected}
+    assert summary["alerts"]["email"] == "not_configured"
+    assert sender not in str(summary) and "mail.studio.example" not in str(summary)
+
+
 def test_query_cursor_system_and_markdown_report(db, monkeypatch):
     from fastapi.testclient import TestClient
     import studio_api.main as main

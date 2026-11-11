@@ -190,8 +190,8 @@ def test_standardized_text_preserves_authoritative_metadata_and_body():
 def test_unstructured_standardization_does_not_infer_settings():
     from studio_api.transcript_catalog_standardize import (
         build_standardized_transcript_document_text,
-        segment_transcript_for_readability,
     )
+    from studio_api.transcript_document import segment_transcript_for_readability
 
     body = "One sentence. Two sentence. Three sentence."
     result = build_standardized_transcript_document_text(
@@ -211,6 +211,30 @@ def test_unstructured_standardization_does_not_infer_settings():
         body,
         target_chars=15,
     ) == "One sentence.\n\nTwo sentence.\n\nThree sentence."
+
+
+@pytest.mark.parametrize("punctuation", [".", ""])
+def test_long_unbroken_transcript_is_segmented_and_recognized_in_existing_docs(punctuation):
+    from studio_api.job_google_docs_output import format_transcript_doc
+    from studio_api.transcript_catalog_migration import CatalogDocumentStandardStatus
+    from studio_api.transcript_catalog_scan import classify_transcript_document_standard
+    from studio_api.transcript_catalog_standardize import build_standardized_transcript_document_text
+
+    speech = " ".join(f"Сохраняем смысл, порядок, термины и отрицания {index}{punctuation}" for index in range(200))
+    formatted = format_transcript_doc(
+        title="Лекция", transcript_text=speech, job_language="ru",
+        detected_language_code=None, created_at=None,
+    ).body
+    header, body = formatted.split("\n\nТранскрипция\n\n", 1)
+    assert len(body.split("\n\n")) > 1
+    assert body.split() == speech.split()
+    old = header + "\n\nТранскрипция\n\n" + speech
+    assert classify_transcript_document_standard(old) == CatalogDocumentStandardStatus.outdated
+    repaired = build_standardized_transcript_document_text(
+        document_name="Лекция", existing_document_text=old, created_time=None,
+    )
+    assert repaired.split("\n\nТранскрипция\n\n", 1)[1] == body
+    assert classify_transcript_document_standard(repaired) == CatalogDocumentStandardStatus.current
 
 
 def test_standardized_text_replaces_opaque_timestamp_with_authority():

@@ -177,6 +177,38 @@ def test_materialization_crosses_source_ttl_only_for_already_admitted_current_op
     assert source.expires_at == expiry
 
 
+def test_alternative_cloud_files_adapter_covers_worker_authority_and_content(sqlite_session, models, monkeypatch):
+    from studio_api import google_integration
+    from studio_api.job_source_materialization import materialize_processing_job_source
+
+    job, _, relation, _, now, user = make_job(sqlite_session, models, source_type=models.SourceType.google_drive)
+    calls = []
+    body = FakeBody([b"a" * 100])
+
+    class AlternativeFiles:
+        def access_token(self, db, *, user_id, settings):
+            calls.append(("owner", user_id))
+            return "synthetic"
+
+        def metadata(self, token, file_id):
+            calls.append(("metadata", token))
+            return fake_drive_meta(token, file_id)
+
+        def content(self, token, file_id):
+            calls.append(("content", token))
+            return FakeStream(body)
+
+    monkeypatch.setattr(google_integration, "GoogleFilesProvider", AlternativeFiles)
+    with materialize_processing_job_source(
+        sqlite_session, job_id=job.id, job_source_id=relation.id,
+        lease_owner_id=job.lease_owner_id, lease_generation=job.lease_generation,
+        settings=SimpleSettings(), now=now, clock=lambda: now,
+    ) as source:
+        assert source.stream.read() == b"a" * 100
+    assert calls == [("owner", user.id), ("metadata", "synthetic"), ("content", "synthetic")]
+    assert body.closed
+
+
 @pytest.mark.parametrize("replace_same_size", [False, True])
 def test_selected_drive_revision_and_content_checksum_are_enforced_before_stt(sqlite_session, models, replace_same_size):
     import hashlib

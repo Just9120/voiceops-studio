@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .google_docs_output import GOOGLE_DOC_MIME_TYPE, OUTPUT_RECONCILIATION_APP_PROPERTY
+from .google_docs_output import GOOGLE_DOC_MIME_TYPE, OUTPUT_RECONCILIATION_APP_PROPERTY, GoogleDocsOutputError
 from .job_output_persistence import GOOGLE_DOCS_TRANSCRIPT_OUTPUT_KIND, TRANSCRIPT_STANDARD
 from .models import JobSourceStatus, JobStatus, OutputReconciliationStatus, Project, Source, TranscriptionJob, TranscriptionJobOutput, TranscriptionJobSource, TranscriptionOutputReconciliation
 from .provider_usage_accounting import finalize_job_provider_accounting
@@ -41,7 +41,7 @@ def new_reconciliation_token() -> str:
 def title_hash(title: str|None) -> str|None:
     return hashlib.sha256((title or "").encode()).hexdigest() if title is not None else None
 
-def prepare_output_reconciliation_case(db: Session, *, job_id: str, job_source_id: str, lease_owner_id: str, lease_generation: int, document_title: str, character_count: int, now: datetime) -> TranscriptionOutputReconciliation:
+def prepare_output_reconciliation_case(db: Session, *, job_id: str, job_source_id: str, lease_owner_id: str, lease_generation: int, document_title: str, character_count: int, now: datetime, document_sha256: str | None = None) -> TranscriptionOutputReconciliation:
     job=db.get(TranscriptionJob, job_id)
     if not job or job.status!=JobStatus.processing or job.lease_owner_id!=lease_owner_id or job.lease_generation!=lease_generation or job.cancel_requested_at is not None or not job.output_drive_folder_id:
         raise OutputReconciliationError(OutputReconciliationReason.not_allowed)
@@ -79,7 +79,7 @@ def prepare_output_reconciliation_case(db: Session, *, job_id: str, job_source_i
         if case.status==OutputReconciliationStatus.prepared:
             case.status=OutputReconciliationStatus.reconciliation_required; case.uncertainty_reason="existing_reconciliation_case"; case.updated_at=now; db.flush()
         raise OutputReconciliationError(OutputReconciliationReason.existing_reconciliation_case)
-    case=TranscriptionOutputReconciliation(owner_user_id=job.owner_user_id, project_id=job.project_id, job_id=job.id, job_source_id=rel.id, reconciliation_token=new_reconciliation_token(), lease_generation=lease_generation, attempt_number=job.attempt_count or 0, status=OutputReconciliationStatus.prepared, expected_output_drive_folder_id=job.output_drive_folder_id, expected_output_provider=job.output_provider, expected_document_title=document_title, expected_document_title_hash=title_hash(document_title), expected_document_character_count=character_count, prepared_at=now, creation_started_at=now, created_at=now, updated_at=now)
+    case=TranscriptionOutputReconciliation(owner_user_id=job.owner_user_id, project_id=job.project_id, job_id=job.id, job_source_id=rel.id, reconciliation_token=new_reconciliation_token(), lease_generation=lease_generation, attempt_number=job.attempt_count or 0, status=OutputReconciliationStatus.prepared, expected_output_drive_folder_id=job.output_drive_folder_id, expected_output_provider=job.output_provider, expected_document_title=document_title, expected_document_title_hash=title_hash(document_title), expected_document_character_count=character_count, expected_document_sha256=document_sha256, prepared_at=now, creation_started_at=now, created_at=now, updated_at=now)
     db.add(case); db.flush(); return case
 
 def mark_reconciliation_creation_returned(db: Session, *, job_source_id: str, document_id: str, web_view_url: str, document_created_at: datetime, now: datetime) -> None:
@@ -143,7 +143,11 @@ def verify_candidate(case, candidate):
     if case.expected_output_provider!="google_drive" or candidate.mime_type!=GOOGLE_DOC_MIME_TYPE or case.expected_output_drive_folder_id not in candidate.parents or candidate.app_properties.get(OUTPUT_RECONCILIATION_APP_PROPERTY)!=case.reconciliation_token or not candidate.document_id or not candidate.web_view_link.startswith("https://docs.google.com/"):
         raise OutputReconciliationError(OutputReconciliationReason.invalid_candidate)
 
-def check_job_output_reconciliation(db: Session, *, owner_user_id: str, job_id: str, lookup: Callable[[str,str], list[DriveReconciliationCandidate]], now: datetime|None=None) -> OutputReconciliationCheckResult:
+def check_job_output_reconciliation(
+    db: Session, *, owner_user_id: str, job_id: str,
+    lookup: Callable[[str, str], list[DriveReconciliationCandidate]],
+    read_digest: Callable[[str], str], now: datetime | None = None,
+) -> OutputReconciliationCheckResult:
     now=now or utcnow().replace(tzinfo=None); job=db.get(TranscriptionJob, job_id)
     if not job or job.owner_user_id!=owner_user_id: raise OutputReconciliationError(OutputReconciliationReason.not_found)
     if job.status in {JobStatus.queued, JobStatus.processing}: raise OutputReconciliationError(OutputReconciliationReason.not_allowed)
@@ -157,8 +161,31 @@ def check_job_output_reconciliation(db: Session, *, owner_user_id: str, job_id: 
         case.last_checked_at=now; case.updated_at=now
         if len(matches)==0: unresolved+=1; continue
         if len(matches)>1: case.status=OutputReconciliationStatus.conflict; conflicts+=1; continue
+        candidate = matches[0]
         try:
-            verify_candidate(case, matches[0]); created=persist_verified_reconciliation_output(db, case=case, candidate=matches[0], now=now); resolved+=1
+            verify_candidate(case, candidate)
         except OutputReconciliationError:
-            case.status=OutputReconciliationStatus.conflict; conflicts+=1
+            case.status = OutputReconciliationStatus.conflict
+            conflicts += 1
+            continue
+        # Legacy cases without a receipt cannot prove that the full expected
+        # transcript was written. Keep the recovery state and cached text.
+        if not case.expected_document_sha256:
+            unresolved += 1
+            continue
+        try:
+            observed = read_digest(candidate.document_id)
+        except GoogleDocsOutputError:
+            unavailable += 1
+            continue
+        if observed != case.expected_document_sha256:
+            unresolved += 1
+            continue
+        try:
+            persist_verified_reconciliation_output(db, case=case, candidate=candidate, now=now)
+        except OutputReconciliationError:
+            case.status = OutputReconciliationStatus.conflict
+            conflicts += 1
+        else:
+            resolved += 1
     return OutputReconciliationCheckResult(checked,resolved,unresolved,conflicts,unavailable)

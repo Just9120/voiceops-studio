@@ -235,10 +235,19 @@ for (const viewport of [{width: 1280, height: 720}, {width: 768, height: 1024}, 
     const navigation = page.getByRole('navigation', {name: 'Основная навигация'});
     await expect(navigation).toBeVisible();
     if (viewport.width <= 900) {
-      const navigationRows = await navigation.getByRole('button').evaluateAll(nodes =>
-        nodes.map(node => Math.round(node.getBoundingClientRect().top)));
-      expect(new Set(navigationRows).size).toBe(1);
-      expect((await navigation.boundingBox())!.height).toBeLessThan(100);
+      const buttons = await navigation.getByRole('button').evaluateAll(nodes =>
+        nodes.map(node => {
+          const {top, width, height} = node.getBoundingClientRect();
+          return {top: Math.round(top), width, height};
+        }));
+      expect(new Set(buttons.map(button => button.top)).size).toBe(viewport.width <= 420 ? 2 : 1);
+      expect((await navigation.boundingBox())!.height).toBeLessThan(110);
+      if (viewport.width <= 420) {
+        for (const button of buttons) {
+          expect(button.width).toBeGreaterThanOrEqual(44);
+          expect(button.height).toBeGreaterThanOrEqual(44);
+        }
+      }
     }
     await expect(page.getByText('Последних задач: 3', {exact: true})).toBeVisible();
     await expect(page.getByText('Среди последних: в работе 0, документов 3.', {exact: true})).toBeVisible();
@@ -494,6 +503,80 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
     await noHorizontalOverflow(page);
   });
 }
+
+test('Narrow navigation keeps Russian labels and keyboard focus within the controls', async ({page}) => {
+  await fixtures(page);
+  await page.goto('/');
+  const navigation = page.getByRole('navigation', {name: 'Основная навигация'});
+  const audio = navigation.getByRole('button', {name: 'Подготовка аудио'});
+  const transcriptions = navigation.getByRole('button', {name: 'Транскрибации'});
+  for (const width of [320, 390]) {
+    await page.setViewportSize({width, height: 740});
+    const fits = await navigation.getByRole('button').evaluateAll(nodes => nodes.every(node =>
+      node.scrollWidth <= node.clientWidth && node.scrollHeight <= node.clientHeight));
+    expect(fits).toBe(true);
+    await audio.focus();
+    await page.keyboard.press('Tab');
+    await expect(transcriptions).toBeFocused();
+    await noHorizontalOverflow(page);
+  }
+});
+
+test('Live caption popup displays only its own channel and project', async ({page}) => {
+  await fixtures(page);
+  await page.goto('/transcriptions');
+  await page.getByRole('tab', {name: 'Live-транскрибация'}).click();
+  await page.getByText('Субтитры и внешние получатели', {exact: true}).click();
+  const popupPending = page.waitForEvent('popup');
+  await page.getByRole('button', {name: 'Открыть окно субтитров'}).click();
+  const popup = await popupPending;
+  await expect(popup.getByText('Ожидаем Live-субтитры…')).toBeVisible();
+  const {hash, searchParams} = new URL(popup.url());
+  const projectId = searchParams.get('project');
+  expect(projectId).toBeTruthy();
+  await page.evaluate(({overlayId, projectId}) => {
+    const own = new BroadcastChannel('studio-realtime-captions-v2:' + overlayId);
+    const other = new BroadcastChannel('studio-realtime-captions-v2:other');
+    const message = {kind: 'caption', project_id: projectId, committed: ['Тестовый текст'], partial: '', emitted_at: new Date().toISOString()};
+    other.postMessage({...message, committed: ['Другой канал']});
+    own.postMessage({...message, project_id: 'unrelated-project', committed: ['Другой проект']});
+    own.postMessage(message);
+    own.close();
+    other.close();
+  }, {overlayId: hash.slice(1), projectId});
+  await expect(popup.locator('.realtime-overlay-caption')).toHaveText('Тестовый текст');
+  await expect(popup.getByText('Другой канал')).toHaveCount(0);
+  await expect(popup.getByText('Другой проект')).toHaveCount(0);
+});
+
+test('Composer actions and validation remain reachable in a short mobile viewport', async ({page}) => {
+  await page.addInitScript(() => sessionStorage.setItem('studio-form-draft:v1:batch:synthetic-layout', JSON.stringify({rows: [{
+    id: 'synthetic-row', source_id: '', output_folder: {folder_id: 'synthetic-root', name: 'Мой диск'}, segmentation_enabled: true,
+    segments: [{id: 'synthetic-segment', title: '', start_boundary: '0:00', end_boundary: '', ends_at_source_end: true, output_folder: null}],
+  }]})));
+  await page.setViewportSize({width: 390, height: 844});
+  await fixtures(page);
+  await page.goto('/transcriptions');
+  const field = page.getByRole('textbox', {name: 'Название фрагмента 1 задачи 1'});
+  await field.evaluate(node => node.scrollIntoView({block: 'center'}));
+  await field.focus();
+  await page.setViewportSize({width: 390, height: 365});
+  await expect.poll(async () => {
+    const [input, footer] = await Promise.all([field.boundingBox(), page.locator('.composer-footer').boundingBox()]);
+    return input !== null && footer !== null && input.y + input.height <= footer.y;
+  }).toBe(true);
+  await expect(field).toBeFocused();
+  const viewport = page.locator('meta[name="viewport"]');
+  await expect(viewport).toHaveAttribute('content', /interactive-widget=resizes-content/);
+  const footer = page.locator('.composer-footer');
+  const check = footer.getByRole('button', {name: /Проверить задачи/});
+  await check.scrollIntoViewIfNeeded();
+  await expect(check).toBeInViewport({ratio: 1});
+  await expect(check).toBeDisabled();
+  const message = footer.getByText(/Добавьте|выберите/i).first();
+  await expect(message).toBeVisible();
+  await noHorizontalOverflow(page);
+});
 
 test('Live local recovery migrates legacy text and isolates independently cleared sessions', async ({page}) => {
   await page.goto('/about.html');

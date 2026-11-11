@@ -31,7 +31,6 @@ from .transcript_document import (
 
 
 CATALOG_STANDARDIZATION_MAX_TEXT_CHARS = 1_000_000
-CATALOG_STANDARDIZATION_TARGET_PARAGRAPH_CHARS = 1_800
 CATALOG_STANDARDIZATION_GET_FIELDS = "revisionId,tabs"
 
 
@@ -465,43 +464,9 @@ def build_standardized_transcript_document_text(
     result = build_transcript_document_text(
         title=title,
         metadata_lines=metadata_lines,
-        transcript_text=segment_transcript_for_readability(transcript_body),
+        transcript_text=transcript_body,
     )
     return _bounded_document_text(result)
-
-
-def segment_transcript_for_readability(
-    transcript_text: str,
-    *,
-    target_chars: int = CATALOG_STANDARDIZATION_TARGET_PARAGRAPH_CHARS,
-) -> str:
-    text = normalize_transcript_document_text(transcript_text)
-    if not text:
-        return ""
-    if "\n\n" in text or re.search(
-        r"(?mi)^\s*(?:Speaker|Спикер)\s+\d+:",
-        text,
-    ):
-        return text
-    single_line = re.sub(r"[ \t]*\n[ \t]*", " ", text)
-    if len(single_line) <= target_chars:
-        return single_line
-    sentences = re.split(r"(?<=[.!?…])\s+", single_line)
-    paragraphs = []
-    current = ""
-    for sentence in sentences:
-        if not sentence:
-            continue
-        if not current:
-            current = sentence
-        elif len(current) + 1 + len(sentence) <= target_chars:
-            current = f"{current} {sentence}"
-        else:
-            paragraphs.append(current)
-            current = sentence
-    if current:
-        paragraphs.append(current)
-    return "\n\n".join(paragraphs)
 
 
 def _metadata_and_transcript_body(

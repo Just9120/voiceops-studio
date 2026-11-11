@@ -95,9 +95,15 @@ def verify_processing_job_output_destination(
         from .yandex_disk_access import verify_selected_resource
         try:
             (disk_resource_verifier or verify_selected_resource)(db, owner_user_id=snap.owner_user_id,
-                resource_id=snap.output_drive_folder_id, settings=settings, is_folder=True)
+                resource_id=snap.output_drive_folder_id, settings=settings, is_folder=True, require_write=True)
         except YandexDiskError as exc:
-            raise OutputDestinationError(OutputDestinationReason.yandex_connection_unavailable) from exc
+            reason = {
+                "permission_denied": OutputDestinationReason.output_folder_not_writable,
+                "not_found": OutputDestinationReason.output_folder_missing,
+                "not_folder": OutputDestinationReason.output_not_folder,
+                "resource_changed": OutputDestinationReason.output_destination_changed,
+            }.get(exc.reason, OutputDestinationReason.yandex_connection_unavailable)
+            raise OutputDestinationError(reason) from exc
         verified_at = clock()
         _compare_snapshot(snap, _load_snapshot(db, job_id, lease_owner_id, lease_generation, verified_at))
         return ProcessingJobOutputDestination(job_id=snap.job_id, project_id=snap.project_id,

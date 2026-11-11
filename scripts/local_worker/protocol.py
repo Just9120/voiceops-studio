@@ -15,6 +15,7 @@ MAX_INPUT_BYTES = 2147483647
 MAX_RESULT_BYTES = 16 * 1024 * 1024
 MAX_NATIVE_RESPONSE_BYTES = 64 * 1024 * 1024
 COMPANION_PATH = "/api/local-execution/companion"
+STUDIO_USER_AGENT = "VoiceOpsStudio-Companion/1"
 
 
 class WorkerError(Exception):
@@ -98,7 +99,7 @@ class StudioClient:
     def open(self, suffix, *, method="POST", body=None, content_type="application/json", timeout=20):
         if not re.fullmatch(r"(?:/heartbeat|/inventory|/model-removal|/model-install-request|/stopped|/claim|/jobs/[a-f0-9-]{36}/(?:heartbeat|failure|prepare|result|source\?generation=[0-9]{1,10}))", suffix):
             raise WorkerError("local_api_path_invalid")
-        headers = {"Authorization": "Bearer " + self.token, "X-VoiceOps-Local-Protocol": "1",
+        headers = {"Authorization": "Bearer " + self.token, "X-VoiceOps-Local-Protocol": "1", "User-Agent": STUDIO_USER_AGENT,
                    "Accept": "application/json", "Content-Type": content_type}
         job_trace = self.job_trace
         if job_trace is not None and suffix.startswith(f"/jobs/{job_trace[0]}/"):

@@ -748,6 +748,7 @@ def stage_local_input(client, maker, owner_id, monkeypatch, model=NEMOTRON_MODEL
     assert source.content == raw and len(closed) == 1
     sha = hashlib.sha256(raw).hexdigest()
     assert source.headers["x-voiceops-input-sha256"] == sha
+    assert source.headers["x-accel-buffering"] == "no"
     prepared = client.post(f"{BASE}/companion/jobs/{job_id}/prepare", headers=headers,
         json={"generation": generation, "source_sha256": sha, "source_duration_seconds": 1.0})
     assert prepared.status_code == 200, prepared.text

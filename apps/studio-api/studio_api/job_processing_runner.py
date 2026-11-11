@@ -129,13 +129,19 @@ def _commit_and_orchestrate(
     heartbeat_session_factory: Callable | None,
 ) -> JobProcessingOrchestrationResult:
     try:
+        job = db.get(TranscriptionJob, handle.job_id)
+        if job:
+            correlation_id = resolve_job_correlation_id(
+                owner_user_id=job.owner_user_id, job_id=job.id, now=clock(), transaction=db,
+            )
+            event = write_diagnostic_event(
+                owner_user_id=job.owner_user_id, component="worker", event_code="JOB_CLAIMED",
+                project_id=job.project_id, job_id=job.id, correlation_id=correlation_id,
+                metadata={}, now=clock(), transaction=db,
+            )
+            if not event.persisted:
+                raise JobProcessingRunnerError(JobProcessingRunnerReason.claim_commit_failed)
         db.commit()
-        try:
-            job = db.get(TranscriptionJob, handle.job_id)
-            if job:
-                write_diagnostic_event(owner_user_id=job.owner_user_id, component="worker", event_code="JOB_CLAIMED", project_id=job.project_id, job_id=job.id, correlation_id=resolve_job_correlation_id(owner_user_id=job.owner_user_id, job_id=job.id), metadata={})
-        except Exception:
-            pass
     except Exception as exc:
         db.rollback()
         raise JobProcessingRunnerError(JobProcessingRunnerReason.claim_commit_failed) from exc

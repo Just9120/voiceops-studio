@@ -23,6 +23,36 @@ def localize_transcript_speaker_labels(transcript_text: str) -> str:
     return _ENGLISH_SPEAKER_LABEL.sub(r"Спикер \1:", normalized)
 
 
+def segment_transcript_for_readability(
+    transcript_text: str, *, target_chars: int = 1_800,
+) -> str:
+    text = transcript_text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    # Keep authored line breaks and speaker/timestamp layout intact.
+    if "\n" in text or len(text) <= target_chars:
+        return text
+    paragraphs = []
+    remaining = text
+    while len(remaining) > target_chars:
+        window = remaining[:target_chars + 1]
+        whitespace = list(re.finditer(r"[^\S\n]+", window))
+        if not whitespace:
+            next_space = re.search(r"\s+", remaining)
+            if next_space is None:
+                break  # Never break an indivisible token.
+            boundary = next_space.start()
+        else:
+            boundary = next((
+                match.start() for match in reversed(whitespace)
+                if match.start() >= target_chars // 2
+                and match.start() > 0 and remaining[match.start() - 1] in ".!?…"
+            ), whitespace[-1].start())
+        paragraphs.append(remaining[:boundary])
+        remaining = remaining[boundary:].lstrip()
+    if remaining:
+        paragraphs.append(remaining)
+    return "\n\n".join(paragraphs)
+
+
 def build_transcript_document_text(
     *,
     title: str,
@@ -35,7 +65,7 @@ def build_transcript_document_text(
         isinstance(line, str) and line.strip() for line in metadata_lines
     ):
         raise ValueError("Transcript metadata lines are required")
-    body = localize_transcript_speaker_labels(transcript_text).strip()
+    body = segment_transcript_for_readability(localize_transcript_speaker_labels(transcript_text))
     metadata = "\n".join(line.strip() for line in metadata_lines)
     return (
         f"{title.strip()}\n\n{TRANSCRIPT_METADATA_LABEL}\n{metadata}\n\n"

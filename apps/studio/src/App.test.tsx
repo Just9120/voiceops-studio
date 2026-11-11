@@ -1,3 +1,4 @@
+import { encodeWav } from "./localAudioProcessing";
 import { StrictMode } from "react";
 import {
   act,
@@ -3271,6 +3272,7 @@ describe("Studio PWA", () => {
 
   it("keeps a finished browser-only WAV available across section navigation and opens the new section at its heading", async () => {
     class FakeAudioContext {
+      sampleRate = 48_000;
       async decodeAudioData() {
         const channel = Float32Array.from([0.2, -0.2]);
         return { length: 2, numberOfChannels: 1, sampleRate: 48_000, getChannelData: () => channel } as AudioBuffer;
@@ -3293,8 +3295,16 @@ describe("Studio PWA", () => {
       expect(heading).toHaveFocus();
       expect(scrollTo).toHaveBeenCalledWith(0, 0);
       await userEvent.click(screen.getByRole("tab", { name: "Обработать на устройстве" }));
-      const file = new File(["encoded"], "safe.wav", { type: "audio/wav" });
-      Object.defineProperty(file, "arrayBuffer", { value: async () => new TextEncoder().encode("encoded").buffer });
+      const wav = encodeWav({ sampleRate: 48_000, channels: [Float32Array.from([0.2, -0.2])] });
+      const file = new File([wav], "safe.wav", { type: "audio/wav" });
+      Object.defineProperty(file, "arrayBuffer", {
+        value: () => new Promise<ArrayBuffer>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as ArrayBuffer);
+          reader.onerror = () => reject(reader.error);
+          reader.readAsArrayBuffer(wav);
+        }),
+      });
       await userEvent.upload(screen.getByLabelText("Выбрать файлы для обработки на устройстве"), file);
       await userEvent.click(screen.getByRole("button", { name: "Обработать на устройстве" }));
       const download = await screen.findByRole("link", { name: "Скачать файл" });
@@ -5752,6 +5762,19 @@ describe("Studio PWA", () => {
       screen.getByLabelText("Название фрагмента 2 задачи 1"),
       "Часть два",
     );
+    const firstTitle = screen.getByLabelText("Название фрагмента 1 задачи 1");
+    const secondTitle = screen.getByLabelText("Название фрагмента 2 задачи 1");
+    await userEvent.click(firstTitle);
+    await userEvent.clear(firstTitle);
+    await userEvent.type(firstTitle, "Черновик");
+    await userEvent.keyboard("{Escape}");
+    expect(firstTitle).toHaveValue("Часть один");
+    expect(secondTitle).toHaveValue("Часть два");
+    await userEvent.type(secondTitle, " обновлено{Enter}");
+    expect(secondTitle).not.toHaveFocus();
+    expect(secondTitle).toHaveValue("Часть два обновлено");
+    await userEvent.clear(secondTitle);
+    await userEvent.type(secondTitle, "Часть два{Enter}");
     await userEvent.type(
       screen.getByLabelText("Название фрагмента 3 задачи 1"),
       "Часть три",
@@ -15051,6 +15074,7 @@ describe("settings diagnostics", () => {
             events: [
               {
                 id: isCursorRequest ? "evt-second-page" : "evt-first-page",
+                job_id: isCursorRequest ? null : "job-related-001",
                 occurred_at: isCursorRequest
                   ? "2026-07-16T09:05:00Z"
                   : "2026-07-16T09:00:00Z",
@@ -15092,7 +15116,13 @@ describe("settings diagnostics", () => {
     const operationSearch = screen.getByLabelText(
       /Какая операция связана с проблемой/,
     );
-    await userEvent.type(operationSearch, "job_cre");
+    for (const query of ["EVT-FIRST", "JOB-RELATED", "job_cre"]) {
+      await userEvent.clear(operationSearch);
+      await userEvent.type(operationSearch, query);
+      expect(within(
+        screen.getByRole("group", { name: "Подходящие недавние операции" }),
+      ).getByRole("button", { name: /Задача транскрибации создана/ })).toBeInTheDocument();
+    }
     const matchingOperation = within(
       screen.getByRole("group", { name: "Подходящие недавние операции" }),
     ).getByRole("button", { name: /Задача транскрибации создана/ });

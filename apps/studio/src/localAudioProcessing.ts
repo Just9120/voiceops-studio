@@ -234,6 +234,42 @@ export function processDecodedPcm(inputs: PcmAudio[], options: LocalAudioOptions
     : inputs.map((input) => concatenate([input], options));
 }
 
+function boundedWavSamples(bytes: ArrayBuffer, outputSampleRate: number) {
+  const unknown = () => new Error("local_audio_unbounded_format");
+  if (bytes.byteLength < 44 || !Number.isFinite(outputSampleRate) || outputSampleRate <= 0) throw unknown();
+  const view = new DataView(bytes);
+  if (view.getUint32(0) !== 0x52494646 || view.getUint32(8) !== 0x57415645
+      || view.getUint32(4, true) !== bytes.byteLength - 8) throw unknown();
+  let offset = 12, channels = 0, rate = 0, frameBytes = 0, dataBytes = 0;
+  while (offset + 8 <= bytes.byteLength) {
+    const tag = view.getUint32(offset);
+    const size = view.getUint32(offset + 4, true);
+    const start = offset + 8;
+    offset = start + size + size % 2;
+    if (offset > bytes.byteLength) throw unknown();
+    if (tag === 0x666d7420) { // fmt
+      if (channels || size < 16) throw unknown();
+      const codec = view.getUint16(start, true);
+      channels = view.getUint16(start + 2, true);
+      rate = view.getUint32(start + 4, true);
+      frameBytes = view.getUint16(start + 12, true);
+      const bits = view.getUint16(start + 14, true);
+      const linear = (codec === 1 && [8, 16, 24, 32].includes(bits)) || (codec === 3 && bits === 32);
+      if (!linear || channels < 1 || channels > 2 || rate < 3_000 || rate > 384_000
+          || frameBytes !== channels * bits / 8 || view.getUint32(start + 8, true) !== rate * frameBytes) {
+        throw unknown();
+      }
+    } else if (tag === 0x64617461) { // data
+      if (!size || dataBytes || !frameBytes || size % frameBytes) throw unknown();
+      dataBytes = size;
+    }
+  }
+  if (!dataBytes || offset !== bytes.byteLength) throw unknown();
+  const frames = dataBytes / frameBytes;
+  return channels * Math.max(frames, Math.ceil(frames * outputSampleRate / rate));
+}
+
+
 export async function processLocalAudioFiles(
   files: File[],
   options: LocalAudioOptions,
@@ -254,10 +290,12 @@ export async function processLocalAudioFiles(
       onProgress?.({ stage: "reading", percent: Math.round((index / files.length) * 40), filename: file.name });
       const bytes = await file.arrayBuffer();
       ensureActive(signal);
+      const sampleBound = boundedWavSamples(bytes, context.sampleRate);
+      if (decodedSamples + sampleBound > LOCAL_AUDIO_MAX_DECODED_SAMPLES) throw new Error("local_audio_memory_limit");
       onProgress?.({ stage: "decoding", percent: Math.round(((index + 0.5) / files.length) * 40), filename: file.name });
       let buffer: AudioBuffer;
       try {
-        buffer = await context.decodeAudioData(bytes.slice(0));
+        buffer = await context.decodeAudioData(bytes);
       } catch (error) {
         throw new Error(`local_audio_decode_failed:${safeTitle(file.name)}`, { cause: error });
       }

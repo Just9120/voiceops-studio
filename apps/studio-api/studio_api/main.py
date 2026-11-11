@@ -98,7 +98,7 @@ from .job_notifications import (
     notification_preferences_payload,
     revoke_web_push_subscription,
 )
-from .google_docs_output import OUTPUT_RECONCILIATION_APP_PROPERTY
+from .google_docs_output import OUTPUT_RECONCILIATION_APP_PROPERTY, GoogleDocsTranscriptTransport
 from .google_drive import GoogleDriveReconciliationError, list_reconciliation_candidates
 from .job_output_folder_selection import VerifiedOutputFolderSelection, verify_output_folder_selection
 from .media_clip import MediaClipRangeError, normalize_media_clip_range, validate_known_clip_duration
@@ -1138,9 +1138,10 @@ def update_notification_preferences(
     limiter.check("notifications:preferences:update:"+user.id,30,3600)
     if data.web_push_enabled is True or data.email_enabled is True:
         raise HTTPException(410,"Для уведомлений о задачах используется только Telegram")
-    from .job_notifications import telegram_owner_allowed
+    from .job_notifications import lock_owner_notification_preferences, telegram_owner_allowed
     if data.telegram_enabled is True and not telegram_owner_allowed(settings, user.id):
         raise HTTPException(409,"Telegram-уведомления пока не настроены администратором")
+    lock_owner_notification_preferences(db, user.id)
     preference=notification_preference(db,owner_user_id=user.id)
     changed=[]
     for field_name in ("web_push_enabled","email_enabled","telegram_enabled"):
@@ -4131,7 +4132,14 @@ def check_output_reconciliation(job_id: str, request: Request, pair=Depends(requ
     def lookup(token, folder_id):
         return list_reconciliation_candidates(access_token, folder_id=folder_id, app_property_key=OUTPUT_RECONCILIATION_APP_PROPERTY, token=token)
     try:
-        result=check_job_output_reconciliation(db, owner_user_id=user.id, job_id=job.id, lookup=lookup, now=utcnow().replace(tzinfo=None))
+        transport = GoogleDocsTranscriptTransport()
+        result = check_job_output_reconciliation(
+            db, owner_user_id=user.id, job_id=job.id, lookup=lookup,
+            read_digest=lambda document_id: transport.read_document_digest(
+                access_token=access_token, document_id=document_id,
+            ),
+            now=utcnow().replace(tzinfo=None),
+        )
         audit(db,"job.output_reconciliation_checked",actor_user_id=user.id,subject_user_id=user.id,project_id=job.project_id,job_id=job.id,checked=result.checked,resolved=result.resolved,unresolved=result.unresolved,conflicts=result.conflicts)
         db.commit()
     except GoogleDriveReconciliationError:
@@ -4140,7 +4148,7 @@ def check_output_reconciliation(job_id: str, request: Request, pair=Depends(requ
         db.rollback(); raise HTTPException(409 if exc.reason!=OutputReconciliationReason.not_found else 404, "Output reconciliation unavailable")
     code = "OUTPUT_RECONCILIATION_RESOLVED" if result.resolved else "OUTPUT_RECONCILIATION_CONFLICT" if result.conflicts else "OUTPUT_RECONCILIATION_NOT_FOUND"
     write_diagnostic_event(owner_user_id=user.id, component="api", event_code=code, project_id=job.project_id, job_id=job.id, request_id=getattr(request.state,"request_id",None), correlation_id=getattr(request.state,"correlation_id",None), metadata={"case_status":"resolved" if result.resolved else "conflict" if result.conflicts else "reconciliation_required", "resolved": bool(result.resolved), "aggregate_count": result.checked})
-    return {"job_id":job.id,"checked":result.checked,"resolved":result.resolved,"unresolved":result.unresolved,"conflicts":result.conflicts}
+    return {"job_id":job.id,"checked":result.checked,"resolved":result.resolved,"unresolved":result.unresolved,"conflicts":result.conflicts,"unavailable":result.unavailable}
 
 @app.post("/api/jobs/{job_id}/cancel")
 def cancel_transcription_job(job_id: str, request: Request, pair=Depends(require_csrf), db: Session=Depends(get_db)):
@@ -4246,6 +4254,9 @@ def _system_summary(db: Session, user: User):
     }
     build={name: payload.get("build_id", "unavailable") for name,payload in component_status.items()}
     release_version=coherent_release_version(component_status)
+    security_email_status = "not_configured"
+    if settings.security_email_enabled:
+        security_email_status = "configured" if settings.security_email_configured() else "invalid_configuration"
     return {
         "environment": sanitize_build_id(settings.environment),
         "release_version": release_version,
@@ -4259,7 +4270,7 @@ def _system_summary(db: Session, user: User):
             "worker": {"status": worker_status.get("status", "unavailable")},
             "object_storage": storage_status,
             "stt_provider": provider_status,
-            "email": {"status": "not_configured"},
+            "email": {"status": security_email_status},
         },
         "google_drive": {"connected": bool(conn and conn.status==GoogleConnectionStatus.active), "scope_ready": bool(conn and conn.status==GoogleConnectionStatus.active and has_picker_browser_scope_boundary(conn.scopes))},
         "provider_credentials": {"active_count": int(active_creds), "ready": int(active_creds)>0},
@@ -4944,8 +4955,13 @@ def delete_google_maintenance_connection(request: Request, pair=Depends(require_
 @app.delete("/api/google/connection")
 def delete_google_connection(request: Request, pair=Depends(require_csrf), db: Session=Depends(get_db)):
     _,user=require_recent_auth(pair,request=request,db=db); limiter.check("google:disconnect:"+user.id, 20, 3600)
-    conn=current_google_connection(db, user)
-    if not conn: return google_connection_payload(None)
+    from .google_connection_access import revoke_google_connection_grants
+
+    conn = db.query(GoogleConnection).filter_by(
+        user_id=user.id, provider=GoogleProvider.google,
+    ).with_for_update().first()
+    if not conn:
+        return google_connection_payload(None)
     already_disconnected = (
         conn.status == GoogleConnectionStatus.revoked
         and conn.refresh_token_ciphertext is None
@@ -4957,6 +4973,7 @@ def delete_google_connection(request: Request, pair=Depends(require_csrf), db: S
     )
     if already_disconnected:
         return google_connection_payload(conn)
+    provider_revocation = revoke_google_connection_grants(conn, settings=settings)
     now=utcnow()
     conn.status=GoogleConnectionStatus.revoked
     conn.refresh_token_ciphertext=None
@@ -4968,9 +4985,12 @@ def delete_google_connection(request: Request, pair=Depends(require_csrf), db: S
     conn.maintenance_key_id=None
     conn.maintenance_revoked_at=now
     conn.updated_at=now
-    audit(db,"google.disconnected",actor_user_id=user.id,subject_user_id=user.id)
+    audit(
+        db, "google.disconnected", actor_user_id=user.id, subject_user_id=user.id,
+        outcome="partial" if provider_revocation == "unconfirmed" else "success",
+    )
     db.commit()
-    return google_connection_payload(conn)
+    return {**google_connection_payload(conn), "provider_revocation": provider_revocation}
 
 def google_drive_metadata_payload(meta):
     return {"id": meta.id, "name": meta.name, "mime_type": meta.mime_type, "size_bytes": meta.size_bytes, "web_view_link": meta.web_view_link, "created_time": meta.created_time, "modified_time": meta.modified_time, "is_folder": meta.is_folder}

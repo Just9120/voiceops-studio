@@ -1,6 +1,11 @@
 import { mutateWithCsrfRetry } from "./apiClient";
 
-export const REALTIME_CAPTION_CHANNEL = "studio-realtime-captions-v1";
+export const REALTIME_CAPTION_READY = "studio-realtime-caption-ready";
+
+export function realtimeCaptionChannel(overlayId: string): string | null {
+  if (!/^(?:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}|session_[a-f0-9]{32})$/i.test(overlayId)) return null;
+  return "studio-realtime-captions-v2:" + overlayId;
+}
 
 export type RealtimeCaptionMessage = {
   kind: "caption";
@@ -18,8 +23,8 @@ export function makeRealtimeCaptionMessage(
   return {
     kind: "caption",
     project_id: projectId,
-    committed: committed.slice(-3),
-    partial,
+    committed: committed.slice(-3).map((line) => line.slice(0, 2000)),
+    partial: partial.slice(0, 2000),
     emitted_at: new Date().toISOString(),
   };
 }

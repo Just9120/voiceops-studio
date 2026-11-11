@@ -705,6 +705,9 @@ function parseDiagnosticsEvent(candidate: unknown): DiagnosticsEvent | null {
     level: candidate.level as DiagnosticsEvent["level"],
     component: candidate.component as DiagnosticsEvent["component"],
     event_code: candidate.event_code,
+    ...(typeof candidate.job_id === "string" && /^[a-z0-9-]{1,128}$/i.test(candidate.job_id)
+      ? { job_id: candidate.job_id }
+      : {}),
     ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
     ...(occurrenceCount === undefined
       ? {}
@@ -1670,6 +1673,38 @@ function PreparationPanel({
   clearBatchSubmission: (key: string) => void;
 }) {
   const googlePickerPanelId = useId();
+  const composerFormRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    const form = composerFormRef.current;
+    const viewport = window.visualViewport;
+    if (!form || !viewport) return;
+    let frame = 0;
+    const keepFocusedFieldVisible = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const field = document.activeElement;
+        if (window.innerWidth > 620 || viewport.scale !== 1 ||
+            !(field instanceof HTMLElement) || !form.contains(field) ||
+            !field.matches("input, textarea, select")) return;
+        const footer = form.querySelector(".composer-footer");
+        if (!footer) return;
+        const box = field.getBoundingClientRect();
+        const availableBottom = Math.min(viewport.offsetTop + viewport.height, footer.getBoundingClientRect().top);
+        const gap = 12;
+        const overlap = box.bottom + gap - availableBottom;
+        if (overlap > 0 && availableBottom - viewport.offsetTop > box.height + gap) {
+          window.scrollBy({ top: overlap, behavior: "instant" });
+        }
+      });
+    };
+    form.addEventListener("focusin", keepFocusedFieldVisible);
+    viewport.addEventListener("resize", keepFocusedFieldVisible);
+    return () => {
+      cancelAnimationFrame(frame);
+      form.removeEventListener("focusin", keepFocusedFieldVisible);
+      viewport.removeEventListener("resize", keepFocusedFieldVisible);
+    };
+  }, []);
   const [yandexPickerBusy, setYandexPickerBusy] = useState(false);
   const yandexPickerOperation = useRef<AbortController | null>(null);
   const yandexScope = useRef(project.id);
@@ -3386,6 +3421,22 @@ function PreparationPanel({
       ),
     );
   }
+  function segmentTitleEditing(rowId: string, segment: ComposerSegment | undefined) {
+    if (!segment) return {};
+    return {
+      onFocus: () => titleBeforeEdit.current.set(segment.id, segment.title),
+      onBlur: () => titleBeforeEdit.current.delete(segment.id),
+      onKeyDown: (event: ReactKeyboardEvent<HTMLInputElement>) => {
+        if (event.nativeEvent.isComposing || !["Enter", "Escape"].includes(event.key)) return;
+        event.preventDefault();
+        const previous = titleBeforeEdit.current.get(segment.id);
+        if (event.key === "Escape" && previous !== undefined) {
+          updateSegment(rowId, segment.id, { title: previous });
+        }
+        event.currentTarget.blur();
+      },
+    };
+  }
   function addRow() {
     const row = newComposerRow();
     setRows((current) => [...current, row]);
@@ -4818,6 +4869,7 @@ function PreparationPanel({
       )}
       <form
         className="job-creator composer"
+        ref={composerFormRef}
         onSubmit={createBatch}
         aria-label="Композитор пакетных задач"
       >
@@ -5208,12 +5260,7 @@ function PreparationPanel({
                       Название документа
                       <input
                         value={row.segments[0]?.title ?? ""}
-                        onFocus={() => titleBeforeEdit.current.set(row.id, row.segments[0]?.title ?? "")}
-                        onKeyDown={(event) => {
-                          if (event.nativeEvent.isComposing) return;
-                          if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); }
-                          if (event.key === "Escape") { event.preventDefault(); const first=row.segments[0]; if (first) updateSegment(row.id, first.id, {title:titleBeforeEdit.current.get(row.id) ?? ""}); event.currentTarget.blur(); }
-                        }}
+                        {...segmentTitleEditing(row.id, row.segments[0])}
                         onChange={(event) => {
                           const first = row.segments[0];
                           if (first) {
@@ -5372,6 +5419,7 @@ function PreparationPanel({
                               Название документа
                               <input
                                 value={segment.title}
+                                {...segmentTitleEditing(row.id, segment)}
                                 onChange={(event) =>
                                   updateSegment(row.id, segment.id, {
                                     title: event.target.value,
@@ -8678,7 +8726,9 @@ function SettingsPage({
       if (settingsMountedRef.current) setGoogleConnection(request.value);
       notice = {
         kind: operation.kind,
-        message: "Google Drive отключён.",
+        message: "provider_revocation" in request.value && request.value.provider_revocation === "unconfirmed"
+          ? "Google Drive отключён в Studio. Google не подтвердил отзыв доступа. Его можно проверить в настройках аккаунта Google."
+          : "Google Drive отключён.",
         tone: "notice",
         refreshOnMount: !settingsMountedRef.current,
       };
@@ -9790,13 +9840,14 @@ function DiagnosticsSettings({
     .toLocaleLowerCase("ru-RU");
   const operationSuggestions = timeline.map((event) => ({
     label: `${diagnosticEventPresentation(event).title} · ${diagnosticsComponentLabel(event.component)} · ${formatDiagnosticsTime(event.occurred_at)}`,
-    code: event.event_code,
+    identifiers: [event.event_code, event.id, event.job_id],
   }))
     .filter(
-      ({ label, code }) =>
+      ({ label, identifiers }) =>
         !operationSearch ||
-        label.toLocaleLowerCase("ru-RU").includes(operationSearch) ||
-        code.toLocaleLowerCase("ru-RU").includes(operationSearch),
+        [label, ...identifiers].some((value) =>
+          value?.toLocaleLowerCase("ru-RU").includes(operationSearch),
+        ),
     )
     .filter((suggestion, index, all) => all.findIndex((item) => item.label === suggestion.label) === index)
     .slice(0, 5);
@@ -9900,6 +9951,12 @@ function DiagnosticsSettings({
             <dd>{safeText(system.health?.object_storage?.status)} · {safeText(system.health?.object_storage?.probe)}</dd>
             <dt>STT provider</dt>
             <dd>{safeText(system.health?.stt_provider?.status)} · availability {safeText(system.health?.stt_provider?.availability)} · probe {safeText(system.health?.stt_provider?.probe)}</dd>
+            <dt>Почта безопасности</dt>
+            <dd>{system.health?.email?.status === "configured"
+              ? "Настроена. Доставка не проверялась."
+              : system.health?.email?.status === "invalid_configuration"
+                ? "Ошибка конфигурации"
+                : system.health?.email?.status === "not_configured" ? "Не настроена" : "Нет данных"}</dd>
             <dt>Среда</dt>
             <dd>{safeText(system.environment ?? system.pwa_mode)}</dd>
             <dt>Google Drive подключён</dt>
@@ -9941,8 +9998,8 @@ function DiagnosticsSettings({
               <dd>{alertSignalLabel(system.alerts?.incident_monitoring)}</dd>
               <dt>Telegram для операторских предупреждений</dt>
               <dd>{alertTransportLabel(system.alerts?.telegram)}</dd>
-              <dt>Email</dt>
-              <dd>{alertTransportLabel(system.alerts?.email ?? system.health?.email?.status)}</dd>
+              <dt>Почта для операторских предупреждений</dt>
+              <dd>{alertTransportLabel(system.alerts?.email)}</dd>
               <dt>Лимит временного хранилища</dt>
               <dd>{alertSignalLabel(system.alerts?.storage_limit)}</dd>
               <dt>Остаток API credits</dt>

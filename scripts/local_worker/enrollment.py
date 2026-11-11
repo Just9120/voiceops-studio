@@ -7,7 +7,7 @@ import time
 import urllib.error
 import urllib.request
 
-from .protocol import APIError, NoRedirect, StudioClient, WorkerError, canonical_id, origin, response_bytes, strict_json
+from .protocol import APIError, NoRedirect, STUDIO_USER_AGENT, StudioClient, WorkerError, canonical_id, origin, response_bytes, strict_json
 
 ENROLLMENT_PATH = "/api/local-execution/enrollment"
 STUDIO_ORIGIN = "https://studio.cloud-nodes.net"
@@ -17,7 +17,7 @@ def _request(base, path, body):
     request = urllib.request.Request(base + ENROLLMENT_PATH + path,
         data=json.dumps(body, separators=(",", ":")).encode(), method="POST",
         headers={"Content-Type": "application/json", "Accept": "application/json",
-                 "X-VoiceOps-Local-Protocol": "1"})
+                 "X-VoiceOps-Local-Protocol": "1", "User-Agent": STUDIO_USER_AGENT})
     try:
         with urllib.request.build_opener(NoRedirect()).open(request, timeout=12) as reply:
             return strict_json(response_bytes(reply, 8192))

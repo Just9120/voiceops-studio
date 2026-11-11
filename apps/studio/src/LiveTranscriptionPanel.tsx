@@ -33,7 +33,8 @@ import {
   type RealtimeDraft,
 } from "./realtimeDrafts";
 import {
-  REALTIME_CAPTION_CHANNEL,
+  REALTIME_CAPTION_READY,
+  realtimeCaptionChannel,
   deliverRealtimeConsumer,
   makeRealtimeCaptionMessage,
 } from "./realtimeConsumers";
@@ -235,6 +236,8 @@ export function LiveTranscriptionPanel({
   const csrfRef = useRef(csrf);
   const onCsrfRef = useRef(onCsrf);
   const captionChannelRef = useRef<BroadcastChannel | null>(null);
+  const [overlayId] = useState(newRealtimeClientSessionId);
+  const [overlayError, setOverlayError] = useState(false);
   const consumerSequenceRef = useRef(0);
   const microphoneSupported = Boolean(
     navigator.mediaDevices?.getUserMedia,
@@ -287,14 +290,20 @@ export function LiveTranscriptionPanel({
   onCsrfRef.current = onCsrf;
 
   useEffect(() => {
-    if (typeof BroadcastChannel === "undefined") return;
-    const channel = new BroadcastChannel(REALTIME_CAPTION_CHANNEL);
+    const name = realtimeCaptionChannel(overlayId);
+    if (typeof BroadcastChannel === "undefined" || !name) return;
+    const channel = new BroadcastChannel(name);
     captionChannelRef.current = channel;
+    channel.onmessage = ({ data }) => {
+      if (data === REALTIME_CAPTION_READY) {
+        channel.postMessage(makeRealtimeCaptionMessage(projectId, segmentsRef.current, partialRef.current));
+      }
+    };
     return () => {
       channel.close();
       if (captionChannelRef.current === channel) captionChannelRef.current = null;
     };
-  }, [projectId]);
+  }, [overlayId, projectId]);
 
   function publishCaption(committed: string[], currentPartial: string) {
     captionChannelRef.current?.postMessage(
@@ -1487,17 +1496,20 @@ export function LiveTranscriptionPanel({
         <div className="actions">
           <button
             type="button"
-            onClick={() =>
-              window.open(
-                `/realtime-overlay?project=${encodeURIComponent(projectId)}`,
-                "studio-realtime-overlay",
+            onClick={() => {
+              const popup = window.open(
+                "/realtime-overlay?" + new URLSearchParams({ project: projectId }) + "#" + overlayId,
+                "studio-realtime-overlay-" + overlayId,
                 "popup,width=1280,height=720",
-              )
-            }
+              );
+              setOverlayError(!popup);
+            }}
           >
-            Открыть overlay для браузера / OBS
+            Открыть окно субтитров
           </button>
         </div>
+        <p className="muted">В OBS добавьте «Захват окна» и выберите открытое окно Studio.</p>
+        {overlayError && <p role="status">Разрешите всплывающие окна для Studio и попробуйте снова.</p>}
         {active && consumersOpen && (
           <form
             className="realtime-consumer-endpoints"
