@@ -105,38 +105,80 @@ class CompanionWindow:
         self.inventory_disk = None
         self.probes = {}
         self.answered_install = None
-        self.status = tk.StringVar(value="Подключите компьютер к VoiceOps Studio.")
+        self.status = tk.StringVar(value="Обработчик остановлен.")
         self.label = tk.StringVar(value="Мой компьютер")
         self.auto = tk.BooleanVar(value=False)
         window.title("VoiceOps Studio — локальный обработчик")
         window.minsize(440, 375)
         window.protocol("WM_DELETE_WINDOW", self.close_window)
-        view = ttk.Frame(window, padding=16)
-        view.pack(fill="both", expand=True)
-        ttk.Label(view, textvariable=self.status, wraplength=410).pack(anchor="w", pady=(0, 10))
-        ttk.Label(view, text="Имя компьютера").pack(anchor="w")
-        self.label_field = ttk.Entry(view, textvariable=self.label)
+        scroll = ttk.Frame(window)
+        ttk.Separator(window).grid(row=1, column=0, sticky="ew")
+        window.grid_rowconfigure(0, weight=1)
+        window.grid_columnconfigure(0, weight=1)
+        scroll.grid(row=0, column=0, sticky="nsew")
+        style = ttk.Style(window)
+        self.canvas = tk.Canvas(scroll, width=424, height=326, highlightthickness=0, takefocus=False,
+                                background=style.lookup("TFrame", "background") or window.cget("background"))
+        scrollbar = ttk.Scrollbar(scroll, orient="vertical", command=self.canvas.yview, takefocus=False)
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        body = ttk.Frame(self.canvas, padding=(16, 12))
+        body_item = self.canvas.create_window(0, 0, anchor="nw", window=body)
+        body.bind("<Configure>", lambda _: self.update_scroll())
+        self.canvas.bind("<Configure>", lambda event: self.canvas.itemconfigure(body_item, width=event.width))
+
+        pairing = ttk.LabelFrame(body, text="1. Привязка", padding=10)
+        pairing.pack(fill="x")
+        self.connection_label = ttk.Label(pairing)
+        self.connection_label.pack(anchor="w", pady=(0, 6))
+        ttk.Label(pairing, text="Имя компьютера").pack(anchor="w")
+        self.label_field = ttk.Entry(pairing, textvariable=self.label)
         self.label_field.pack(fill="x")
-        self.pair_button = ttk.Button(view, text="Связать со Studio", command=self.pair)
-        self.import_connection = ttk.Button(view, text="Использовать прежнее подключение", command=self.adopt)
-        self.approve_button = ttk.Button(view, text="Открыть подтверждение в браузере", command=self.open_approval)
-        self.import_model = ttk.Button(view, text="Импортировать файлы выбранной модели", command=self.import_models)
-        ttk.Label(view, text="Модель и версия для установки или запуска").pack(anchor="w", pady=(8, 0))
+        self.pair_button = ttk.Button(pairing, text="Связать со Studio", command=self.pair)
+        self.pair_button.pack(anchor="w", pady=(6, 0))
+        self.import_connection = ttk.Button(pairing, text="Использовать прежнее подключение", command=self.adopt)
+        self.approve_button = ttk.Button(pairing, text="Открыть подтверждение в браузере", command=self.open_approval)
+
+        model = ttk.LabelFrame(body, text="2. Модель и версия", padding=10)
+        model.pack(fill="x", pady=(10, 0))
+        self.model_hint = ttk.Label(model, text="Станет доступно после привязки компьютера.")
+        self.model_options = ttk.Frame(model)
         defaults = {(profile_id, profile.revision): profile for profile_id, profile in PROFILES.items()}
         self.model_choices = tuple((defaults | RETAINED_PROFILES).items())
-        self.model_choice = ttk.Combobox(view, state="readonly", values=self.model_labels())
+        self.model_choice = ttk.Combobox(self.model_options, state="readonly", values=self.model_labels())
         self.model_choice.current(0)
         self.model_choice.pack(fill="x")
-        self.install_model = ttk.Button(view, text="Выбрать диск и скачать / продолжить", command=self.download_model)
-        self.probe_button = ttk.Button(view, text="Проверить скорость выбранной модели", command=self.probe_model)
-        self.remove_model_button = ttk.Button(view, text="Удалить выбранную версию", command=self.remove_model)
-        self.start_button = ttk.Button(view, text="Запустить обработчик", command=self.start)
-        self.stop_button = ttk.Button(view, text="Остановить", command=self.stop_task)
-        self.auto_button = ttk.Checkbutton(view, text="Запускать при входе в Windows",
-                                           variable=self.auto, command=self.toggle_autostart)
-        for button in (self.pair_button, self.import_connection, self.approve_button, self.import_model, self.install_model, self.probe_button, self.remove_model_button,
-                       self.start_button, self.stop_button, self.auto_button):
+        self.import_model = ttk.Button(self.model_options, text="Импортировать файлы выбранной модели",
+                                       command=self.import_models)
+        self.install_model = ttk.Button(self.model_options, text="Выбрать диск и скачать / продолжить",
+                                        command=self.download_model)
+        self.probe_button = ttk.Button(self.model_options, text="Проверить скорость выбранной модели",
+                                       command=self.probe_model)
+        self.remove_model_button = ttk.Button(self.model_options, text="Удалить выбранную версию", command=self.remove_model)
+        for button in (self.import_model, self.install_model, self.probe_button, self.remove_model_button):
             button.pack(anchor="w", pady=(5, 0))
+
+        footer = ttk.Frame(window, padding=(16, 8, 16, 12))
+        footer.grid(row=2, column=0, sticky="ew")
+        ttk.Label(footer, text="3. Запуск").pack(anchor="w")
+        actions = ttk.Frame(footer)
+        actions.pack(fill="x", pady=(4, 4))
+        self.start_button = ttk.Button(actions, text="Запустить обработчик", command=self.start)
+        self.stop_button = ttk.Button(actions, text="Остановить", command=self.stop_task)
+        self.start_button.pack(side="left")
+        self.stop_button.pack(side="left", padx=(8, 0))
+        self.auto_button = ttk.Checkbutton(footer, text="Запускать при входе в Windows",
+                                           variable=self.auto, command=self.toggle_autostart)
+        self.auto_button.pack(anchor="w")
+        self.status_label = ttk.Label(footer, textvariable=self.status, wraplength=400)
+        self.status_label.pack(fill="x", pady=(6, 0))
+        footer.bind("<Configure>", lambda event: self.status_label.configure(wraplength=max(1, event.width - 32)))
+
+        window.bind("<MouseWheel>", self.scroll_window, add="+")
+        for control in (self.label_field, self.pair_button, self.import_connection, self.approve_button,
+                        self.model_choice, self.import_model, self.install_model, self.probe_button, self.remove_model_button):
+            control.bind("<FocusIn>", self.reveal_control, add="+")
         restore_active = False
         try:
             if self.legacy_path.exists():
@@ -167,6 +209,29 @@ class CompanionWindow:
             if restore_active:
                 window.after(0, self.start)
 
+    def update_scroll(self):
+        bounds = self.canvas.bbox("all")
+        if bounds:
+            self.canvas.configure(scrollregion=bounds)
+
+    def scroll_window(self, event):
+        if event.widget != self.model_choice and event.delta and self.canvas.yview() != (0.0, 1.0):
+            self.canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+
+    def reveal_control(self, event):
+        bounds = self.canvas.bbox("all")
+        if not bounds:
+            return
+        widget = event.widget
+        offset = widget.winfo_rooty() - self.canvas.winfo_rooty()
+        top = self.canvas.canvasy(0) + offset
+        widget_height = widget.winfo_height()
+        height = self.canvas.winfo_height()
+        if offset < 0:
+            self.canvas.yview_moveto(top / bounds[3])
+        elif offset + widget_height > height:
+            self.canvas.yview_moveto((top + widget_height - height) / bounds[3])
+
     def add_tray(self):
         import pystray
         from PIL import Image, ImageDraw
@@ -184,13 +249,29 @@ class CompanionWindow:
         self.pair_button.configure(state="disabled" if busy else "normal",
                                    text="Переподключить к Studio" if self.identity else "Связать со Studio")
         self.label_field.configure(state="disabled" if busy else "normal")
+        self.connection_label.configure(text="Компьютер привязан к Studio." if self.identity
+                                        else "Подключите компьютер к своему аккаунту Studio.")
+        if self.legacy and not self.identity:
+            self.import_connection.pack(anchor="w", pady=(5, 0))
+        else:
+            self.import_connection.pack_forget()
+        if self.approval_url:
+            self.approve_button.pack(anchor="w", pady=(5, 0))
+        else:
+            self.approve_button.pack_forget()
+        if self.identity:
+            self.model_hint.pack_forget()
+            self.model_options.pack(fill="x")
+        else:
+            self.model_options.pack_forget()
+            self.model_hint.pack(anchor="w")
         self.import_connection.configure(state="normal" if self.legacy and not self.identity and not busy else "disabled")
         self.approve_button.configure(state="normal" if self.approval_url else "disabled")
         self.import_model.configure(state="normal" if self.identity and not busy else "disabled")
         self.install_model.configure(state="normal" if self.identity and not busy else "disabled")
         self.probe_button.configure(state="normal" if self.identity and not busy else "disabled")
         self.remove_model_button.configure(state="normal" if self.identity and not busy else "disabled")
-        self.model_choice.configure(state="disabled" if busy else "readonly")
+        self.model_choice.configure(state="readonly" if self.identity and not busy else "disabled")
         self.start_button.configure(state="normal" if self.identity and not busy else "disabled")
         self.stop_button.configure(state="normal" if busy else "disabled")
         self.auto_button.configure(state="normal" if getattr(sys, "frozen", False) else "disabled")

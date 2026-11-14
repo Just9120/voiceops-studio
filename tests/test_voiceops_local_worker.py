@@ -135,6 +135,50 @@ def test_studio_requests_identify_the_companion_during_and_after_enrollment(monk
                      f"{protocol.COMPANION_PATH}/heartbeat"]
 
 
+@pytest.mark.skipif(os.name != "nt", reason="checks the native Windows Tk layout")
+def test_companion_keeps_stop_visible_at_minimum_size_after_pairing(tmp_path, monkeypatch):
+    import tkinter as tk
+    from voiceops_companion import CompanionWindow
+
+    monkeypatch.setattr("voiceops_companion.default_profile", lambda: tmp_path / "profile.json")
+    monkeypatch.setattr(CompanionWindow, "add_tray", lambda self: None)
+    monkeypatch.setattr(CompanionWindow, "publish_inventory", lambda self: None)
+
+    def visible_inside(widget, parent):
+        offset = widget.winfo_rooty() - parent.winfo_rooty()
+        return (widget.winfo_ismapped() and 0 <= offset
+                and offset + widget.winfo_height() <= parent.winfo_height())
+
+    window = tk.Tk()
+    window.attributes("-alpha", 0.0)
+    try:
+        companion = CompanionWindow(window)
+        window.geometry("440x375")
+        window.update()
+        assert not companion.model_choice.winfo_ismapped()
+        assert visible_inside(companion.stop_button, window)
+
+        companion.identity = {"origin": "https://studio.example", "token": "synthetic"}
+        companion.enable_controls()
+        window.update()
+        assert companion.pair_button.tk_focusNext() == companion.model_choice
+        assert companion.model_choice.winfo_ismapped()
+
+        companion.thread = object()
+        companion.enable_controls()
+        companion.status.set("Обработчик ожидает задачи из Studio. " * 10)
+        window.update()
+        companion.canvas.yview_moveto(1)
+        window.update()
+        assert companion.canvas.yview()[0] > 0
+        assert visible_inside(companion.stop_button, window)
+        assert not companion.stop_button.instate(["disabled"])
+        companion.stop_button.invoke()
+        assert companion.stop.is_set()
+    finally:
+        window.destroy()
+
+
 def test_companion_reconnect_reuses_current_user_model_with_new_token(tmp_path, monkeypatch):
     pytest.importorskip("tkinter")
     import voiceops_companion as companion
