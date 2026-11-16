@@ -368,32 +368,32 @@ export function DirectDriveUploadPanel({
         </details>
       </div>
       {error && <p className="error" role="alert">{error}</p>}
-      <div className="actions">
-        <button
-          type="button"
-          onClick={() => fileInput.current?.click()}
-          disabled={busy}
-        >
-          Выбрать аудио или видео с устройства
-        </button>
-        <button type="button" onClick={() => void chooseFolder()} disabled={busy || folderLocked}>
-          {folder ? "Изменить целевую папку" : "Выбрать целевую папку"}
-        </button>
-        {folder && <span>Папка: <strong>{folder.name}</strong></span>}
-        <input
-          ref={fileInput}
-          hidden
-          type="file"
-          multiple
-          accept="audio/*,video/*,application/ogg,.ogg"
-          aria-label="Выбрать файлы для прямой загрузки в Google Drive"
-          onChange={(event) => chooseFiles(Array.from(event.target.files || []))}
-        />
+      <div className="direct-drive-workbench">
+        <div className="direct-drive-workbench-panel">
+          <h4>Исходные файлы</h4>
+          <p className="muted">До {DIRECT_DRIVE_UPLOAD_MAX_FILES} файлов, суммарно до 2 ГБ. Названия и содержимое сохраняются.</p>
+          <button type="button" onClick={() => fileInput.current?.click()} disabled={busy}>
+            Выбрать аудио или видео с устройства
+          </button>
+          <input
+            ref={fileInput}
+            hidden
+            type="file"
+            multiple
+            accept="audio/*,video/*,application/ogg,.ogg"
+            aria-label="Выбрать файлы для прямой загрузки в Google Drive"
+            onChange={(event) => chooseFiles(Array.from(event.target.files || []))}
+          />
+        </div>
+        <div className="direct-drive-workbench-panel">
+          <h4>Папка назначения</h4>
+          {folder && <p>Папка: <strong>{folder.name}</strong></p>}
+          {folderLocked && <p className="muted">Целевая папка зафиксирована для этой операции. Чтобы выбрать другую, начните новый набор файлов.</p>}
+          <button type="button" onClick={() => void chooseFolder()} disabled={busy || folderLocked}>
+            {folder ? "Изменить целевую папку" : "Выбрать целевую папку"}
+          </button>
+        </div>
       </div>
-      <p className="muted">
-        До {DIRECT_DRIVE_UPLOAD_MAX_FILES} файлов за один запуск, суммарно до 2 ГБ. Названия и содержимое файлов сохраняются без преобразования.
-      </p>
-      {folderLocked && <p className="muted">Целевая папка зафиксирована для этой операции. Чтобы выбрать другую, начните новый набор файлов.</p>}
       {items.length > 0 && <ol className="direct-drive-upload-list">
         {items.map((item, index) => {
           const loadedBytes = item.status === "completed"

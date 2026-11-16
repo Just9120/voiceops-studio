@@ -4,7 +4,7 @@ import { registerSW } from "virtual:pwa-register";
 import App from "./App";
 import { RealtimeOverlay } from "./RealtimeOverlay";
 import { PwaErrorBoundary } from "./PwaErrorBoundary";
-import { PwaUpdateNotice } from "./PwaUpdateNotice";
+import { PwaConnectivityNotice, PwaUpdateNotice } from "./PwaUpdateNotice";
 import { emitPwaServiceWorkerError, installPwaGlobalErrorHandlers } from "./pwaDiagnostics";
 import { installPwaReturnChecks, pwaUpdates } from "./pwaUpdates";
 import { initializeStudioTheme } from "./theme";
@@ -36,6 +36,7 @@ export function renderStudioApp() {
   ReactDOM.createRoot(root).render(
     <React.StrictMode>
       <PwaErrorBoundary>
+        <PwaConnectivityNotice />
         {window.location.pathname === "/realtime-overlay" ? <RealtimeOverlay /> : <App />}
         <PwaUpdateNotice />
       </PwaErrorBoundary>

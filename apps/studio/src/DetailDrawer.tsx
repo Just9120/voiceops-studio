@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { lockDocumentScroll } from "./documentScrollLock";
 
-export function DetailDrawer({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+export function DetailDrawer({ title, actions, children, onClose }: { title: string; actions?: ReactNode; children: ReactNode; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   useEffect(() => {
@@ -24,6 +24,7 @@ export function DetailDrawer({ title, children, onClose }: { title: string; chil
     onCancel={(event) => { event.preventDefault(); onClose(); }}
     onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); onClose(); } }}>
     <header><h2 id={titleId}>{title}</h2><button type="button" onClick={onClose}>Закрыть детали</button></header>
+    {actions && <div className="detail-drawer-actions">{actions}</div>}
     <div className="detail-drawer-body">{children}</div>
   </dialog>, document.body);
 }

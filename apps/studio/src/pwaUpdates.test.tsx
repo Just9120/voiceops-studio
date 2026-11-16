@@ -1,7 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PwaUpdateNotice } from "./PwaUpdateNotice";
+import { PwaConnectivityNotice, PwaUpdateNotice } from "./PwaUpdateNotice";
 import { installPwaReturnChecks, PwaUpdateController } from "./pwaUpdates";
 
 afterEach(() => {
@@ -12,6 +12,19 @@ afterEach(() => {
 function registration(update = vi.fn(async () => undefined)) {
   return { waiting: null, update } as unknown as ServiceWorkerRegistration;
 }
+
+it("announces loss of network and clears the notice after reconnection", () => {
+  const connected = vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(true);
+  render(<><input aria-label="Черновик" defaultValue="Тестовый черновик" /><PwaConnectivityNotice /></>);
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  connected.mockReturnValue(false);
+  act(() => window.dispatchEvent(new Event("offline")));
+  expect(screen.getByRole("status")).toHaveTextContent("Устройство без сети");
+  connected.mockReturnValue(true);
+  act(() => window.dispatchEvent(new Event("online")));
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Черновик" })).toHaveValue("Тестовый черновик");
+});
 
 describe("PWA update choice", () => {
   it("keeps an unfinished form after Later and offers the waiting update on return", async () => {

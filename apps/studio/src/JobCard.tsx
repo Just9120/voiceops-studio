@@ -288,8 +288,8 @@ export function JobCard({
           <summary>Показать детали старой ошибки</summary>
           {body}
         </details>
-      ) : ready ? detailsOpen && <DetailDrawer title={jobTitle(job)} onClose={closeDetails}>
-        {isApprovedOutputUrl(primaryUrl) && <ResourceExternalLink href={primaryUrl!} label="Открыть документ" ariaLabel="Открыть документ" />}
+      ) : ready ? detailsOpen && <DetailDrawer title={jobTitle(job)} onClose={closeDetails}
+        actions={isApprovedOutputUrl(primaryUrl) && <ResourceExternalLink href={primaryUrl!} label="Открыть документ" ariaLabel="Открыть документ" />}>
         {body}
       </DetailDrawer> : body}
     </article>

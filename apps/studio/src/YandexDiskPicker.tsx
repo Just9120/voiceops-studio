@@ -229,7 +229,7 @@ export function YandexDiskPicker({ mode, csrf, onCsrf, onFinish }: Props) {
     </>}
     </div>
     <footer className="actions google-drive-folder-picker-actions"><button type="button" className="primary" disabled={!page || busy || pending || (mode === "sources" && !selection.size)} aria-busy={pending || undefined} onClick={() => void confirm()}>{pending ? "Проверяем выбор…" : mode === "sources" ? `Выбрать файлы (${selection.size})` : mode === "source-folder" && folderPreview ? `Подтвердить выбор (${folderPreview.resources.length})` : "Выбрать эту папку"}</button>
-      <span className="muted">{mode === "sources" ? `Выбрано файлов: ${selection.size} из 50` : "Выбирается текущая открытая папка"}</span></footer>
+      <span className="muted" aria-live="polite">{mode === "sources" ? `Выбрано файлов: ${selection.size} из 50` : page ? `Текущая папка: ${page.folder.name}` : "Выбирается текущая открытая папка"}</span></footer>
   </section></div>;
 }
 

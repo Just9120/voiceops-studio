@@ -925,48 +925,50 @@ function GoogleDrivePickerDialog({
           </button>
         </header>
 
-        <form
-          className="google-drive-picker-search"
-          role="search"
-          onSubmit={submitSearch}
-        >
-          <label htmlFor={searchId}>{copy.searchLabel}</label>
-          <div>
-            <input
-              id={searchId}
-              type="search"
-              value={searchInput}
-              maxLength={256}
-              placeholder={copy.searchPlaceholder}
-              disabled={current === null || loading}
-              onChange={(event) => setSearchInput(event.target.value)}
-            />
-            <button
-              type="submit"
-              className="secondary"
-              disabled={current === null || loading}
-            >
-              Найти
-            </button>
-            {searchTerm && (
-              <button type="button" className="secondary" onClick={clearSearch} disabled={loading || searchLoading}>
-                Сбросить
+        <div className="google-drive-picker-controls">
+          <form
+            className="google-drive-picker-search"
+            role="search"
+            onSubmit={submitSearch}
+          >
+            <label htmlFor={searchId}>{copy.searchLabel}</label>
+            <div>
+              <input
+                id={searchId}
+                type="search"
+                value={searchInput}
+                maxLength={256}
+                placeholder={copy.searchPlaceholder}
+                disabled={current === null || loading}
+                onChange={(event) => setSearchInput(event.target.value)}
+              />
+              <button
+                type="submit"
+                className="secondary"
+                disabled={current === null || loading}
+              >
+                Найти
               </button>
-            )}
-          </div>
-          <small>
-            Google Drive ищет по началу имени среди доступных объектов.
-          </small>
-        </form>
+              {searchTerm && (
+                <button type="button" className="secondary" onClick={clearSearch} disabled={loading || searchLoading}>
+                  Сбросить
+                </button>
+              )}
+            </div>
+            <small>
+              Google Drive ищет по началу имени среди доступных объектов.
+            </small>
+          </form>
 
-        <label className="google-drive-picker-sort">Сортировка папок и файлов
-          <select value={sort} disabled={!current || !initialized} onChange={(event) => void changeSort(event.target.value as DriveSort)}>
-            <option value="name_natural">По имени: А → Я</option>
-            <option value="name_natural desc">По имени: Я → А</option>
-            <option value="modifiedTime desc,name_natural">По обновлению: сначала новые</option>
-            <option value="modifiedTime,name_natural">По обновлению: сначала старые</option>
-          </select>
-        </label>
+          <label className="google-drive-picker-sort">Сортировка папок и файлов
+            <select value={sort} disabled={!current || !initialized} onChange={(event) => void changeSort(event.target.value as DriveSort)}>
+              <option value="name_natural">По имени: А → Я</option>
+              <option value="name_natural desc">По имени: Я → А</option>
+              <option value="modifiedTime desc,name_natural">По обновлению: сначала новые</option>
+              <option value="modifiedTime,name_natural">По обновлению: сначала старые</option>
+            </select>
+          </label>
+        </div>
 
         <nav className="google-drive-folder-breadcrumbs" aria-label="Путь">
           {path.map((folder, index) => (

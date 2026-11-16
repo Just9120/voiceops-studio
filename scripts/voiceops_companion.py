@@ -126,10 +126,11 @@ class CompanionWindow:
         body = ttk.Frame(self.canvas, padding=(16, 12))
         body_item = self.canvas.create_window(0, 0, anchor="nw", window=body)
         body.bind("<Configure>", lambda _: self.update_scroll())
-        self.canvas.bind("<Configure>", lambda event: self.canvas.itemconfigure(body_item, width=event.width))
+
 
         pairing = ttk.LabelFrame(body, text="1. Привязка", padding=10)
-        pairing.pack(fill="x")
+        pairing.grid(row=0, column=0, sticky="new")
+        body.columnconfigure(0, weight=1)
         self.connection_label = ttk.Label(pairing)
         self.connection_label.pack(anchor="w", pady=(0, 6))
         ttk.Label(pairing, text="Имя компьютера").pack(anchor="w")
@@ -141,7 +142,7 @@ class CompanionWindow:
         self.approve_button = ttk.Button(pairing, text="Открыть подтверждение в браузере", command=self.open_approval)
 
         model = ttk.LabelFrame(body, text="2. Модель и версия", padding=10)
-        model.pack(fill="x", pady=(10, 0))
+        model.grid(row=1, column=0, sticky="new", pady=(10, 0))
         self.model_hint = ttk.Label(model, text="Станет доступно после привязки компьютера.")
         self.model_options = ttk.Frame(model)
         defaults = {(profile_id, profile.revision): profile for profile_id, profile in PROFILES.items()}
@@ -158,6 +159,24 @@ class CompanionWindow:
         self.remove_model_button = ttk.Button(self.model_options, text="Удалить выбранную версию", command=self.remove_model)
         for button in (self.import_model, self.install_model, self.probe_button, self.remove_model_button):
             button.pack(anchor="w", pady=(5, 0))
+
+        tray_hint = ttk.Label(body, text="Закрытие окна сворачивает обработчик в трей. Остановка — внизу окна.")
+        tray_hint.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        side_by_side = False
+
+        def resize_panels(event):
+            nonlocal side_by_side
+            self.canvas.itemconfigure(body_item, width=event.width)
+            tray_hint.configure(wraplength=max(1, event.width - 32))
+            wide = event.width >= max(720, self.model_options.winfo_reqwidth() * 2 + 56)
+            if side_by_side == wide:
+                return
+            side_by_side = wide
+            body.columnconfigure(1, weight=1 if wide else 0)
+            pairing.grid_configure(padx=(0, 10) if wide else 0)
+            model.grid_configure(row=0 if wide else 1, column=1 if wide else 0, pady=0 if wide else (10, 0))
+
+        self.canvas.bind("<Configure>", resize_panels)
 
         footer = ttk.Frame(window, padding=(16, 8, 16, 12))
         footer.grid(row=2, column=0, sticky="ew")

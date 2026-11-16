@@ -201,7 +201,6 @@ import { MultiTranscriptionCard } from "./MultiTranscriptionCard";
 import { TranscriptionAnalyticsPanel } from "./TranscriptionAnalyticsPanel";
 import { TranscriptCatalogMigrationPanel } from "./TranscriptCatalogMigrationPanel";
 import { LiveTranscriptionPanel } from "./LiveTranscriptionPanel";
-import { ConfirmClearDialog } from "./ConfirmClearDialog";
 import { FolderImportDialog } from "./FolderImportDialog";
 import { AccountSessionsPanel } from "./AccountSessionsPanel";
 import { AccountSecurityPanel } from "./AccountSecurityPanel";
@@ -1793,6 +1792,20 @@ function PreparationPanel({
   const [retries, setRetries] = useState<Record<string, JobRetryState>>({});
   const [progress, setProgress] = useState<Record<string, JobProgressState>>({});
   const [historyClearOpen, setHistoryClearOpen] = useState(false);
+  const historyClearTriggerRef = useRef<HTMLButtonElement>(null);
+  const historyClearBackRef = useRef<HTMLButtonElement>(null);
+  const historySummaryRef = useRef<HTMLElement>(null);
+  const returnHistoryFocusRef = useRef(false);
+  useEffect(() => {
+    if (historyClearOpen) {
+      historyClearBackRef.current?.focus();
+    } else if (returnHistoryFocusRef.current) {
+      returnHistoryFocusRef.current = false;
+      const trigger = historyClearTriggerRef.current;
+      if (trigger && !trigger.disabled) trigger.focus();
+      else historySummaryRef.current?.focus();
+    }
+  }, [historyClearOpen]);
   const [historyClearPending, setHistoryClearPending] = useState(false);
   const [historyClearMessage, setHistoryClearMessage] = useState("");
   const [historyQuery, setHistoryQuery] = useState("");
@@ -5498,7 +5511,8 @@ function PreparationPanel({
             })}
           </ol>
         </fieldset>
-        <div className="provider-card">
+        <div className="provider-card composer-recognition" role="group" aria-labelledby="composer-recognition-title">
+          <h3 id="composer-recognition-title">Распознавание</h3>
           <div>
             <label className="profile-selector">
               Провайдер транскрибации
@@ -6103,68 +6117,114 @@ function PreparationPanel({
         {pinnedTerminalTranscriptions.map(renderTranscriptionPresentation)}
       </section>
       <details className="recent-jobs history-transcriptions">
-        <summary id="history-results">Недавние транскрибации · {recentTranscriptions.length}</summary>
-        {hasClearableHistory && (
-          <button
-            type="button"
-            className="danger"
-            disabled={historyClearPending}
-            onClick={() => setHistoryClearOpen(true)}
-          >
-            Очистить историю
-          </button>
-        )}
+        <summary id="history-results" ref={historySummaryRef}>Недавние транскрибации · {recentTranscriptions.length}</summary>
         {historyClearMessage && (
-          <p role="status" className="notice">
+          <p role="status" className={historyClearOpen ? "error" : "notice"}>
             {historyClearMessage}
           </p>
         )}
-        <div className="history-filters">
-          <label>Поиск по названию среди загруженных задач
-            <input type="search" name="transcription-history-search" autoComplete="off" value={historyQuery} onChange={(event) => { setHistoryQuery(event.target.value); setHistoryPage(0); }} />
-          </label>
-          <label>Статус в истории
-            <select value={historyStatus} onChange={(event) => { setHistoryStatus(event.target.value); setHistoryPage(0); }}>
-              <option value="all">Все статусы</option><option value="completed">Готово</option>
-              <option value="failed">Ошибка</option><option value="cancelled">Отменено</option>
-            </select>
-          </label>
+        <div className="history-workbench" hidden={historyClearOpen}>
+          <div className="history-tools">
+            <div className="history-filters">
+              <label>Поиск по названию среди загруженных задач
+                <input type="search" name="transcription-history-search" autoComplete="off" value={historyQuery} onChange={(event) => { setHistoryQuery(event.target.value); setHistoryPage(0); }} />
+              </label>
+              <label>Статус в истории
+                <select value={historyStatus} onChange={(event) => { setHistoryStatus(event.target.value); setHistoryPage(0); }}>
+                  <option value="all">Все статусы</option><option value="completed">Готово</option>
+                  <option value="failed">Ошибка</option><option value="cancelled">Отменено</option>
+                </select>
+              </label>
+            </div>
+            {(historyQuery || historyStatus !== "all") && <div className="filter-chips" aria-label="Активные фильтры истории">
+              {historyQuery && <button type="button" onClick={() => {setHistoryQuery(""); changeHistoryPage(0);}}>Поиск: {historyQuery} ×</button>}
+              {historyStatus !== "all" && <button type="button" onClick={() => {setHistoryStatus("all"); changeHistoryPage(0);}}>Статус: {({completed:"Готово",failed:"Ошибка",cancelled:"Отменено"} as Record<string,string>)[historyStatus] ?? historyStatus} ×</button>}
+              <button type="button" onClick={() => {setHistoryQuery("");setHistoryStatus("all");changeHistoryPage(0);}}>Сбросить фильтры</button>
+            </div>}
+            <div className="history-clear-actions">
+              {hasClearableHistory && (
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={historyClearPending}
+                  ref={historyClearTriggerRef}
+                  onClick={() => {
+                    returnHistoryFocusRef.current = true;
+                    setHistoryClearMessage("");
+                    setHistoryClearOpen(true);
+                  }}
+                >
+                  Очистить историю
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="history-list">
+            <p className="muted" role="status">Найдено групп: {filteredHistory.length} · среди загруженных: {recentTranscriptions.length}</p>
+            {filteredHistory.length === 0 && <p role="status">Среди загруженных задач совпадений нет.</p>}
+            {filteredHistory.slice(currentHistoryPage * 10, (currentHistoryPage + 1) * 10).map(renderTranscriptionPresentation)}
+            {filteredHistory.length > 10 && <nav className="actions" aria-label="Страницы истории">
+              <button type="button" disabled={currentHistoryPage === 0} onClick={() => changeHistoryPage(currentHistoryPage - 1)}>Предыдущая страница истории</button>
+              <span role="status">Страница {currentHistoryPage + 1} из {historyPageCount}</span>
+              <button type="button" disabled={currentHistoryPage + 1 === historyPageCount} onClick={() => changeHistoryPage(currentHistoryPage + 1)}>Следующая страница истории</button>
+            </nav>}
+            {jobs.nextCursor && (
+              <button
+                type="button"
+                className="secondary"
+                disabled={jobs.loadingMore}
+                onClick={() => onLoadMoreJobs(project.id, jobs.nextCursor ?? "")}
+              >
+                {jobs.loadingMore
+                  ? "Загружаем транскрибации…"
+                  : "Показать ещё транскрибации"}
+              </button>
+            )}
+          </div>
         </div>
-        {(historyQuery || historyStatus !== "all") && <div className="filter-chips" aria-label="Активные фильтры истории">
-          {historyQuery && <button type="button" onClick={() => {setHistoryQuery(""); changeHistoryPage(0);}}>Поиск: {historyQuery} ×</button>}
-          {historyStatus !== "all" && <button type="button" onClick={() => {setHistoryStatus("all"); changeHistoryPage(0);}}>Статус: {({completed:"Готово",failed:"Ошибка",cancelled:"Отменено"} as Record<string,string>)[historyStatus] ?? historyStatus} ×</button>}
-          <button type="button" onClick={() => {setHistoryQuery("");setHistoryStatus("all");changeHistoryPage(0);}}>Сбросить фильтры</button>
-        </div>}
-        <p className="muted" role="status">Найдено групп: {filteredHistory.length} · среди загруженных: {recentTranscriptions.length}</p>
-        {filteredHistory.length === 0 && <p role="status">Среди загруженных задач совпадений нет.</p>}
-        {filteredHistory.slice(currentHistoryPage * 10, (currentHistoryPage + 1) * 10).map(renderTranscriptionPresentation)}
-        {filteredHistory.length > 10 && <nav className="actions" aria-label="Страницы истории">
-          <button type="button" disabled={currentHistoryPage === 0} onClick={() => changeHistoryPage(currentHistoryPage - 1)}>Предыдущая страница истории</button>
-          <span role="status">Страница {currentHistoryPage + 1} из {historyPageCount}</span>
-          <button type="button" disabled={currentHistoryPage + 1 === historyPageCount} onClick={() => changeHistoryPage(currentHistoryPage + 1)}>Следующая страница истории</button>
-        </nav>}
-        {jobs.nextCursor && (
-          <button
-            type="button"
-            className="secondary"
-            disabled={jobs.loadingMore}
-            onClick={() => onLoadMoreJobs(project.id, jobs.nextCursor ?? "")}
+        {historyClearOpen && (
+          <section
+            className="history-clear-review"
+            aria-labelledby="history-clear-title"
+            aria-busy={historyClearPending || undefined}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !historyClearPending) {
+                setHistoryClearMessage("");
+                setHistoryClearOpen(false);
+              }
+            }}
           >
-            {jobs.loadingMore
-              ? "Загружаем транскрибации…"
-              : "Показать ещё транскрибации"}
-          </button>
+            <p className="muted">История → проверка последствий</p>
+            <h3 id="history-clear-title">Очистить историю?</h3>
+            <dl>
+              <dt>Исчезнут из списка</dt>
+              <dd>Завершённые, отменённые и обычные неуспешные задачи.</dd>
+              <dt>Останутся доступны</dt>
+              <dd>Незавершённые задачи и задачи, которые ещё требуют решения.</dd>
+              <dt>Сохранятся</dt>
+              <dd>Результаты, Google Docs и журнал аудита.</dd>
+            </dl>
+            <div className="actions">
+              <button
+                type="button"
+                ref={historyClearBackRef}
+                className="secondary"
+                disabled={historyClearPending}
+                onClick={() => {
+                  setHistoryClearMessage("");
+                  setHistoryClearOpen(false);
+                }}
+              >
+                Назад к истории
+              </button>
+              <button type="button" className="danger" disabled={historyClearPending}
+                onClick={() => void clearHistory()}>
+                {historyClearPending ? "Очищаем…" : "Очистить историю"}
+              </button>
+            </div>
+          </section>
         )}
       </details>{" "}
-      {historyClearOpen && (
-        <ConfirmClearDialog
-          title="Очистить историю?"
-          description="Завершённые, отменённые и обычные неуспешные задачи исчезнут из списка. Незавершённые задачи и задачи, которые ещё требуют решения, останутся доступны. Результаты, Google Docs и журнал аудита не удаляются."
-          pending={historyClearPending}
-          onConfirm={() => void clearHistory()}
-          onCancel={() => setHistoryClearOpen(false)}
-        />
-      )}
       {localFolderPreview && (
         <FolderImportDialog
           preview={localFolderPreview.preview}
@@ -8840,71 +8900,84 @@ function SettingsPage({
                   {logoutError}
                 </p>
               )}
-              <AccountSessionsPanel csrf={csrf} onCsrf={onCsrf} />
-              <AccountSecurityPanel csrf={csrf} onCsrf={onCsrf} />
+              <div className="settings-account-panels">
+                <AccountSessionsPanel csrf={csrf} onCsrf={onCsrf} />
+                <AccountSecurityPanel csrf={csrf} onCsrf={onCsrf} />
+              </div>
             </>
           )}
           {section === "appearance" && (
             <section aria-labelledby="appearance-settings-title">
               <h2 id="appearance-settings-title">Оформление</h2>
-              <div className="card theme-preferences">
-            <label>
-              Тема интерфейса
-              <select
-                aria-label="Тема интерфейса"
-                value={themePreference}
-                onChange={(event) => {
-                  const preference = event.target.value as StudioThemePreference;
-                  setThemePreference(preference);
-                  setStudioThemePreference(preference);
-                }}
-              >
-                <option value="system">Системная</option>
-                <option value="light">Светлая</option>
-                <option value="dark">Тёмная</option>
-              </select>
-            </label>
-            <p className="muted">
-              Системная тема следует настройке устройства. Выбор сохраняется
-              только в этом браузере и не содержит данных аккаунта.
-            </p>
-            <label>
-              Цвет интерфейса
-              <select
-                aria-label="Цвет интерфейса"
-                value={accentSelection}
-                disabled={!accountPreferences || accentSaving}
-                onChange={(event) => {
-                  const selected = event.target.value;
-                  if (isStudioAccentColor(selected)) {
-                    void saveAccentPreference(selected);
-                  }
-                }}
-              >
-                <option value="blue">Синий</option>
-                <option value="violet">Фиолетовый</option>
-                <option value="teal">Бирюзовый</option>
-                <option value="rose">Розовый</option>
-              </select>
-            </label>
-            {accentMessage && (
-              <p role="status" className="notice">
-                {accentMessage}
-              </p>
-            )}
+              <div className="settings-appearance-panels">
+                <div className="card theme-preferences">
+                  <label>
+                    Тема интерфейса
+                    <select
+                      aria-label="Тема интерфейса"
+                      value={themePreference}
+                      onChange={(event) => {
+                        const preference = event.target.value as StudioThemePreference;
+                        setThemePreference(preference);
+                        setStudioThemePreference(preference);
+                      }}
+                    >
+                      <option value="system">Системная</option>
+                      <option value="light">Светлая</option>
+                      <option value="dark">Тёмная</option>
+                    </select>
+                  </label>
+                  <p className="muted">
+                    Системная тема следует настройке устройства. Выбор сохраняется
+                    только в этом браузере и не содержит данных аккаунта.
+                  </p>
+                  <label>
+                    Цвет интерфейса
+                    <select
+                      aria-label="Цвет интерфейса"
+                      value={accentSelection}
+                      disabled={!accountPreferences || accentSaving}
+                      onChange={(event) => {
+                        const selected = event.target.value;
+                        if (isStudioAccentColor(selected)) {
+                          void saveAccentPreference(selected);
+                        }
+                      }}
+                    >
+                      <option value="blue">Синий</option>
+                      <option value="violet">Фиолетовый</option>
+                      <option value="teal">Бирюзовый</option>
+                      <option value="rose">Розовый</option>
+                    </select>
+                  </label>
+                  {accentMessage && (
+                    <p role="status" className="notice">
+                      {accentMessage}
+                    </p>
+                  )}
+                </div>
+                <aside className="card" aria-label="Предпросмотр оформления">
+                  <h3>Предпросмотр</h3>
+                  <p className="notice">Результат готов.</p>
+                  <div className="actions" aria-hidden="true">
+                    <span className="button-like primary">Основное действие</span>
+                    <span className="tag">Статус</span>
+                  </div>
+                </aside>
               </div>
             </section>
           )}
           {section === "notifications" && (
             <NotificationsPanel csrf={csrf} onCsrf={onCsrf} />
           )}
-          <div hidden={section !== "files"}>
+          <div className="settings-storage-workbench" hidden={section !== "files"}>
               <SourceStorageSettings
                 csrf={csrf}
                 onCsrf={onCsrf}
                 active={section === "files"}
               />
-              <StorageLifecyclePanel
+              <div className="settings-storage-policy">
+                <StorageLifecyclePanel
                 csrf={csrf}
                 onCsrf={onCsrf}
                 active={section === "files"}
@@ -8986,15 +9059,22 @@ function SettingsPage({
               </p>
             )}
               </section>
+              </div>
           </div>
           {section === "connections" && (
             <section aria-labelledby="connections-settings-title">
           <h2 id="connections-settings-title">Подключения</h2>
+          <nav className="connection-group-nav" aria-label="Группы подключений">
+            <a href="#connection-providers">Провайдеры</a>
+            <a href="#connection-storage">Облачные диски</a>
+            <a href="#connection-computer">Компьютер</a>
+          </nav>
           {oauthMessage && (
             <p className="notice" role="status">
               {oauthMessage}
             </p>
           )}
+          <h3 id="connection-providers" tabIndex={-1}>Провайдеры</h3>
           <ElevenLabsAccountPanel csrf={csrf} onCsrf={onCsrf} />
           <h3>Ключи провайдеров</h3>
           <p className="notice">
@@ -9200,8 +9280,8 @@ function SettingsPage({
             })}
           </div>
           <SttDictionariesPanel csrf={csrf} onCsrf={onCsrf} />
+          <h3 id="connection-storage" tabIndex={-1}>Облачные диски</h3>
           <YandexDiskConnectionPanel csrf={csrf} onCsrf={onCsrf} />
-          <LocalExecutionPanel key={user.email} csrf={csrf} onCsrf={onCsrf} />
           <h3>Google Drive</h3>
           <p
             className={
@@ -9340,6 +9420,8 @@ function SettingsPage({
               onOpenWorkspace={onOpenMaintenance}
             />
           </details>
+          <h3 id="connection-computer" tabIndex={-1}>Компьютер</h3>
+          <LocalExecutionPanel key={user.email} csrf={csrf} onCsrf={onCsrf} />
             </section>
           )}
           {section === "account" && (
