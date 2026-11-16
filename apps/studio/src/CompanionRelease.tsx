@@ -18,6 +18,7 @@ function isRelease(value: unknown): value is Release {
 export function CompanionRelease() {
   const [state, setState] = useState<ReleaseState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
+  const [copyMessage, setCopyMessage] = useState("");
   useEffect(() => {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => {
@@ -53,12 +54,23 @@ export function CompanionRelease() {
         setAttempt(value => value + 1);
       }}>Проверить установщик снова</button>}
     </>}
-    {release && <>
-    <p>Закрытая тестовая сборка для Windows x64, версия {release.version}, {Math.ceil(release.bytes / 1048576)} МиБ.
-      Установщик не подписан. Сверьте SHA‑256 скачанного файла перед запуском.</p>
-    <p>SHA‑256 <code style={{ overflowWrap: "anywhere" }}>{release.sha256}</code></p>
-    <p>Запустите установщик и подтвердите подключение в браузере. Модели устанавливаются отдельно.</p>
-    <a className="button-like" href={`/api/local-execution/companion-release/${release.sha256}/download`}>Скачать установщик Windows</a>
-    </>}
+    {release && <div className="companion-release-panels">
+      <div>
+        <p>Закрытая тестовая сборка для Windows x64, версия {release.version}, {Math.ceil(release.bytes / 1048576)} МиБ.
+          Установщик не подписан. Сверьте SHA‑256 перед запуском.</p>
+        <a className="button-like primary" href={`/api/local-execution/companion-release/${release.sha256}/download`}>Скачать установщик Windows</a>
+        <p>После запуска подтвердите подключение в браузере. Модели устанавливаются отдельно.</p>
+      </div>
+      <div className="companion-checksum">
+        <b>Контрольная сумма SHA‑256</b>
+        <code>{release.sha256}</code>
+        <button type="button" className="secondary" onClick={() => void navigator.clipboard?.writeText(release.sha256)
+          .then(() => setCopyMessage("SHA‑256 скопирован."))
+          .catch(() => setCopyMessage("Скопируйте значение вручную."))} disabled={!navigator.clipboard}>
+          Скопировать SHA‑256
+        </button>
+        {copyMessage && <span role="status">{copyMessage}</span>}
+      </div>
+    </div>}
   </section>;
 }

@@ -65,6 +65,34 @@ describe("AudioPreparationPage", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
+  it("keeps audio settings available when Drive does not confirm the selected source", async () => {
+    const picker = vi.spyOn(googlePicker, "openGooglePicker").mockResolvedValue({
+      action: "picked",
+      docs: [{ id: "drive-audio", name: "Lecture.wav" }],
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/workspace")) return json({ project: { id: "project-id", title: "Studio" } });
+      if (url.endsWith("/sources")) return json({ sources: [] });
+      if (url.endsWith("/audio-preparations")) return json({ jobs: [] });
+      if (url.endsWith("/google/picker/session")) return json({ scope_ready: true });
+      if (url.endsWith("/sources/google-picker")) return json({ ok: true });
+      throw new Error("Unexpected request");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      render(<AudioPreparationPage csrf="csrf" onCsrf={vi.fn()} />);
+      const choose = await screen.findByRole("button", { name: "Выбрать файлы в Google Drive" });
+      await userEvent.click(choose);
+      expect(await screen.findByText(/Studio не подтвердила добавление/)).toBeInTheDocument();
+      expect(choose).toBeEnabled();
+      expect(screen.getByRole("combobox", { name: "Формат результата" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Проверить файлы и рассчитать" })).toBeDisabled();
+    } finally {
+      picker.mockRestore();
+    }
+  });
+
   it.each(["source", "folder", "result"])("offers Google recovery after rejected authorization in the %s flow", async (flow) => {
     const ready = { ...previewJob("ready", "Готовое аудио", []), status: "completed", progress: { percent: 100, stage: "completed" }, output: { download_ready: true, source_id: "out", google_drive_url: null } };
     const picker = vi.spyOn(googlePicker, "openGooglePicker").mockResolvedValue({ action: "cancel" });

@@ -47,7 +47,8 @@ jobs:
     if: needs.selection.outputs.root == 'true'
     outputs:
       runner: ${{ steps.runner.outputs.runner }}
-    runs-on: ubuntu-latest
+    # The media suite uses FFmpeg from the runner's APT repositories.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:

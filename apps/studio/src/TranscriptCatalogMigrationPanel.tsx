@@ -1153,144 +1153,151 @@ function MaintenanceOperationCard({
       className="card transcript-catalog-migration transcript-maintenance-operation"
       aria-labelledby={`transcript-maintenance-${workflow}-title`}
     >
-      <span className="tag">Отдельная операция</span>
       <h3 id={`transcript-maintenance-${workflow}-title`}>{copy.title}</h3>
       <p>{copy.description}</p>
-      <p className="muted">
-        Сначала выполните проверку — она ничего не изменит. Содержимое
-        документов не показывается в браузере.
-      </p>
-      <label
-        htmlFor={`transcript-maintenance-${workflow}-selection-mode`}
-      >
-        Что обработать
-      </label>
-      <select
-        id={`transcript-maintenance-${workflow}-selection-mode`}
-        value={selectionMode}
-        disabled={!operationReady || busy !== null || runInProgress}
-        onChange={(event) =>
-          changeSelectionMode(
-            event.target.value as TranscriptMaintenanceSelectionMode,
-          )
-        }
-      >
-        <option value="folder_tree">Папка и все подпапки</option>
-        <option value="single_document">Один конкретный Google Doc</option>
-      </select>
-      <div className="actions">
-        <button
-          type="button"
+      <div className="maintenance-target">
+        <p className="muted">
+          Сначала выполните проверку — она ничего не изменит. Содержимое
+          документов не показывается в браузере.
+        </p>
+        <label
+          htmlFor={`transcript-maintenance-${workflow}-selection-mode`}
+        >
+          Что обработать
+        </label>
+        <select
+          id={`transcript-maintenance-${workflow}-selection-mode`}
+          value={selectionMode}
           disabled={!operationReady || busy !== null || runInProgress}
-          onClick={chooseTarget}
-        >
-          {busy === "target-picker"
-            ? "Открываем Google Drive…"
-            : selectedTarget
-              ? selectionMode === "folder_tree"
-                ? "Сменить папку"
-                : "Сменить документ"
-              : selectionMode === "folder_tree"
-                ? "Выбрать папку"
-                : "Выбрать документ"}
-        </button>
-        <button
-          type="button"
-          className="primary"
-          disabled={
-            !operationReady ||
-            !selectedTarget ||
-            !selectedTarget.id ||
-            runInProgress ||
-            busy !== null
+          onChange={(event) =>
+            changeSelectionMode(
+              event.target.value as TranscriptMaintenanceSelectionMode,
+            )
           }
-          onClick={runDryRun}
         >
-          {busy === "dry-run" ? "Проверяем…" : "Проверить документы"}
-        </button>
-      </div>
-      {selectedTarget && (
-        <p className="folder-status" role="status">
-          {selectionMode === "folder_tree" ? (
-            <>
-              Корневая папка: <b>{selectedTarget.name}</b>. Будут проверены
-              Google Docs в ней и всех подпапках.
-            </>
-          ) : (
-            <>
-              Выбран документ: <b>{selectedTarget.name}</b>. Будет проверен
-              только этот Google Doc.
-            </>
-          )}
-        </p>
-      )}
-      {message && (
-        <p className="error" role="alert">
-          {message}
-        </p>
-      )}
-      {activeRun && runInProgress && (
-        <section className="maintenance-run-progress" aria-live="polite">
-          <div>
-            <strong>{RUN_STAGE_LABELS[activeRun.current_stage]}</strong>
-            <span>
-              {activeRun.progress.total === null
-                ? activeRun.progress.completed > 0
-                  ? `Проверено этапов/страниц: ${activeRun.progress.completed}`
-                  : "Операция сохранена и продолжится независимо от страницы"
-                : `${activeRun.progress.completed} из ${activeRun.progress.total}`}
-            </span>
-          </div>
-          <progress
-            max={activeRun.progress.total ?? undefined}
-            value={
-              activeRun.progress.total === null
-                ? undefined
-                : activeRun.progress.completed
-            }
-          />
-        </section>
-      )}
-      {dryRun && dryRun.workflow === workflow && (
-        <DryRunResult
-          result={dryRun}
-          selectionMode={selectionMode}
-        />
-      )}
-      {dryRun && dryRun.workflow === workflow && (
-        <div className="catalog-migration-apply">
-          <p>
-            {selectionMode === "folder_tree"
-              ? "Перед применением Studio заново проверит эту корневую папку и все подпапки."
-              : "Перед применением Studio заново проверит именно этот Google Doc."}{" "}
-            Эта проверка разрешает применить только выбранную операцию.
-          </p>
+          <option value="folder_tree">Папка и все подпапки</option>
+          <option value="single_document">Один конкретный Google Doc</option>
+        </select>
+        <div className="actions">
+          <button
+            type="button"
+            disabled={!operationReady || busy !== null || runInProgress}
+            onClick={chooseTarget}
+          >
+            {busy === "target-picker"
+              ? "Открываем Google Drive…"
+              : selectedTarget
+                ? selectionMode === "folder_tree"
+                  ? "Сменить папку"
+                  : "Сменить документ"
+                : selectionMode === "folder_tree"
+                  ? "Выбрать папку"
+                  : "Выбрать документ"}
+          </button>
           <button
             type="button"
             className="primary"
             disabled={
               !operationReady ||
-              busy !== null ||
+              !selectedTarget ||
+              !selectedTarget.id ||
               runInProgress ||
-              !previewRunId ||
-              actionable === 0
+              busy !== null
             }
-            onClick={applyOperation}
+            onClick={runDryRun}
           >
-            {busy === "apply"
-              ? "Применяем…"
-              : `${copy.applyLabel} (${actionable})`}
+            {busy === "dry-run" ? "Проверяем…" : "Проверить документы"}
           </button>
         </div>
-      )}
-      {applyResult && applyResult.workflow === workflow && (
-        <ApplyResult result={applyResult} />
-      )}
-      {(dryRun || applyResult) && !runInProgress && (
-        <button type="button" className="secondary" onClick={resetResult}>
-          Закрыть результат
-        </button>
-      )}
+        {selectedTarget && (
+          <p className="folder-status" role="status">
+            {selectionMode === "folder_tree" ? (
+              <>
+                Корневая папка: <b>{selectedTarget.name}</b>. Будут проверены
+                Google Docs в ней и всех подпапках.
+              </>
+            ) : (
+              <>
+                Выбран документ: <b>{selectedTarget.name}</b>. Будет проверен
+                только этот Google Doc.
+              </>
+            )}
+          </p>
+        )}
+      </div>
+      <div className="maintenance-review">
+        <h4>Проверка и результат</h4>
+        {!message && !runInProgress && !dryRun && !applyResult && (
+          <p className="muted">Здесь появятся результаты проверки выбранных документов.</p>
+        )}
+        {message && (
+          <p className="error" role="alert">
+            {message}
+          </p>
+        )}
+        {activeRun && runInProgress && (
+          <section className="maintenance-run-progress" aria-live="polite">
+            <div>
+              <strong>{RUN_STAGE_LABELS[activeRun.current_stage]}</strong>
+              <span>
+                {activeRun.progress.total === null
+                  ? activeRun.progress.completed > 0
+                    ? `Проверено этапов/страниц: ${activeRun.progress.completed}`
+                    : "Операция сохранена и продолжится независимо от страницы"
+                  : `${activeRun.progress.completed} из ${activeRun.progress.total}`}
+              </span>
+            </div>
+            <progress
+              max={activeRun.progress.total ?? undefined}
+              value={
+                activeRun.progress.total === null
+                  ? undefined
+                  : activeRun.progress.completed
+              }
+            />
+          </section>
+        )}
+        {dryRun && dryRun.workflow === workflow && (
+          <DryRunResult
+            result={dryRun}
+            selectionMode={selectionMode}
+          />
+        )}
+        {dryRun && dryRun.workflow === workflow && (
+          <div className="catalog-migration-apply">
+            <p>
+              {selectionMode === "folder_tree"
+                ? "Перед применением Studio заново проверит эту корневую папку и все подпапки."
+                : "Перед применением Studio заново проверит именно этот Google Doc."}{" "}
+              Эта проверка разрешает применить только выбранную операцию.
+            </p>
+            <button
+              type="button"
+              className="primary"
+              disabled={
+                !operationReady ||
+                busy !== null ||
+                runInProgress ||
+                !previewRunId ||
+                actionable === 0
+              }
+              onClick={applyOperation}
+            >
+              {busy === "apply"
+                ? "Применяем…"
+                : `${copy.applyLabel} (${actionable})`}
+            </button>
+          </div>
+        )}
+        {applyResult && applyResult.workflow === workflow && (
+          <ApplyResult result={applyResult} />
+        )}
+        {(dryRun || applyResult) && !runInProgress && (
+          <button type="button" className="secondary" onClick={resetResult}>
+            Закрыть результат
+          </button>
+        )}
+      </div>
     </section>
   );
 }

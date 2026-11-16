@@ -10185,7 +10185,7 @@ describe("Studio PWA", () => {
     expect(document.body.textContent).not.toContain("raw-private");
   });
 
-  it("clears history only after Да while preserving the durable job", async () => {
+  it("clears history only after the review step while preserving the durable job", async () => {
     installFocusedOutputFixture({
       jobStatus: "completed",
       terminalDismissedAt: "2026-07-02T00:04:00Z",
@@ -10214,13 +10214,18 @@ describe("Studio PWA", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "Очистить историю" }),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Нет" }));
+    const review = screen.getByRole("region", { name: "Очистить историю?" });
+    expect(review).toHaveTextContent("Результаты, Google Docs и журнал аудита.");
+    expect(screen.getByRole("button", { name: "Назад к истории" })).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    expect(review).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Очистить историю" })).toHaveFocus();
     expect(clearCalls).toHaveLength(0);
 
     await userEvent.click(
       screen.getByRole("button", { name: "Очистить историю" }),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Да" }));
+    await userEvent.click(screen.getByRole("button", { name: "Очистить историю" }));
     expect(
       await screen.findByText(
         "История очищена. Незавершённые задачи и задачи, требующие решения, сохранены.",

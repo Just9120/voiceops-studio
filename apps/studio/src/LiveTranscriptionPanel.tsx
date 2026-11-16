@@ -1656,34 +1656,39 @@ export function LiveTranscriptionPanel({
         {timedExportUnavailable(selectedExportInput) && (
           <p className="muted" role="status">{timedExportUnavailable(selectedExportInput)}</p>
         )}
-        <div className="live-partial" aria-live="polite">
-          <span>Предварительно</span>
-          <p>{partial || "Речь появится здесь до подтверждения фрагмента."}</p>
-        </div>
-        <div
-          ref={committedRef}
-          className="live-committed"
-          aria-label="Подтверждённая транскрипция"
-          aria-live="polite"
-          onScroll={(event) => {
-            const target = event.currentTarget;
-            const distanceFromBottom =
-              target.scrollHeight - target.scrollTop - target.clientHeight;
-            setFollowTranscript(distanceFromBottom <= 32);
-          }}
-        >
-          {segments.length === 0 ? (
-            <p className="muted">
-              Подтверждённых фрагментов пока нет.
-            </p>
-          ) : (
-            segments.map((segment, index) => (
-              <p key={segmentMetadata[index]?.id ?? `${index}-${segment.slice(0, 24)}`}>
-                {segmentMetadata[index]?.speaker !== undefined && <strong>Спикер {segmentMetadata[index]!.speaker}: </strong>}
-                {segment}
-              </p>
-            ))
-          )}
+        <div className="live-text-panels">
+          <div className="live-partial" aria-live="polite">
+            <span>Предварительно</span>
+            <p>{partial || "Речь появится здесь до подтверждения фрагмента."}</p>
+          </div>
+          <div className="live-confirmed-panel">
+            <p className="live-confirmed-label">Подтверждённый текст</p>
+            <div
+              ref={committedRef}
+              className="live-committed"
+              aria-label="Подтверждённая транскрипция"
+              aria-live="polite"
+              onScroll={(event) => {
+                const target = event.currentTarget;
+                const distanceFromBottom =
+                  target.scrollHeight - target.scrollTop - target.clientHeight;
+                setFollowTranscript(distanceFromBottom <= 32);
+              }}
+            >
+              {segments.length === 0 ? (
+                <p className="muted">
+                  Подтверждённых фрагментов пока нет.
+                </p>
+              ) : (
+                segments.map((segment, index) => (
+                  <p key={segmentMetadata[index]?.id ?? `${index}-${segment.slice(0, 24)}`}>
+                    {segmentMetadata[index]?.speaker !== undefined && <strong>Спикер {segmentMetadata[index]!.speaker}: </strong>}
+                    {segment}
+                  </p>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       </section>
       {clearRequested && <ConfirmClearDialog title="Очистить текст Live-сессии?"

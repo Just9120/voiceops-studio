@@ -124,17 +124,22 @@ export function RealtimeSessionHistory({ ownerUserId, projectId, disabled, curre
     } finally { if (generation === epoch.current) setOpening(null); }
   }
 
-  return <details className="live-session-history" onToggle={event => setOpen(event.currentTarget.open)}>
+  return <details className="live-session-history live-config-card" onToggle={event => setOpen(event.currentTarget.open)}>
     <summary>Сохранённые Live-сессии</summary>
     {open && <div>
-      <p className="muted">Каждая запись хранится отдельно до вашей очистки. Откройте сессию, чтобы скопировать, скачать или очистить её текст.</p>
-      <button type="button" className="secondary" disabled={loading || Boolean(opening)} onClick={() => setReload(value => value + 1)}>Обновить список сессий</button>
+      <div className="live-session-toolbar">
+        <p className="muted">Каждая запись хранится отдельно до вашей очистки. Откройте сессию, чтобы скопировать, скачать или очистить её текст.</p>
+        <button type="button" className="secondary" disabled={loading || Boolean(opening)} onClick={() => setReload(value => value + 1)}>Обновить список сессий</button>
+      </div>
       {loading && <p role="status">Загружаем Live-сессии…</p>}
       {notice && <p className="notice" role="status">{notice}</p>}
       {!loading && items.length === 0 && <p>Сохранённых Live-сессий пока нет.</p>}
       {disabled && <p className="muted">Другая сессия откроется после остановки текущей записи.</p>}
       <ul>{items.map(row => <li key={row.client_session_id}>
-        <span>Сохранено {new Date(row.updated_at).toLocaleString("ru-RU")} · Фрагментов: {row.committed_segment_count} · Символов: {row.committed_character_count + row.partial_character_count}</span>{" "}
+        <div>
+          <time dateTime={row.updated_at}>Сохранено {new Date(row.updated_at).toLocaleString("ru-RU")}</time>
+          <p className="muted">Фрагментов: {row.committed_segment_count} · Символов: {row.committed_character_count + row.partial_character_count}</p>
+        </div>
         <button type="button" disabled={disabled || Boolean(opening)} onClick={() => void openSession(row.client_session_id)}>
           {opening === row.client_session_id ? "Открываем…" : "Открыть сессию"}
         </button>

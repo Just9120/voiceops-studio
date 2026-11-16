@@ -493,15 +493,17 @@ export function AudioPreparationPage({ csrf, onCsrf }: Props) {
     try {
       const result = await openDrivePicker("sources", returnFocusTo);
       if (result.action !== "picked" || result.docs.length === 0) return;
-      const response = await mutate<{ sources: Source[] }>(`/projects/${project.id}/sources/google-picker`, {
+      const response = await mutate<unknown>(`/projects/${project.id}/sources/google-picker`, {
         method: "POST", body: JSON.stringify({ file_ids: result.docs.map((doc) => doc.id) }),
       });
+      const added = parseProjectSourceCollection(response, project.id);
       await reloadSources(project.id);
+      if (!added) throw new Error("Studio не подтвердила добавление. Проверьте список исходников и повторите выбор.");
       if (processingPath === "local") setFormat("copy");
       setProcessingPath("studio");
       setSourceMode("drive");
       setLocalFiles([]);
-      setSelected((current) => [...new Set([...current, ...response.sources.map((source) => source.id)])]);
+      setSelected((current) => [...new Set([...current, ...added.map((source) => source.id)])]);
     } catch (reason) { reportDriveFailure(reason, "Не удалось добавить Google Drive файлы."); }
     finally { setBusy(false); }
   }
@@ -914,11 +916,11 @@ export function AudioPreparationPage({ csrf, onCsrf }: Props) {
   }
 
   return (
-    <div className="audio-preparation-page">
+    <div className="audio-preparation-page" data-audio-source-mode={sourceMode}>
       <section className="hero"><div><p className="eyebrow">ПОДГОТОВКА ЗАПИСИ</p><h1>Подготовка аудио</h1><p>Склейте записи, сократите длинные паузы, настройте каналы или просто сохраните исходные файлы в Google Drive.</p></div></section>
       {draftRestored && <p role="status" className="notice">Параметры черновика восстановлены. Файлы с устройства при необходимости выберите заново.</p>}
       {error && <div role="alert" tabIndex={-1} ref={errorAlert}><p className="error">{error}</p>{errorState.googleRecovery && <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("studio:navigate-settings", { detail: { section: "connections" } }))}>Открыть настройки Google Drive</button>}</div>}
-      <section className="card audio-preparation-card" ref={inputSection} tabIndex={-1}>
+      <section className="card audio-preparation-card audio-input-card" ref={inputSection} tabIndex={-1}>
         <h2>1. Исходные файлы</h2>
         <div className="tabs audio-source-tabs" role="tablist" aria-label="Способ получения исходных файлов">
           <button id="audio-source-tab-drive" type="button" role="tab" aria-selected={sourceMode === "drive"} aria-controls="audio-source-panel-drive" tabIndex={sourceMode === "drive" ? 0 : -1} className={sourceMode === "drive" ? "active" : ""} onClick={() => selectSourceMode("drive")} onKeyDown={(event) => sourceTabKeyDown(event, "drive")}>Из Google Drive</button>
@@ -975,12 +977,12 @@ export function AudioPreparationPage({ csrf, onCsrf }: Props) {
           <p className="warning">Браузер не предоставляет надёжную дату создания локального файла. Порядок сохраняется ровно как выбран и может быть изменён вручную.</p>
         </div>}</>}
       </section>
-      {sourceMode !== "direct-drive" && <section className="card audio-preparation-card">
+      {sourceMode !== "direct-drive" && <section className="card audio-preparation-card audio-parameters-card">
         <h2>2. Параметры</h2>
         <div className="audio-settings-grid">
           <label>Сценарий<select value={preset} onChange={(e) => applyPreset(e.target.value as keyof typeof presetDefaults)}><option value="processing_only">Свои настройки</option><option value="lecture">Лекция</option><option value="call">Созвон</option></select></label>
-          <label>Формат результата<select aria-label="Формат результата" value={format} disabled={processingPath === "local"} onChange={(e) => applyFormat(e.target.value)}><option value="copy">Сохранить исходный формат</option><option value="wav">WAV</option><option value="flac">FLAC</option></select>{processingPath === "local" && <small>Обработка на устройстве создаёт WAV. Другие варианты доступны при обработке через Studio.</small>}{processingPath === "studio" && format === "flac" && <><small>FLAC сохраняет исходную частоту дискретизации без потерь качества.</small><details className="technical-details"><summary>Технические сведения о FLAC</summary><small>FLAC создаётся в 16-bit PCM без lossy-сжатия.</small></details></>}</label>
-          <label>Звуковые каналы<select value={mono} onChange={(e) => applyMono(e.target.value)}><option value="preserve">Сохранить как в оригинале</option><option value="mixdown">Объединить в mono</option><option value="left">Только левый канал</option><option value="right">Только правый канал</option></select></label>
+          <label>Формат результата<select aria-label="Формат результата" value={format} disabled={processingPath === "local"} onChange={(e) => applyFormat(e.target.value)}><option value="copy">Исходный формат</option><option value="wav">WAV</option><option value="flac">FLAC</option></select>{processingPath === "local" && <small>Обработка на устройстве создаёт WAV. Другие варианты доступны при обработке через Studio.</small>}{processingPath === "studio" && format === "flac" && <><small>FLAC сохраняет исходную частоту дискретизации без потерь качества.</small><details className="technical-details"><summary>Технические сведения о FLAC</summary><small>FLAC создаётся в 16-bit PCM без lossy-сжатия.</small></details></>}</label>
+          <label>Звуковые каналы<select value={mono} onChange={(e) => applyMono(e.target.value)}><option value="preserve">Как в оригинале</option><option value="mixdown">Объединить в mono</option><option value="left">Только левый канал</option><option value="right">Только правый канал</option></select></label>
           <label>
             Название результата
             <input

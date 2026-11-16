@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, mutateWithCsrfRetry } from "./apiClient";
+import { ActionMenu } from "./ActionMenu";
 import { ConfirmClearDialog } from "./ConfirmClearDialog";
 import {
   cancelLatestRequests,
@@ -204,44 +205,51 @@ export function TranscriptionAnalyticsPanel({
   const analytics = state.data;
   return (
     <details
-      className="transcription-analytics"
+      className="transcription-analytics compact-analytics"
       onToggle={(event) => {
         if (event.currentTarget.open && state.status === "idle") void load();
       }}
     >
       <summary>Аналитика транскрибаций</summary>
       <div className="analytics-content">
-        <div className="split analytics-heading">
+        <div className="analytics-heading">
           <p className="muted">
             {analytics?.scope === "project_since_reset"
               ? "Агрегаты с момента последней очистки"
               : "Агрегаты за всё время проекта"}{" "}
             без текстов транскриптов и приватных идентификаторов.
           </p>
-          <button
-            className="secondary"
-            disabled={state.status === "loading"}
-            onClick={() => void load()}
-            type="button"
-          >
-            {state.status === "loading" ? "Обновляем…" : "Обновить"}
-          </button>
-          <button
-            className="danger"
-            disabled={clearPending}
-            onClick={() => setClearOpen(true)}
-            type="button"
-          >
-            Очистить аналитику
-          </button>
+          <div className="analytics-toolbar">
+            <button
+              className="secondary"
+              disabled={state.status === "loading"}
+              onClick={() => void load()}
+              type="button"
+            >
+              {state.status === "loading" ? "Обновляем…" : "Обновить"}
+            </button>
+            <ActionMenu label="Действия аналитики" disabled={clearPending} items={[{
+              id: "clear", label: "Очистить аналитику", danger: true,
+              onSelect: () => {
+                setClearMessage("");
+                setClearOpen(true);
+              },
+            }]} />
+          </div>
         </div>
-        {clearMessage && <p role="status" className="notice">{clearMessage}</p>}
+        {clearMessage && !clearOpen && <p role="status" className="notice">{clearMessage}</p>}
         {state.status === "loading" && !analytics && (
           <p role="status">Загрузка аналитики…</p>
         )}
         {state.status === "error" && !analytics && (
           <p className="notice">
             Аналитика временно недоступна. Попробуйте обновить позднее.
+          </p>
+        )}
+        {state.status === "error" && analytics && (
+          <p className="notice">
+            Не удалось обновить данные; показана последняя подтверждённая
+            версия.
           </p>
         )}
         {analytics && (
@@ -286,8 +294,8 @@ export function TranscriptionAnalyticsPanel({
               </div>
             </section>
 
-            <section aria-label="Выбранные настройки транскрибаций">
-              <h3>Настройки</h3>
+            <details className="analytics-breakdown" aria-label="Выбранные настройки транскрибаций">
+              <summary>Настройки</summary>
               <div className="analytics-config-grid">
                 <article>
                   <b>Провайдер и модель</b>
@@ -329,10 +337,10 @@ export function TranscriptionAnalyticsPanel({
                   </span>
                 </article>
               </div>
-            </section>
+            </details>
 
-            <section aria-label="Длительности этапов транскрибаций">
-              <h3>Длительность этапов</h3>
+            <details className="analytics-breakdown" aria-label="Длительности этапов транскрибаций">
+              <summary>Длительность этапов</summary>
               <div className="analytics-duration-grid">
                 {DURATION_LABELS.map(([key, label]) => (
                   <DurationCard
@@ -380,10 +388,10 @@ export function TranscriptionAnalyticsPanel({
                   </div>
                 </dl>
               </details>
-            </section>
+            </details>
 
-            <section aria-label="Расход ElevenLabs">
-              <h3>Расход ElevenLabs</h3>
+            <details className="analytics-breakdown" aria-label="Расход ElevenLabs">
+              <summary>Расход ElevenLabs</summary>
               <div className="analytics-total-grid">
                 <article>
                   <span>Подтверждённо отправлено</span>
@@ -422,21 +430,17 @@ export function TranscriptionAnalyticsPanel({
                   части таких задач учтены.
                 </p>
               )}
-            </section>
+            </details>
           </>
         )}
-        {state.status === "error" && analytics && (
-          <p className="notice">
-            Не удалось обновить данные; показана последняя подтверждённая
-            версия.
-          </p>
-        )}
+
       </div>
       {clearOpen && (
         <ConfirmClearDialog
           title="Очистить аналитику?"
           description="Существующие транскрипции, результаты и документы не удаляются. Сводка начнёт считаться заново с момента очистки."
           pending={clearPending}
+          error={clearMessage || undefined}
           onConfirm={() => void clearAnalytics()}
           onCancel={() => setClearOpen(false)}
         />

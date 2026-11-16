@@ -179,7 +179,7 @@ export function NotificationsPanel({
   };
 
   return (
-    <section aria-labelledby="notification-settings-title">
+    <section className="notification-settings" aria-labelledby="notification-settings-title">
       <h2 id="notification-settings-title">Уведомления</h2>
       <p className="muted">
         Telegram сообщит о готовой транскрибации или ошибке. Уведомления

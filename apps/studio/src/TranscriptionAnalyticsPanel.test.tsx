@@ -66,6 +66,7 @@ describe("TranscriptionAnalyticsPanel", () => {
     render(<TranscriptionAnalyticsPanel projectId="fixture-project" loadAnalytics={vi.fn().mockResolvedValue({ ...analytics, usage_cost: { ...analytics.usage_cost, confirmed_provider_cost: "0.00077073" } })} />);
     await userEvent.click(screen.getByText("Аналитика транскрибаций"));
     expect(await screen.findByText(/< 0,01 USD/)).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Расход ElevenLabs", { exact: true }));
     await userEvent.click(screen.getByText("Точное значение стоимости"));
     expect(screen.getByText(/0.00077073 USD/)).toBeVisible();
   });
@@ -391,16 +392,14 @@ describe("TranscriptionAnalyticsPanel", () => {
       expect(await screen.findByText("ElevenLabs · scribe_v2 2"))
         .toBeInTheDocument();
 
-      await userEvent.click(
-        screen.getByRole("button", { name: "Очистить аналитику" }),
-      );
+      await userEvent.click(screen.getByRole("button", { name: "Действия аналитики" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Очистить аналитику" }));
       expect(screen.getByRole("button", { name: "Да" })).toBeInTheDocument();
       await userEvent.click(screen.getByRole("button", { name: "Нет" }));
       expect(fetchMock).not.toHaveBeenCalled();
 
-      await userEvent.click(
-        screen.getByRole("button", { name: "Очистить аналитику" }),
-      );
+      await userEvent.click(screen.getByRole("button", { name: "Действия аналитики" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Очистить аналитику" }));
       await userEvent.click(screen.getByRole("button", { name: "Да" }));
       await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
       expect(fetchMock).toHaveBeenCalledWith(

@@ -128,7 +128,7 @@ export function LocalModelCatalog({ devices, csrf, onCsrf }: {
   const visible = items?.filter(item => (!appliedQuery?.supported || item.studio)
     && (!appliedQuery?.speakers || item.studio?.diarization) && (!appliedQuery?.timestamps || item.studio?.word_timestamps)
     && (!appliedQuery?.compatible || suitability(item, inventory).startsWith("Подходит")));
-  return <details>
+  return <details className="local-model-catalog">
     <summary>Каталог локальных речевых моделей</summary>
     <p>Поиск по всем моделям распознавания речи Hugging Face. Запуск в Studio доступен для поддерживаемых профилей.</p>
     <label>Компьютер для подбора<select value={device} onChange={event => { setDevice(event.target.value); setInventory(null); }}>
@@ -138,15 +138,18 @@ export function LocalModelCatalog({ devices, csrf, onCsrf }: {
     {device && (inventory ? <p>CPU {inventory.cpu} · RAM {gib(inventory.ram_bytes)} · На выбранном диске {gib(inventory.disk_free_bytes)}.
       GPU {inventory.gpus.map(gpu => `${gpu.name} (${gib(gpu.vram_bytes)})`).join(", ") || "нет данных"}. Пакет Studio использует CPU.</p>
       : <p>Недостаточно данных о ПК. Откройте локальный обработчик и дождитесь обновления.</p>)}
-    <form onSubmit={event => { event.preventDefault(); void load(); }}>
+    <form className="model-catalog-filters" onSubmit={event => { event.preventDefault(); void load(); }}>
       <label>Название модели<input type="search" maxLength={120} value={search} onChange={event => setSearch(event.target.value)} /></label>
       <label>Язык<select value={language} onChange={event => setLanguage(event.target.value)}>
         <option value="">Любой</option><option value="ru">Русский</option><option value="en">Английский</option>
       </select></label>
-      <label><input type="checkbox" checked={supported} onChange={event => setSupported(event.target.checked)} /> Профили Studio</label>
-      <label><input type="checkbox" checked={speakers} onChange={event => setSpeakers(event.target.checked)} /> Разделение спикеров</label>
-      <label><input type="checkbox" checked={timestamps} onChange={event => setTimestamps(event.target.checked)} /> Таймкоды слов</label>
-      <label><input type="checkbox" checked={compatible} onChange={event => setCompatible(event.target.checked)} /> Подтверждены пробой на этом ПК</label>
+      <fieldset className="model-catalog-options">
+        <legend>Возможности и совместимость</legend>
+        <label><input type="checkbox" checked={supported} onChange={event => setSupported(event.target.checked)} /> Профили Studio</label>
+        <label><input type="checkbox" checked={speakers} onChange={event => setSpeakers(event.target.checked)} /> Разделение спикеров</label>
+        <label><input type="checkbox" checked={timestamps} onChange={event => setTimestamps(event.target.checked)} /> Таймкоды слов</label>
+        <label><input type="checkbox" checked={compatible} onChange={event => setCompatible(event.target.checked)} /> Подтверждены пробой на этом ПК</label>
+      </fieldset>
       <label>Сортировка<select value={sort} onChange={event => setSort(event.target.value)}>
         <option value="downloads">По загрузкам</option><option value="likes">По отметкам «Нравится»</option>
       </select></label>
