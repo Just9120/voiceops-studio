@@ -20,6 +20,7 @@ $output = (New-Item -ItemType Directory -Path $OutputDirectory).FullName
 $work = Join-Path $output 'work'
 $assets = Join-Path $work 'assets'
 New-Item -ItemType Directory -Path $assets | Out-Null
+Copy-Item -LiteralPath (Join-Path $root 'deploy/companion/voiceops-brand.png') -Destination (Join-Path $assets 'brand.png')
 Expand-Archive -LiteralPath $NemoArchive -DestinationPath (Join-Path $work 'nemo')
 Expand-Archive -LiteralPath $PystraySourceArchive -DestinationPath (Join-Path $work 'pystray')
 $nemoRoot = Join-Path $work 'nemo/nemo-speech-nightly-windows-x86_64-cpu'

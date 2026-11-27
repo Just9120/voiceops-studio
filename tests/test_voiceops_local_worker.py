@@ -136,7 +136,7 @@ def test_studio_requests_identify_the_companion_during_and_after_enrollment(monk
 
 
 @pytest.mark.skipif(os.name != "nt", reason="checks the native Windows Tk layout")
-def test_companion_keeps_stop_visible_at_minimum_size_after_pairing(tmp_path, monkeypatch):
+def test_companion_keeps_stop_visible_across_pairing_models_and_work(tmp_path, monkeypatch):
     import tkinter as tk
     from voiceops_companion import CompanionWindow
 
@@ -145,34 +145,59 @@ def test_companion_keeps_stop_visible_at_minimum_size_after_pairing(tmp_path, mo
     monkeypatch.setattr(CompanionWindow, "publish_inventory", lambda self: None)
 
     def visible_inside(widget, parent):
-        offset = widget.winfo_rooty() - parent.winfo_rooty()
-        return (widget.winfo_ismapped() and 0 <= offset
-                and offset + widget.winfo_height() <= parent.winfo_height())
+        x = widget.winfo_rootx() - parent.winfo_rootx()
+        y = widget.winfo_rooty() - parent.winfo_rooty()
+        return (widget.winfo_ismapped() and 0 <= x and 0 <= y
+                and x + widget.winfo_width() <= parent.winfo_width()
+                and y + widget.winfo_height() <= parent.winfo_height())
 
+    sizes = ["440x375", "900x540"]
     window = tk.Tk()
     window.attributes("-alpha", 0.0)
     try:
+        (tmp_path / "desktop-theme.txt").write_text("Тёмная", encoding="utf-8")
         companion = CompanionWindow(window)
-        window.geometry("440x375")
-        window.update()
-        assert not companion.model_choice.winfo_ismapped()
-        assert visible_inside(companion.stop_button, window)
+        assert companion.theme.get() == "Тёмная"
+        assert companion.canvas.cget("background") == "#151c29"
+        companion.theme_menu.invoke(2)
+        assert companion.canvas.cget("background") == "#000000"
+        assert companion.theme_path.read_text(encoding="utf-8") == "OLED"
+        for size in sizes:
+            window.geometry(size)
+            window.update()
+            assert companion.view == "pairing"
+            assert companion.label_field.winfo_ismapped()
+            assert not companion.model_choice.winfo_ismapped()
+            assert visible_inside(companion.pair_button, window)
+            assert visible_inside(companion.stop_button, window)
+            assert companion.stop_button.instate(["disabled"])
 
-        companion.identity = {"origin": "https://studio.example", "token": "synthetic"}
-        companion.enable_controls()
+        companion.events.put(("identity", {"origin": "https://studio.example", "token": "synthetic"}))
+        companion.pump()
+        for size in sizes:
+            window.geometry(size)
+            window.update()
+            assert companion.view == "models"
+            assert companion.model_choice.winfo_ismapped()
+            assert not companion.label_field.winfo_ismapped()
+            assert visible_inside(companion.to_worker, window)
+
+        companion.to_worker.invoke()
         window.update()
-        assert companion.pair_button.tk_focusNext() == companion.model_choice
-        assert companion.model_choice.winfo_ismapped()
+        assert companion.view == "worker"
+        assert visible_inside(companion.start_button, window)
 
         companion.thread = object()
         companion.enable_controls()
-        companion.status.set("Обработчик ожидает задачи из Studio. " * 10)
-        window.update()
-        companion.canvas.yview_moveto(1)
-        window.update()
-        assert companion.canvas.yview()[0] > 0
-        assert visible_inside(companion.stop_button, window)
-        assert not companion.stop_button.instate(["disabled"])
+        companion.status.set("Обработчик ожидает задачи из Studio. " * 50)
+        for size in sizes:
+            window.geometry(size)
+            window.update()
+            companion.canvas.yview_moveto(1)
+            window.update()
+            assert companion.canvas.yview()[0] > 0
+            assert visible_inside(companion.stop_button, window)
+            assert not companion.stop_button.instate(["disabled"])
         companion.stop_button.invoke()
         assert companion.stop.is_set()
     finally:

@@ -1,4 +1,4 @@
-import { formatAudioDuration } from "./formatters";
+import { formatAudioDuration, formatMediaTimestamp } from "./formatters";
 import { useId, type ReactNode } from "react";
 
 export type AudioVisual = { sources: { position: number; duration_seconds: number; bin_duration_seconds?: number; peaks: number[];
@@ -53,6 +53,9 @@ export function AudioWaveform({ visual: value, before, after, selection, control
   const hasSpeechAnalysis = visual.sources.every((source) => source.speech_status === "available");
   return <section className="audio-waveform" aria-label="Анализ звука и пауз">
     {!selection && <p>До: {timestamp(before)} · после сокращения: {timestamp(after)} · сокращение: {reductionLabel(Math.max(0, before - after))}</p>}
+    {hasWaveform && controls && (
+      <div className="audio-waveform-caption"><span>Исходная шкала</span><span>{timestamp(after)}</span></div>
+    )}
     {hasWaveform ? <div className="audio-waveform-plot"><svg viewBox="0 0 1000 100" preserveAspectRatio="none" role="img" aria-label={`Звуковая огибающая. Найдено пауз: ${count}. Штриховкой отмечены сокращаемые участки.`}>
       <defs><pattern id={pattern} width="8" height="8" patternUnits="userSpaceOnUse"><path d="M0 8L8 0" stroke="currentColor" strokeWidth="2" /></pattern></defs>
       {selection && <g><rect x="0" y="0" width={selection[0] / total * 1000} height="100" fill="currentColor" opacity="0.3" /><rect x={selection[1] / total * 1000} y="0" width={(total - selection[1]) / total * 1000} height="100" fill="currentColor" opacity="0.3" />{selection.map((bound, index) => <line key={index} x1={bound / total * 1000} x2={bound / total * 1000} y1="0" y2="100" stroke="currentColor" strokeWidth="3" />)}</g>}
@@ -68,6 +71,13 @@ export function AudioWaveform({ visual: value, before, after, selection, control
         return <rect key={`${source.position}-${index}`} x={(start + index * bin) / total * 1000} y={(100 - height) / 2} width={width * 0.7} height={height} fill="currentColor" />;
       }))}
     </svg>{controls}</div> : <><p className="muted">Звуковая огибающая недоступна; оценка длительности и найденные паузы сохранены.</p>{controls}</>}
+    {hasWaveform && controls && (
+      <div className="audio-waveform-ticks">
+        <span>{formatMediaTimestamp(0)}</span>
+        <span>{formatMediaTimestamp(total / 2)}</span>
+        <span>{formatMediaTimestamp(total)}</span>
+      </div>
+    )}
     <p className="muted">Паузы выделены фоном, сокращаемые участки — штриховкой. Шкала показывает огибающую громкости; длительность результата до обработки — оценка.</p>
     {hasSpeechAnalysis ? <p className="muted">Полоса сверху — обнаруженная речь. Это оценка голосовой активности, а не распознавание текста; музыка и шум могут ошибочно попадать в неё.{visual.sources.some((source) => source.speech_truncated) ? " Показана часть участков речи." : ""}</p>
       : <p className="muted">Разметка речи недоступна для этой проверки. Звуковая волна показывает громкость, а не наличие голоса.</p>}

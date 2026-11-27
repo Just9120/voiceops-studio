@@ -398,7 +398,6 @@ function appendPage(
 function pickerCopy(mode: AppOwnedDrivePickerMode): {
   title: string;
   description: string;
-  closeLabel: string;
   searchLabel: string;
   searchPlaceholder: string;
 } {
@@ -407,7 +406,6 @@ function pickerCopy(mode: AppOwnedDrivePickerMode): {
       title: "Выберите аудио или видео",
       description:
         "Откройте папку, отметьте до 50 поддерживаемых файлов и подтвердите выбор.",
-      closeLabel: "Закрыть выбор файлов",
       searchLabel: "Поиск файлов по началу названия",
       searchPlaceholder: "Например, Интервью",
     };
@@ -417,7 +415,6 @@ function pickerCopy(mode: AppOwnedDrivePickerMode): {
       title: "Выберите папку с аудио или видео",
       description:
         "Откройте нужную папку и подтвердите текущую папку кнопкой ниже.",
-      closeLabel: "Закрыть выбор исходной папки",
       searchLabel: "Поиск папок по началу названия",
       searchPlaceholder: "Например, Записи встреч",
     };
@@ -427,7 +424,6 @@ function pickerCopy(mode: AppOwnedDrivePickerMode): {
       title: "Выберите папку с транскриптами",
       description:
         "Откройте папку, которую нужно проверить вместе со всеми подпапками, и подтвердите её кнопкой ниже.",
-      closeLabel: "Закрыть выбор папки с транскриптами",
       searchLabel: "Поиск папок с транскриптами по началу названия",
       searchPlaceholder: "Например, Созвоны",
     };
@@ -437,7 +433,6 @@ function pickerCopy(mode: AppOwnedDrivePickerMode): {
       title: "Выберите Google Doc с транскриптом",
       description:
         "Откройте нужную папку, выберите один Google Doc и подтвердите выбор.",
-      closeLabel: "Закрыть выбор Google Doc",
       searchLabel: "Поиск Google Docs по началу названия",
       searchPlaceholder: "Например, Синк с разработкой",
     };
@@ -446,7 +441,6 @@ function pickerCopy(mode: AppOwnedDrivePickerMode): {
     title: "Выберите папку для результатов",
     description:
       "Откройте нужную папку и подтвердите текущую папку кнопкой ниже.",
-    closeLabel: "Закрыть выбор папки",
     searchLabel: "Поиск папок по началу названия",
     searchPlaceholder: "Например, Готовые транскрипты",
   };
@@ -914,16 +908,22 @@ function GoogleDrivePickerDialog({
             <h2 id={titleId}>{copy.title}</h2>
             <p id={descriptionId}>{copy.description}</p>
           </div>
-          <button
-            ref={cancelRef}
-            type="button"
-            className="secondary"
-            onClick={onCancel}
-            aria-label={copy.closeLabel}
-          >
-            Закрыть
-          </button>
         </header>
+
+        <nav className="google-drive-folder-breadcrumbs" aria-label="Путь">
+          {path.map((folder, index) => (
+            <button
+              type="button"
+              key={`${folder.id}:${index}`}
+              className="secondary"
+              aria-current={index === path.length - 1 ? "page" : undefined}
+              disabled={index === path.length - 1 && !searchTerm}
+              onClick={() => visitFolder(folder, path.slice(0, index + 1))}
+            >
+              {folder.name}
+            </button>
+          ))}
+        </nav>
 
         <div className="google-drive-picker-controls">
           <form
@@ -970,22 +970,13 @@ function GoogleDrivePickerDialog({
           </label>
         </div>
 
-        <nav className="google-drive-folder-breadcrumbs" aria-label="Путь">
-          {path.map((folder, index) => (
-            <button
-              type="button"
-              key={`${folder.id}:${index}`}
-              className="secondary"
-              aria-current={index === path.length - 1 ? "page" : undefined}
-              disabled={index === path.length - 1 && !searchTerm}
-              onClick={() => visitFolder(folder, path.slice(0, index + 1))}
-            >
-              {folder.name}
-            </button>
-          ))}
-        </nav>
-
         <div className="google-drive-folder-picker-content">
+          {mode !== "sources" && mode !== "transcript-document" && current && (
+            <div className="google-drive-picker-current-folder">
+              <strong>{current.name}</strong>
+              <span className="muted">Текущая папка · Google Drive</span>
+            </div>
+          )}
           {activeLoading && (
             <p role="status">
               {searchTerm
@@ -1126,6 +1117,14 @@ function GoogleDrivePickerDialog({
         )}
 
         <footer className="actions google-drive-folder-picker-actions">
+          <button
+            ref={cancelRef}
+            type="button"
+            className="secondary"
+            onClick={onCancel}
+          >
+            Отмена
+          </button>
           {mode === "sources" || mode === "transcript-document" ? (
             <button
               type="button"
@@ -1147,7 +1146,7 @@ function GoogleDrivePickerDialog({
               Выбрать эту папку
             </button>
           )}
-          <span className="muted">
+          <span className={mode === "sources" || mode === "transcript-document" ? "google-drive-picker-folder-status" : "visually-hidden"} role="status">
             {current
               ? mode === "transcript-document"
                 ? `Открытая папка: ${current.name}`

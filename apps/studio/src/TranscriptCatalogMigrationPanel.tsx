@@ -1527,7 +1527,7 @@ export function TranscriptCatalogMigrationPanel({
         <p>
           Подключите отдельный доступ, чтобы проверять и приводить готовые
           документы к текущему формату. Сами действия находятся в разделе
-          «Транскрибации → Обслуживание».
+          «Транскрибации → Документы».
         </p>
         <details className="technical-details">
           <summary>Почему нужен отдельный доступ</summary>
@@ -1613,7 +1613,6 @@ export function TranscriptCatalogMigrationPanel({
       className="transcript-maintenance-panel"
       aria-labelledby="transcript-maintenance-title"
     >
-      <span className="tag">ПОДГОТОВКА ДОКУМЕНТОВ</span>
       <h2 id="transcript-maintenance-title">
         Проверка и обновление Google Docs
       </h2>
@@ -1638,43 +1637,47 @@ export function TranscriptCatalogMigrationPanel({
           </button>
         )}
       </div>
-      <details className="card transcript-maintenance-access technical-details">
-        <summary className="summary-row">Расширенные действия</summary>
-        <h3>Сохранить манифест</h3>
-        <p>Сохраните JSON со связями исходников, настройками и готовыми документами в выбранную папку Google Drive. Текст транскрипций и ключи в файл не входят.</p>
-        <button type="button" disabled={!pickerReady || exportPending || clearPending} onClick={() => void exportManifest()}>
-          {exportPending ? "Сохраняем манифест…" : "Сохранить манифест в Google Drive"}
-        </button>
-        {exportMessage && <p role="status">{exportMessage}</p>}
-        {exportUrl && <a href={exportUrl} target="_blank" rel="noopener noreferrer">Открыть сохранённый манифест</a>}
-        <h3>Сбросить учёт готовых документов</h3>
-        <p>
-          Сброс удаляет только историю защиты от повторной обработки. Google
-          Docs, результаты, исходные файлы, задачи и журнал действий сохранятся.
-        </p>
-        <button
-          type="button"
-          className="danger"
-          disabled={clearPending || exportPending}
-          onClick={() => setClearOpen(true)}
-        >
-          Сбросить учёт
-        </button>
-        {clearMessage && (
-          <p role="status" className="notice">{clearMessage}</p>
-        )}
-      </details>
       <div className="transcript-maintenance-grid">
         <MaintenanceOperationCard
           workflow="standardization"
           operationReady={operationReady}
           mutate={mutate}
         />
-        <MaintenanceOperationCard
-          workflow="catalog_import"
-          operationReady={operationReady}
-          mutate={mutate}
-        />
+        <div className="transcript-maintenance-secondary">
+          <section className="card transcript-maintenance-operation" aria-labelledby="transcript-manifest-title">
+            <h3 id="transcript-manifest-title">Манифест</h3>
+            <p>Сохраните JSON со связями исходников, настройками и готовыми документами в выбранную папку Google Drive. Текст транскрипций и ключи в файл не входят.</p>
+            <button type="button" disabled={!pickerReady || exportPending || clearPending} onClick={() => void exportManifest()}>
+              {exportPending ? "Сохраняем манифест…" : "Сохранить манифест в Google Drive"}
+            </button>
+            {exportMessage && <p role="status">{exportMessage}</p>}
+            {exportUrl && <a href={exportUrl} target="_blank" rel="noopener noreferrer">Открыть сохранённый манифест</a>}
+          </section>
+          <MaintenanceOperationCard
+            workflow="catalog_import"
+            operationReady={operationReady}
+            mutate={mutate}
+          />
+          <details className="card transcript-maintenance-access technical-details">
+            <summary className="summary-row">Расширенные действия</summary>
+            <h3>Сбросить учёт готовых документов</h3>
+            <p>
+              Сброс удаляет только историю защиты от повторной обработки. Google
+              Docs, результаты, исходные файлы, задачи и журнал действий сохранятся.
+            </p>
+            <button
+              type="button"
+              className="danger"
+              disabled={clearPending || exportPending}
+              onClick={() => setClearOpen(true)}
+            >
+              Сбросить учёт
+            </button>
+            {clearMessage && (
+              <p role="status" className="notice">{clearMessage}</p>
+            )}
+          </details>
+        </div>
       </div>
       {clearOpen && (
         <ConfirmClearDialog

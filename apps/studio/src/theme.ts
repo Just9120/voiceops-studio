@@ -1,18 +1,19 @@
 export const STUDIO_THEME_STORAGE_KEY = "studio-theme-preference";
 export const STUDIO_THEME_MEDIA_QUERY = "(prefers-color-scheme: dark)";
 
-export type StudioThemePreference = "system" | "light" | "dark";
-export type ResolvedStudioTheme = "light" | "dark";
+export type StudioThemePreference = "system" | ResolvedStudioTheme;
+export type ResolvedStudioTheme = "light" | "dark" | "oled";
 export const STUDIO_ACCENT_COLORS = ["blue", "violet", "teal", "rose"] as const;
 export type StudioAccentColor = (typeof STUDIO_ACCENT_COLORS)[number];
 
 const THEME_COLORS: Record<ResolvedStudioTheme, string> = {
-  light: "#315efb",
-  dark: "#111827",
+  light: "#eff2f7",
+  dark: "#151c29",
+  oled: "#000000",
 };
 
 function isStudioThemePreference(value: unknown): value is StudioThemePreference {
-  return value === "system" || value === "light" || value === "dark";
+  return value === "system" || value === "light" || value === "dark" || value === "oled";
 }
 
 export function isStudioAccentColor(value: unknown): value is StudioAccentColor {
@@ -60,7 +61,7 @@ export function applyStudioTheme(
   const resolved = resolveStudioTheme(preference, systemPrefersDark);
   documentRef.documentElement.dataset.theme = resolved;
   documentRef.documentElement.dataset.themePreference = preference;
-  documentRef.documentElement.style.colorScheme = resolved;
+  documentRef.documentElement.style.colorScheme = resolved === "light" ? "light" : "dark";
   documentRef
     .querySelector('meta[name="theme-color"]')
     ?.setAttribute("content", THEME_COLORS[resolved]);

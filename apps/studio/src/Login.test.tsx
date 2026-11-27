@@ -61,7 +61,7 @@ describe("Login auth boundary", () => {
         "Проверяем готовность входа",
       );
       expect(
-        screen.queryByRole("heading", { name: "Вход" }),
+        screen.queryByRole("heading", { name: "Вход в VoiceOps Studio" }),
       ).not.toBeInTheDocument();
 
       expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -79,7 +79,7 @@ describe("Login auth boundary", () => {
 
       await userEvent.click(screen.getByRole("button", { name: "Повторить" }));
       expect(
-        await screen.findByRole("heading", { name: "Вход" }),
+        await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" }),
       ).toBeInTheDocument();
       expect(bootstrapReads).toBe(3);
       expect(screen.queryByRole("button", { name: "Забыли пароль?" })).not.toBeInTheDocument();
@@ -161,7 +161,7 @@ describe("Login auth boundary", () => {
 
     try {
       const { container } = render(<Login onLogin={onLogin} />);
-      await screen.findByRole("heading", { name: "Вход" });
+      await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" });
       await userEvent.type(screen.getByLabelText("Email"), "user@example.com");
       await userEvent.type(screen.getByLabelText("Пароль"), "password-long");
       const form = container.querySelector("form");
@@ -241,7 +241,7 @@ describe("Login auth boundary", () => {
     );
 
     const { container } = render(<Login onLogin={onLogin} />);
-    await screen.findByRole("heading", { name: "Вход" });
+    await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" });
     await userEvent.type(screen.getByLabelText("Email"), "user@example.com");
     await userEvent.type(screen.getByLabelText("Пароль"), "password-long");
     const form = container.querySelector("form");
@@ -297,7 +297,7 @@ describe("Login auth boundary", () => {
     );
 
     const { unmount } = render(<Login onLogin={onLogin} />);
-    await screen.findByRole("heading", { name: "Вход" });
+    await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" });
     await userEvent.type(screen.getByLabelText("Email"), "user@example.com");
     await userEvent.type(screen.getByLabelText("Пароль"), "password-long");
     await userEvent.click(screen.getByRole("button", { name: "Войти" }));
@@ -356,7 +356,7 @@ describe("Login auth boundary", () => {
     );
 
     render(<Login onLogin={onLogin} />);
-    await screen.findByRole("heading", { name: "Вход" });
+    await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" });
     await userEvent.type(screen.getByLabelText("Email"), "user@example.com");
     await userEvent.type(screen.getByLabelText("Пароль"), "password-long");
     await userEvent.click(screen.getByRole("button", { name: "Войти" }));
@@ -369,16 +369,19 @@ describe("Login auth boundary", () => {
       "one-time-code",
     );
     await userEvent.type(screen.getByLabelText("Одноразовый код"), "000000");
-    await userEvent.click(screen.getByRole("button", { name: "Войти" }));
+    await userEvent.click(screen.getByRole("button", { name: "Подтвердить вход" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Неверная почта или пароль");
-    await userEvent.click(screen.getByRole("button", { name: "Войти" }));
+    await userEvent.click(screen.getByRole("button", { name: "Подтвердить вход" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Неверный одноразовый или резервный код",
     );
 
-    await userEvent.clear(screen.getByLabelText("Одноразовый код"));
-    await userEvent.type(screen.getByLabelText("Одноразовый код"), "123456");
-    await userEvent.click(screen.getByRole("button", { name: "Войти" }));
+    await userEvent.click(screen.getByRole("button", { name: "Использовать резервный код" }));
+    const recoveryCode = screen.getByLabelText("Резервный код");
+    expect(recoveryCode).toHaveFocus();
+    expect(screen.queryByLabelText("Одноразовый код")).not.toBeInTheDocument();
+    await userEvent.type(recoveryCode, "ABCD-EFGH");
+    await userEvent.click(screen.getByRole("button", { name: "Подтвердить вход" }));
     await waitFor(() =>
       expect(onLogin).toHaveBeenCalledWith(
         { email: "user@example.com", role: "admin", accent_color: "blue" },
@@ -407,7 +410,7 @@ describe("Login auth boundary", () => {
         email: "user@example.com",
         password: "password-long",
         login_csrf_token: "context-4",
-        verification_code: "123456",
+        recovery_code: "ABCD-EFGH",
       },
     ]);
   });

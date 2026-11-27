@@ -197,7 +197,10 @@ export function YandexDiskPicker({ mode, csrf, onCsrf, onFinish }: Props) {
     className="card google-drive-folder-picker-dialog yandex-disk-picker-dialog" data-studio-scroll-lock-allow onKeyDown={keyDown}>
     <header className="google-drive-folder-picker-header"><div><h2 id={titleId}>{mode === "sources" ? "Выберите записи на Яндекс Диске" : "Выберите папку Яндекс Диска"}</h2>
       <p id={`${titleId}-description`}>{mode === "source-folder" ? "Будут найдены аудио и видео в текущей папке и всех подпапках. Сначала проверьте состав и причины исключений, затем подтвердите выбор. Пустую папку тоже можно выбрать." : mode === "output-folder" ? "Откройте нужную папку и подтвердите её. Результат сохранится как DOCX." : "Можно выбрать до 50 аудио и видео, в том числе из разных папок."}</p></div>
-      <button ref={close} type="button" onClick={() => { currentRequest.current?.abort(); onFinish(null); }}>Закрыть</button></header>
+    </header>
+    <nav className="yandex-disk-picker-navigation" aria-label="Путь на Яндекс Диске"><div className="actions"><button type="button" disabled={pending || path === "disk:/"} onClick={() => { setPath("disk:/"); setSearch(""); }}>Мой диск</button>
+      <button type="button" disabled={pending || path === "disk:/"} onClick={() => { const parent = path.slice(0, path.lastIndexOf("/")); setPath(parent === "disk:" ? "disk:/" : parent); setSearch(""); }}>На уровень выше</button>
+      </div><span className="muted" title={path === "disk:/" ? "Мой диск" : path.slice(6)}>{path === "disk:/" ? "Мой диск" : path.slice(6)}</span></nav>
     <div className="yandex-disk-picker-toolbar">
       <label>Поиск в текущей папке<input type="search" value={search} disabled={pending} onChange={(event) => setSearch(event.target.value)} aria-describedby={`${titleId}-search-hint`} /></label>
       <label>Сортировка<select value={sort} disabled={pending} onChange={(event) => setSort(event.target.value)}>
@@ -205,12 +208,13 @@ export function YandexDiskPicker({ mode, csrf, onCsrf, onFinish }: Props) {
         <option value="-modified">Сначала недавно изменённые</option><option value="modified">Сначала давно изменённые</option></select></label>
       <small id={`${titleId}-search-hint`} className="muted">Поиск среди загруженных элементов текущей папки.</small>
     </div>
-    <nav className="yandex-disk-picker-navigation" aria-label="Путь на Яндекс Диске"><div className="actions"><button type="button" disabled={pending || path === "disk:/"} onClick={() => { setPath("disk:/"); setSearch(""); }}>Мой диск</button>
-      <button type="button" disabled={pending || path === "disk:/"} onClick={() => { const parent = path.slice(0, path.lastIndexOf("/")); setPath(parent === "disk:" ? "disk:/" : parent); setSearch(""); }}>На уровень выше</button>
-      </div><span className="muted" title={path === "disk:/" ? "Мой диск" : path.slice(6)}>{path === "disk:/" ? "Мой диск" : path.slice(6)}</span></nav>
     <div className="google-drive-folder-picker-content yandex-disk-picker-content" aria-busy={busy}>
     {error && <div role="alert"><p className="error">{error}</p><button type="button" disabled={busy || pending} onClick={() => setReload((value) => value + 1)}>Обновить список</button></div>}
     {busy && <p role="status">Загружаем список…</p>}
+    {page && mode !== "sources" && <div className="google-drive-picker-current-folder">
+      <strong>{page.folder.name}</strong>
+      <span className="muted">Текущая папка · Яндекс Диск</span>
+    </div>}
     {folderPreview && <section aria-label="Состав папки и подпапок">
       <h3>Состав выбранной папки</h3>
       <p>Проверено папок: {folderPreview.folder_count}. Будут добавлены записи: {folderPreview.resources.length}. Исключено: {folderPreview.excluded.length}.</p>
@@ -228,8 +232,10 @@ export function YandexDiskPicker({ mode, csrf, onCsrf, onFinish }: Props) {
       {page.next_offset !== null && <button type="button" disabled={busy || pending} onClick={() => void loadMore()}>Показать ещё</button>}
     </>}
     </div>
-    <footer className="actions google-drive-folder-picker-actions"><button type="button" className="primary" disabled={!page || busy || pending || (mode === "sources" && !selection.size)} aria-busy={pending || undefined} onClick={() => void confirm()}>{pending ? "Проверяем выбор…" : mode === "sources" ? `Выбрать файлы (${selection.size})` : mode === "source-folder" && folderPreview ? `Подтвердить выбор (${folderPreview.resources.length})` : "Выбрать эту папку"}</button>
-      <span className="muted" aria-live="polite">{mode === "sources" ? `Выбрано файлов: ${selection.size} из 50` : page ? `Текущая папка: ${page.folder.name}` : "Выбирается текущая открытая папка"}</span></footer>
+    <footer className="actions google-drive-folder-picker-actions">
+      <button ref={close} type="button" className="secondary" onClick={() => { currentRequest.current?.abort(); onFinish(null); }}>Отмена</button>
+      <button type="button" className="primary" disabled={!page || busy || pending || (mode === "sources" && !selection.size)} aria-busy={pending || undefined} onClick={() => void confirm()}>{pending ? "Проверяем выбор…" : mode === "sources" ? `Выбрать файлы (${selection.size})` : mode === "source-folder" && folderPreview ? `Подтвердить выбор (${folderPreview.resources.length})` : "Выбрать эту папку"}</button>
+      <span className={mode === "sources" ? "google-drive-picker-folder-status" : "visually-hidden"} aria-live="polite">{mode === "sources" ? `Выбрано файлов: ${selection.size} из 50` : page ? `Текущая папка: ${page.folder.name}` : "Выбирается текущая открытая папка"}</span></footer>
   </section></div>;
 }
 

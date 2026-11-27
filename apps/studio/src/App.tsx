@@ -2,6 +2,7 @@ import { openYandexDiskPicker, diskFailureMessage, type DiskPickerMode } from ".
 import { parseProjectSourceCollection } from "./projectCollectionContracts";
 import { YandexDiskConnectionPanel } from "./YandexDiskConnectionPanel";
 import { LocalExecutionPanel } from "./LocalExecutionPanel";
+import { SettingsAnalytics, SettingsLanding } from "./SettingsLanding";
 import { localDeviceReady, localDeviceStatus, localExecutionFailure, localModelName, LOCAL_MODEL, PARAKEET_MODEL,
   useLocalExecutionDevices, type LocalModelSelection } from "./localExecutionContracts";
 import { auditLabel } from "./auditLabels";
@@ -42,6 +43,7 @@ import {
 import {
   parsePlatformRoute,
   parseTranscriptionMode,
+  type TranscriptionMode,
   pushTranscriptionMode,
   pushPlatformRoute,
   type Page,
@@ -116,7 +118,7 @@ import {
   requestProjectJobPage,
   requestProjectSourcePage,
 } from "./projectCollectionContracts";
-import { PlatformSidebar } from "./PlatformSidebar";
+import { PlatformSidebar, PlatformTopbar } from "./PlatformSidebar";
 import { AudioPreparationPage } from "./AudioPreparationPage";
 import { ElevenLabsAccountPanel } from "./ElevenLabsAccountPanel";
 import { StorageLifecyclePanel } from "./StorageLifecyclePanel";
@@ -205,6 +207,7 @@ import { FolderImportDialog } from "./FolderImportDialog";
 import { AccountSessionsPanel } from "./AccountSessionsPanel";
 import { AccountSecurityPanel, requestReauthentication } from "./AccountSecurityPanel";
 import { NotificationsPanel } from "./NotificationsPanel";
+import { AppearancePanel } from "./AppearancePanel";
 import {
   buildLocalFolderPreview,
   localFolderRejectedReasonLabel,
@@ -1593,6 +1596,7 @@ function jobMutationKey(kind: JobMutationKind, jobId: string) {
   return `${kind}:${jobId}`;
 }
 function PreparationPanel({
+  historyOnly,
   project,
   csrf,
   onCsrf,
@@ -1626,6 +1630,7 @@ function PreparationPanel({
   markBatchSubmissionAmbiguous,
   clearBatchSubmission,
 }: {
+  historyOnly: boolean;
   project: Project;
   csrf: string;
   onCsrf: (csrf: string) => void;
@@ -1813,6 +1818,7 @@ function PreparationPanel({
   const [historyClearMessage, setHistoryClearMessage] = useState("");
   const [historyQuery, setHistoryQuery] = useState("");
   const [historyStatus, setHistoryStatus] = useState("all");
+  const [historyDays, setHistoryDays] = useState(0);
   const [historyPage, setHistoryPage] = useState(0);
   const [selectedTerminalIds,setSelectedTerminalIds]=useState<Set<string>>(() => new Set());
   const [terminalBatchPending,setTerminalBatchPending]=useState(false);
@@ -4517,9 +4523,12 @@ function PreparationPanel({
         (job) => job.history_attention_required !== true,
       ),
     );
+  const historySearch = historyQuery.trim().toLocaleLowerCase("ru-RU");
+  const historyStart = Date.now() - historyDays * 86_400_000;
   const filteredHistory = recentTranscriptions.filter((presentation) => presentation.jobs.some((job) =>
-    jobTitle(job).toLocaleLowerCase("ru-RU").includes(historyQuery.trim().toLocaleLowerCase("ru-RU")) &&
-    (historyStatus === "all" || job.status === historyStatus),
+    jobTitle(job).toLocaleLowerCase("ru-RU").includes(historySearch) &&
+    (historyStatus === "all" || job.status === historyStatus) &&
+    (!historyDays || Date.parse(job.created_at) >= historyStart),
   ));
   const eligibleTerminalJobs=pinnedTerminalTranscriptions.flatMap((group) => group.jobs).filter((job) => job.history_attention_required !== true);
   async function dismissSelectedTerminal() {
@@ -4869,7 +4878,8 @@ function PreparationPanel({
     },
   );
   return (
-    <section className="preparation" aria-label={`Подготовка ${project.title}`}>
+    <section className="preparation" aria-label={historyOnly ? "История задач" : `Подготовка ${project.title}`}>
+      <div className="batch-composer-content" hidden={historyOnly}>
       {detachedGooglePickerPending && (
         <p className="muted" role="status">
           Выбор в Google Drive для этого проекта ещё выполняется. Дождитесь
@@ -6064,6 +6074,7 @@ function PreparationPanel({
           </section>
         )}
         <div className="composer-footer">
+          <a href="#current-transcriptions" className="button-like secondary">Текущие задания</a>
           <div>
             <b>Задач: {rows.length}</b>
             <span>Будет создано транскрибаций: {plannedJobCount}</span>
@@ -6113,6 +6124,7 @@ function PreparationPanel({
           </button>
         </section>
       )}
+      </div>
       {visibleJobMutationNotices.map((notice) => (
         <p
           key={jobMutationKey(notice.kind, notice.jobId)}
@@ -6131,6 +6143,7 @@ function PreparationPanel({
       <section
         id="current-transcriptions"
         className="sources"
+        hidden={historyOnly}
         aria-label="Текущие транскрибации"
       >
         <h2>Текущие транскрибации</h2>
@@ -6150,7 +6163,7 @@ function PreparationPanel({
         {currentTranscriptions.map(renderTranscriptionPresentation)}
         {pinnedTerminalTranscriptions.map(renderTranscriptionPresentation)}
       </section>
-      <details className="recent-jobs history-transcriptions">
+      <details className="recent-jobs history-transcriptions" open={historyOnly || undefined}>
         <summary id="history-results" ref={historySummaryRef}>Недавние транскрибации · {recentTranscriptions.length}</summary>
         {historyClearMessage && (
           <p role="status" className={historyClearOpen ? "error" : "notice"}>
@@ -6158,42 +6171,7 @@ function PreparationPanel({
           </p>
         )}
         <div className="history-workbench" hidden={historyClearOpen}>
-          <div className="history-tools">
-            <div className="history-filters">
-              <label>Поиск по названию среди загруженных задач
-                <input type="search" name="transcription-history-search" autoComplete="off" value={historyQuery} onChange={(event) => { setHistoryQuery(event.target.value); setHistoryPage(0); }} />
-              </label>
-              <label>Статус в истории
-                <select value={historyStatus} onChange={(event) => { setHistoryStatus(event.target.value); setHistoryPage(0); }}>
-                  <option value="all">Все статусы</option><option value="completed">Готово</option>
-                  <option value="failed">Ошибка</option><option value="cancelled">Отменено</option>
-                </select>
-              </label>
-            </div>
-            {(historyQuery || historyStatus !== "all") && <div className="filter-chips" aria-label="Активные фильтры истории">
-              {historyQuery && <button type="button" onClick={() => {setHistoryQuery(""); changeHistoryPage(0);}}>Поиск: {historyQuery} ×</button>}
-              {historyStatus !== "all" && <button type="button" onClick={() => {setHistoryStatus("all"); changeHistoryPage(0);}}>Статус: {({completed:"Готово",failed:"Ошибка",cancelled:"Отменено"} as Record<string,string>)[historyStatus] ?? historyStatus} ×</button>}
-              <button type="button" onClick={() => {setHistoryQuery("");setHistoryStatus("all");changeHistoryPage(0);}}>Сбросить фильтры</button>
-            </div>}
-            <div className="history-clear-actions">
-              {hasClearableHistory && (
-                <button
-                  type="button"
-                  className="danger"
-                  disabled={historyClearPending}
-                  ref={historyClearTriggerRef}
-                  onClick={() => {
-                    returnHistoryFocusRef.current = true;
-                    setHistoryClearMessage("");
-                    setHistoryClearOpen(true);
-                  }}
-                >
-                  Очистить историю
-                </button>
-              )}
-            </div>
-          </div>
-          <div className="history-list">
+          <section className="card history-list" aria-label="Результаты истории">
             <p className="muted" role="status">Найдено групп: {filteredHistory.length} · среди загруженных: {recentTranscriptions.length}</p>
             {filteredHistory.length === 0 && <p role="status">Среди загруженных задач совпадений нет.</p>}
             {filteredHistory.slice(currentHistoryPage * 10, (currentHistoryPage + 1) * 10).map(renderTranscriptionPresentation)}
@@ -6214,7 +6192,51 @@ function PreparationPanel({
                   : "Показать ещё транскрибации"}
               </button>
             )}
-          </div>
+          </section>
+          <section className="card history-tools" aria-labelledby="history-filters-title">
+            <h3 id="history-filters-title">Фильтры</h3>
+            <div className="history-filters">
+              <label>Период создания
+                <select value={historyDays} onChange={(event) => { setHistoryDays(Number(event.target.value)); setHistoryPage(0); }}>
+                  <option value={0}>Всё время</option>
+                  <option value={7}>Последние 7 дней</option>
+                  <option value={30}>Последние 30 дней</option>
+                  <option value={90}>Последние 90 дней</option>
+                </select>
+              </label>
+              <label>Поиск по названию среди загруженных задач
+                <input type="search" name="transcription-history-search" autoComplete="off" value={historyQuery} onChange={(event) => { setHistoryQuery(event.target.value); setHistoryPage(0); }} />
+              </label>
+              <label>Статус в истории
+                <select value={historyStatus} onChange={(event) => { setHistoryStatus(event.target.value); setHistoryPage(0); }}>
+                  <option value="all">Все статусы</option><option value="completed">Готово</option>
+                  <option value="failed">Ошибка</option><option value="cancelled">Отменено</option>
+                </select>
+              </label>
+            </div>
+            {(historyQuery || historyStatus !== "all" || historyDays > 0) && <div className="filter-chips" aria-label="Активные фильтры истории">
+              {historyQuery && <button type="button" onClick={() => {setHistoryQuery(""); changeHistoryPage(0);}}>Поиск: {historyQuery} ×</button>}
+              {historyStatus !== "all" && <button type="button" onClick={() => {setHistoryStatus("all"); changeHistoryPage(0);}}>Статус: {({completed:"Готово",failed:"Ошибка",cancelled:"Отменено"} as Record<string,string>)[historyStatus] ?? historyStatus} ×</button>}
+              <button type="button" onClick={() => {setHistoryQuery("");setHistoryStatus("all");setHistoryDays(0);changeHistoryPage(0);}}>Сбросить фильтры</button>
+            </div>}
+            <div className="history-clear-actions">
+              {hasClearableHistory && (
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={historyClearPending}
+                  ref={historyClearTriggerRef}
+                  onClick={() => {
+                    returnHistoryFocusRef.current = true;
+                    setHistoryClearMessage("");
+                    setHistoryClearOpen(true);
+                  }}
+                >
+                  Очистить историю
+                </button>
+              )}
+            </div>
+          </section>
         </div>
         {historyClearOpen && (
           <section
@@ -6266,7 +6288,7 @@ function PreparationPanel({
           </section>
         )}
       </details>{" "}
-      {localFolderPreview && (
+      {!historyOnly && localFolderPreview && (
         <FolderImportDialog
           preview={localFolderPreview.preview}
           targetFolderName={
@@ -6289,7 +6311,7 @@ function PreparationPanel({
           onCancel={() => setLocalFolderPreview(null)}
         />
       )}
-      {driveFolderPreview && (
+      {!historyOnly && driveFolderPreview && (
         <FolderImportDialog
           preview={{
             folder_name: driveFolderPreview.preview.folder.name,
@@ -6343,13 +6365,22 @@ function isProjectClearResponse(value: unknown): value is {
   );
 }
 
+type OverviewAudioJob = {
+  id: string;
+  title: string;
+  status: string;
+  progress: { percent: number };
+};
+
 function OverviewPage({
   onNavigate,
   onOpenTranscriptions,
+  onOpenConnections,
   onOpenJob,
 }: {
   onNavigate: (page: Page) => void;
   onOpenTranscriptions: () => void;
+  onOpenConnections: () => void;
   onOpenJob: (job: TranscriptionJob) => void;
 }) {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -6367,6 +6398,33 @@ function OverviewPage({
   const [recentJobs, setRecentJobs] = useState<TranscriptionJob[]>([]);
   const [recentJobsLoading, setRecentJobsLoading] = useState(false);
   const [recentJobsError, setRecentJobsError] = useState(false);
+  const [audioJobs, setAudioJobs] = useState<OverviewAudioJob[]>([]);
+  const [audioStatus, setAudioStatus] = useState<"loading" | "ready" | "error">("ready");
+  const devices = useLocalExecutionDevices();
+
+  const loadAudioJobs = (projectId: string) => {
+    setAudioStatus("loading");
+    void settleLatestRequest(
+      requestEpochsRef.current,
+      "overview:audio-preparations",
+      async (signal) => {
+        const { jobs } = await api<{ jobs: OverviewAudioJob[] }>(
+          `/projects/${projectId}/audio-preparations`,
+          { cache: "no-store", signal },
+        );
+        return Array.isArray(jobs)
+          ? jobs.filter((job) => ["preview_queued", "analyzing", "queued", "processing"].includes(job?.status)).slice(0, 3)
+          : [];
+      },
+      (jobs) => {
+        setAudioJobs(jobs);
+        setAudioStatus("ready");
+      },
+      () => setAudioStatus("error"),
+      { controllers: requestControllersRef.current, timeoutMs: PROJECT_COLLECTION_REQUEST_TIMEOUT_MS },
+    );
+  };
+
   const loadRecentJobs = (projectId: string) => {
     setRecentJobsLoading(true);
     setRecentJobsError(false);
@@ -6375,7 +6433,7 @@ function OverviewPage({
       "overview:recent-jobs",
       (signal) => requestProjectJobPage(projectId, null, signal),
       (jobsPage) => {
-        setRecentJobs(jobsPage.items.slice(0, 3));
+        setRecentJobs(jobsPage.items);
         setRecentJobsLoading(false);
       },
       () => { setRecentJobsLoading(false); setRecentJobsError(true); },
@@ -6396,10 +6454,15 @@ function OverviewPage({
         setProjectsLoading(false);
         const workspace=activeProjects[0];
         if (!workspace) {
-          setRecentJobs([]); setRecentJobsLoading(false); setRecentJobsError(false);
+          setRecentJobs([]);
+          setRecentJobsLoading(false);
+          setRecentJobsError(false);
+          setAudioJobs([]);
+          setAudioStatus("ready");
           return;
         }
         loadRecentJobs(workspace.id);
+        loadAudioJobs(workspace.id);
       },
       () => {
         setProjectsError(true);
@@ -6496,175 +6559,165 @@ function OverviewPage({
     !credentialsLoading &&
     !credentialsError &&
     activeCredentials.length > 0;
+  const ongoingJobs = recentJobs
+    .filter((job) => job.status === "queued" || job.status === "processing")
+    .slice(0, 3);
   const recentDocuments = recentJobs
     .filter((job) => job.status === "completed")
     .slice(0, 3);
+  const readyDevice = devices.items.find((device) => localDeviceReady(device));
+  const deviceStatus = devices.error
+    ? "Недоступно"
+    : readyDevice
+      ? `Доступен · ${readyDevice.label}`
+      : devices.loading
+        ? "Загрузка…"
+        : devices.items.length
+          ? "Компьютер не готов"
+          : "Нужна привязка";
+  const jobsLoading = projectsLoading || recentJobsLoading;
+  const jobsError = projectsError || recentJobsError;
+  const workspaceId = projects[0]?.id;
+
   return (
     <section className="page dashboard-page">
-      <header className="page-header split">
-        <div>
-          <h1 className="page-title">VoiceOps Studio</h1>
-          <p>
-            Подготовьте запись, создайте транскрибацию или вернитесь к готовым
-            результатам.
-          </p>
-        </div>
-        <div className="actions">
-          <button onClick={() => onNavigate("audio")}>
-            Подготовить аудио
-          </button>
-          <button className="primary" onClick={onOpenTranscriptions}>
-            Создать транскрибацию
-          </button>
-        </div>
+      <header className="workspace-heading">
+        <h1 className="page-title">Обзор</h1>
+        <p>Продолжите текущую работу или начните новую.</p>
       </header>
-      <div className="summary-grid dashboard-summary">
-        <article className="card summary-card" aria-label="Последние результаты">
-          <span className="summary-label">Транскрибации и результаты</span>
-          <strong className="summary-value">
-            {projectsLoading || recentJobsLoading
-              ? "Загрузка…"
-              : projectsError || recentJobsError
-                ? "Недоступно"
-                : projects.length > 0
-                  ? `Последних задач: ${recentJobs.length}`
-                  : "Начните с первой записи"}
-          </strong>
-          {!projectsLoading && !projectsError && projects.length > 0 && (
-            <>
-              {!recentJobsLoading && !recentJobsError && <small className="muted">Среди последних: в работе {recentJobs.filter(job => job.status === "queued" || job.status === "processing").length}, документов {recentDocuments.length}.</small>}
-              <button type="button" onClick={onOpenTranscriptions}>Открыть</button>
-            </>
-          )}
-          {projectsError && (
-            <button type="button" onClick={loadProjects}>
-              Повторить
-            </button>
-          )}
-        </article>
-        <article className="card summary-card" aria-label="Google Drive">
-          <span className="summary-label">Google Drive</span>
-          <strong className="summary-value">{googleStatus}</strong>
-          {googleError && (
-            <button type="button" onClick={loadGoogleConnection}>
-              Повторить
-            </button>
-          )}
-        </article>
-        <article className="card summary-card" aria-label="Готовность к работе">
-          <span className="summary-label">Готовность к транскрибации</span>
-          <strong className="summary-value">
-            {credentialsLoading || googleLoading
-              ? "Загрузка…"
-              : credentialsError || googleError
-                ? "Недоступно"
-                : readyToTranscribe
-                  ? "Можно начинать"
-                  : "Нужна настройка"}
-          </strong>
-          {credentialsError && (
-            <button type="button" onClick={loadCredentials}>
-              Повторить
-            </button>
-          )}
-        </article>
-      </div>
-      {(projectsError || googleError || credentialsError) && (
-        <p className="notice">
-          Часть данных панели сейчас недоступна. Остальные сведения показаны
-          ниже.
-        </p>
-      )}
-      {needsAttention.length > 0 && (
-        <article className="card attention-card">
-          <h2>Требует внимания</h2>
-          <ul>
-            {needsAttention.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </article>
+      {(jobsError || googleError || credentialsError) && (
+        <p className="notice" role="status">Часть данных панели сейчас недоступна.</p>
       )}
       <div className="dashboard-workspace-grid">
-        <article className="card dashboard-next-step">
-          <h2>Следующий шаг</h2>
-          <p>
-            {readyToTranscribe
-              ? "Подключения готовы — можно выбрать запись и запустить транскрибацию."
-              : "Завершите отмеченные настройки, затем Studio проведёт по созданию результата."}
-          </p>
-          <div className="actions">
-            <button className="primary" onClick={onOpenTranscriptions}>Создать транскрибацию</button>
-            <button onClick={() => onNavigate("audio")}>Подготовить аудио</button>
-          </div>
-        </article>
-        <article className="card dashboard-recent" aria-labelledby="dashboard-recent-title">
-          <div className="split">
-            <h2 id="dashboard-recent-title">Недавние транскрибации</h2>
-            <button type="button" onClick={onOpenTranscriptions}>Все</button>
-          </div>
-          {recentJobsLoading && <p role="status">Загружаем последние задачи…</p>}
-          {recentJobsError && (
-            <div className="inline-actions">
-              <p className="muted">Последние задачи сейчас недоступны.</p>
-              {projects[0] && <button type="button" onClick={() => loadRecentJobs(projects[0].id)}>Повторить загрузку задач</button>}
+        <article className="card dashboard-panel" aria-labelledby="dashboard-work-title">
+          <h2 id="dashboard-work-title">В работе</h2>
+          {jobsLoading ? <p role="status">Загрузка…</p> : jobsError && (
+            <p className="muted">Недоступно состояние транскрибаций.</p>
+          )}
+          {projectsError && <button type="button" onClick={loadProjects}>Повторить</button>}
+          {recentJobsError && workspaceId && (
+            <button type="button" onClick={() => loadRecentJobs(workspaceId)}>Повторить загрузку задач</button>
+          )}
+          {!jobsLoading && !jobsError && !workspaceId && (
+            <p className="muted">Начните с первой записи. Studio подготовит рабочую область автоматически.</p>
+          )}
+          {!jobsLoading && !jobsError && workspaceId && !ongoingJobs.length && !audioJobs.length && audioStatus === "ready" && (
+            <p className="muted">Сейчас нет активных задач.</p>
+          )}
+          {audioStatus === "loading" && <p role="status">Проверяем подготовку аудио…</p>}
+          {audioStatus === "error" && workspaceId && (
+            <div className="dashboard-row">
+              <span>Недоступен прогресс подготовки.</span>
+              <button type="button" onClick={() => loadAudioJobs(workspaceId)}>Повторить загрузку подготовки</button>
             </div>
           )}
-          {!recentJobsLoading && !recentJobsError && recentJobs.length === 0 && <p className="muted">Здесь появятся последние задачи и результаты.</p>}
-          {recentJobs.length > 0 && (
+          {(ongoingJobs.length > 0 || audioJobs.length > 0) && (
             <ul className="dashboard-recent-list">
-              {recentJobs.map((job) => (
-                <li key={job.id}>
-                  <span><button type="button" className="text-link" onClick={() => onOpenJob(job)}>{jobTitle(job)}</button><small>{formatTime(job.updated_at)}</small></span>
+              {ongoingJobs.map((job) => (
+                <li className="dashboard-row" key={job.id}>
+                  <span>
+                    <button type="button" className="text-link" onClick={() => onOpenJob(job)}>{jobTitle(job)}</button>
+                    <small>Транскрибация · {formatTime(job.updated_at)}</small>
+                  </span>
                   <span className={`tag job-${job.status}`}>{jobСтатусLabel(job.status)}</span>
+                </li>
+              ))}
+              {audioJobs.map((job) => (
+                <li className="dashboard-row dashboard-progress-row" key={job.id}>
+                  <span>
+                    <button type="button" className="text-link" onClick={() => onNavigate("audio")}>{job.title}</button>
+                    <small>Подготовка аудио</small>
+                  </span>
+                  {Number.isFinite(job.progress?.percent) && (
+                    <span className="tag">{job.progress.percent}%</span>
+                  )}
+                  {Number.isFinite(job.progress?.percent) && (
+                    <progress aria-label={`Подготовка: ${job.title}`} max="100" value={job.progress.percent} />
+                  )}
                 </li>
               ))}
             </ul>
           )}
         </article>
-        <article className="card dashboard-recent" aria-labelledby="dashboard-documents-title">
-          <div className="split">
-            <h2 id="dashboard-documents-title">Последние документы</h2>
-            <button type="button" onClick={onOpenTranscriptions}>Открыть</button>
-          </div>
-          {recentJobsLoading && <p role="status">Проверяем готовые документы…</p>}
-          {recentJobsError && <p className="muted">Список документов сейчас недоступен.</p>}
-          {!recentJobsLoading && !recentJobsError && recentDocuments.length === 0 && (
+        <article className="card dashboard-panel" aria-labelledby="dashboard-documents-title">
+          <h2 id="dashboard-documents-title">Недавние документы</h2>
+          {jobsLoading && <p role="status">Проверяем готовые документы…</p>}
+          {jobsError && <p className="muted">Список документов сейчас недоступен.</p>}
+          {!jobsLoading && !jobsError && recentDocuments.length === 0 && (
             <p className="muted">Здесь появятся документы завершённых транскрибаций.</p>
           )}
           {recentDocuments.length > 0 && (
             <ul className="dashboard-recent-list">
-              {recentDocuments.map((job) => (
-                <li key={job.id}>
-                  <span>{isApprovedOutputUrl(job.primary_output_url ?? null) ? <ResourceExternalLink href={job.primary_output_url!} label={jobTitle(job)} ariaLabel={`Открыть документ: ${jobTitle(job)}`} /> : <button type="button" className="text-link" onClick={() => onOpenJob(job)}>{jobTitle(job)} — открыть задачу</button>}<small>{formatTime(job.finished_at ?? job.updated_at)}</small></span>
-                  <span className="tag job-completed">Готов</span>
-                </li>
-              ))}
+              {recentDocuments.map((job) => {
+                const title = jobTitle(job);
+                const documentUrl = job.primary_output_url;
+                const storage = job.output_provider === "yandex_disk" ? "Яндекс Диск" : "Google Docs";
+                const hasDocument = documentUrl && isApprovedOutputUrl(documentUrl);
+                return (
+                  <li className="dashboard-row" key={job.id}>
+                    <span>
+                      {hasDocument
+                        ? <ResourceExternalLink href={documentUrl} label={title} ariaLabel={`Открыть документ: ${title}`} />
+                        : <span>{title}</span>}
+                      <small>{hasDocument ? storage : "Ссылка не подтверждена"} · {formatTime(job.finished_at ?? job.updated_at)}</small>
+                    </span>
+                    <button type="button" onClick={() => onOpenJob(job)} aria-label={`Открыть задачу: ${title}`}>Задача</button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </article>
-      </div>
-      {!projectsLoading && !projectsError && projects.length === 0 && (
-        <article className="card">
-          <h2>Начать работу</h2>
-          <p>
-            Рабочая область создаётся автоматически при первом открытии. Затем
-            подготовьте аудио либо выберите обычную или Live-транскрибацию.
-          </p>
-          <div className="actions">
-            <button onClick={() => onNavigate("audio")}>
-              Подготовить аудио
-            </button>
-            <button className="primary" onClick={onOpenTranscriptions}>
-              Создать транскрибацию
-            </button>
-            <button onClick={() => onNavigate("settings")}>Настройки</button>
+        <article className="card dashboard-panel dashboard-connections" aria-labelledby="dashboard-connections-title">
+          <h2 id="dashboard-connections-title">Подключения</h2>
+          <div className="dashboard-connection-list">
+            <div className="dashboard-row" role="group" aria-label="Google Drive">
+              <span><strong>Google Drive</strong><small>{googleStatus}</small></span>
+              {googleError && <button type="button" onClick={loadGoogleConnection}>Повторить</button>}
+            </div>
+            <div className="dashboard-row" role="group" aria-label="Windows Companion">
+              <span><strong>Windows Companion</strong><small>{deviceStatus}</small></span>
+              {devices.error && <button type="button" onClick={() => void devices.refresh()}>Повторить</button>}
+            </div>
+          </div>
+          <div className="dashboard-connection-status">
+            <div role="group" aria-label="Готовность к работе">
+              <span>ElevenLabs и Google Drive · </span>
+              <strong>
+                {credentialsLoading || googleLoading
+                  ? "Загрузка…"
+                  : credentialsError || googleError
+                    ? "Недоступно"
+                    : readyToTranscribe
+                      ? "Можно начинать"
+                      : "Нужна настройка"}
+              </strong>
+              {credentialsError && <button type="button" onClick={loadCredentials}>Повторить</button>}
+            </div>
+            {needsAttention.length > 0 && (
+              <ul className="dashboard-attention">
+                {needsAttention.map((item) => <li key={item}>{item}</li>)}
+              </ul>
+            )}
+            <button type="button" onClick={onOpenConnections}>Настроить подключения</button>
           </div>
         </article>
-      )}
+      </div>
+      <footer className="workspace-action-bar dashboard-actions">
+        <button type="button" onClick={() => onNavigate("audio")}>Подготовить аудио</button>
+        <button type="button" className="primary" onClick={onOpenTranscriptions}>Новая транскрибация</button>
+      </footer>
     </section>
   );
 }
+
+const transcriptionSections = [
+  { id: "batch", label: "Обычная", accessibleName: "Обычная транскрибация", title: "Новая транскрибация", intro: "Выберите запись или фрагмент, проверьте план и место сохранения." },
+  { id: "live", label: "Live", accessibleName: "Live-транскрибация", title: "Live-транскрибация", intro: "Выберите источник звука и профиль распознавания." },
+  { id: "history", label: "История", accessibleName: "История", title: "История транскрибаций", intro: "Найдите завершённую задачу или проверьте её результат." },
+  { id: "maintenance", label: "Документы", accessibleName: "Документы", title: "Документы", intro: "Проверьте результаты и выполните обслуживание каталога." },
+] as const;
+const transcriptionSectionIds = transcriptionSections.map(({ id }) => id);
 
 function ProjectsPage({
   active,
@@ -6714,9 +6767,8 @@ function ProjectsPage({
   const [googlePickerNotices, setGooglePickerNotices] = useState<
     Record<string, GooglePickerNotice>
   >({});
-  const [transcriptionMode, setTranscriptionMode] = useState<
-    "batch" | "live" | "maintenance"
-  >(parseTranscriptionMode);
+  const [transcriptionMode, setTranscriptionMode] =
+    useState<TranscriptionMode>(parseTranscriptionMode);
   const [liveTranscripts, setLiveTranscripts] = useState<
     Record<string, string[]>
   >({});
@@ -7171,7 +7223,7 @@ function ProjectsPage({
     if (!becameActive || !selectedProject) return;
     loadSources(selectedProject.id);
   }, [active, selectedProject?.id]);
-  const selectTranscriptionMode = (mode: "batch" | "live" | "maintenance") => {
+  const selectTranscriptionMode = (mode: TranscriptionMode) => {
     setTranscriptionMode(mode);
     pushTranscriptionMode(mode);
   };
@@ -7199,16 +7251,13 @@ function ProjectsPage({
     selectTranscriptionMode(requestedTranscriptionMode);
     onRequestedTranscriptionModeHandled();
   }, [requestedTranscriptionMode, selectedProject?.id]);
+  const section = transcriptionSections.find(({ id }) => id === transcriptionMode) ?? transcriptionSections[0];
+  const tasksView = transcriptionMode === "history" ? "history" : "batch";
   return (
     <section className="page transcriptions-page">
-      <header className="page-header">
-        <div>
-          <h1 className="page-title">Транскрибации</h1>
-          <p>
-            Обычная обработка файлов и Live-транскрибация находятся в одном
-            рабочем пространстве.
-          </p>
-        </div>
+      <header className="workspace-heading">
+        <h1 className="page-title">{section.title}</h1>
+        <p>{section.intro}</p>
       </header>
       {loading && <p role="status">Подготавливаем транскрибации…</p>}
       {error && (
@@ -7268,79 +7317,38 @@ function ProjectsPage({
         </details>
       )}
       {!loading && !error && selectedProject ? (
-        <article className="card workspace-card">
+        <article className="workspace-card">
           {projects.length > 1 && (
             <p className="workspace-context muted">
               Открыта прежняя рабочая область: {selectedProject.title}
             </p>
           )}
-          <div
-            className="tabs transcription-mode-tabs"
-            role="tablist"
-            aria-label="Рабочие разделы транскрибации"
-          >
-                <button
-                  id="transcription-tab-batch"
-                  type="button"
-                  role="tab"
-                  aria-controls="transcription-panel-batch"
-                  aria-selected={transcriptionMode === "batch"}
-                  tabIndex={transcriptionMode === "batch" ? 0 : -1}
-                  onClick={() => selectTranscriptionMode("batch")}
-                  onKeyDown={(event) =>
-                    navigateTabList(
-                      event,
-                      ["batch", "live", "maintenance"] as const,
-                      selectTranscriptionMode,
-                    )
-                  }
-                >
-                  Обычная транскрибация
-                </button>
-                <button
-                  id="transcription-tab-live"
-                  type="button"
-                  role="tab"
-                  aria-controls="transcription-panel-live"
-                  aria-selected={transcriptionMode === "live"}
-                  tabIndex={transcriptionMode === "live" ? 0 : -1}
-                  onClick={() => selectTranscriptionMode("live")}
-                  onKeyDown={(event) =>
-                    navigateTabList(
-                      event,
-                      ["batch", "live", "maintenance"] as const,
-                      selectTranscriptionMode,
-                    )
-                  }
-                >
-                  Live-транскрибация
-                </button>
-                <button
-                  id="transcription-tab-maintenance"
-                  type="button"
-                  role="tab"
-                  aria-controls="transcription-panel-maintenance"
-                  aria-selected={transcriptionMode === "maintenance"}
-                  tabIndex={transcriptionMode === "maintenance" ? 0 : -1}
-                  onClick={() => selectTranscriptionMode("maintenance")}
-                  onKeyDown={(event) =>
-                    navigateTabList(
-                      event,
-                      ["batch", "live", "maintenance"] as const,
-                      selectTranscriptionMode,
-                    )
-                  }
-                >
-                  Обслуживание
-                </button>
-              </div>
+          <div className="tabs transcription-mode-tabs" role="tablist" aria-label="Рабочие разделы транскрибации">
+            {transcriptionSections.map(({ id, label, accessibleName }) => (
+              <button
+                id={`transcription-tab-${id}`}
+                key={id}
+                type="button"
+                role="tab"
+                aria-label={accessibleName}
+                aria-controls={`transcription-panel-${id}`}
+                aria-selected={transcriptionMode === id}
+                tabIndex={transcriptionMode === id ? 0 : -1}
+                onClick={() => selectTranscriptionMode(id)}
+                onKeyDown={(event) => navigateTabList(event, transcriptionSectionIds, selectTranscriptionMode)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
               <div
-                id="transcription-panel-batch"
+                id={`transcription-panel-${tasksView}`}
                 role="tabpanel"
-                aria-labelledby="transcription-tab-batch"
-                hidden={transcriptionMode !== "batch"}
+                aria-labelledby={`transcription-tab-${tasksView}`}
+                hidden={transcriptionMode !== "batch" && transcriptionMode !== "history"}
               >
                 <PreparationPanel
+                  historyOnly={transcriptionMode === "history"}
                   key={selectedProject.id}
                   project={selectedProject}
                   csrf={csrf}
@@ -7403,6 +7411,7 @@ function ProjectsPage({
                   csrf={csrf}
                   onCsrf={onCsrf}
                   active={active && transcriptionMode === "live"}
+                  onOpenBatch={() => selectTranscriptionMode("batch")}
                   initialSegments={liveTranscripts[selectedProject.id] ?? []}
                   onSegmentsChange={(segments) =>
                     setLiveTranscripts((current) => ({
@@ -7927,7 +7936,7 @@ const SETTINGS_SECTION_IDS = [
   "appearance",
   "diagnostics",
 ] as const;
-const SETTINGS_SECTION_LABELS: Record<SettingsSection, string> = {
+const SETTINGS_SECTION_LABELS: Record<(typeof SETTINGS_SECTION_IDS)[number], string> = {
   account: "Аккаунт",
   connections: "Подключения",
   notifications: "Уведомления",
@@ -8875,8 +8884,11 @@ function SettingsPage({
       (operation) => operation.credentialId === credentialId,
     ) ?? null;
   const credentialsUnavailable = credentialsLoading || Boolean(credentialsMessage);  return (
-    <section className="card wide">
-      <h1 className="page-title">Настройки</h1>
+    <section className="card wide settings-detail">
+      <header className="workspace-heading">
+        <h1 className="page-title">Настройки</h1>
+      </header>
+      <button type="button" className="settings-back" onClick={() => onSectionChange("overview")}>К настройкам</button>
       <div
         className="tabs settings-section-tabs"
         role="tablist"
@@ -8957,65 +8969,17 @@ function SettingsPage({
             </>
           )}
           {section === "appearance" && (
-            <section aria-labelledby="appearance-settings-title">
-              <h2 id="appearance-settings-title">Оформление</h2>
-              <div className="settings-appearance-panels">
-                <div className="card theme-preferences">
-                  <label>
-                    Тема интерфейса
-                    <select
-                      aria-label="Тема интерфейса"
-                      value={themePreference}
-                      onChange={(event) => {
-                        const preference = event.target.value as StudioThemePreference;
-                        setThemePreference(preference);
-                        setStudioThemePreference(preference);
-                      }}
-                    >
-                      <option value="system">Системная</option>
-                      <option value="light">Светлая</option>
-                      <option value="dark">Тёмная</option>
-                    </select>
-                  </label>
-                  <p className="muted">
-                    Системная тема следует настройке устройства. Выбор сохраняется
-                    только в этом браузере и не содержит данных аккаунта.
-                  </p>
-                  <label>
-                    Цвет интерфейса
-                    <select
-                      aria-label="Цвет интерфейса"
-                      value={accentSelection}
-                      disabled={!accountPreferences || accentSaving}
-                      onChange={(event) => {
-                        const selected = event.target.value;
-                        if (isStudioAccentColor(selected)) {
-                          void saveAccentPreference(selected);
-                        }
-                      }}
-                    >
-                      <option value="blue">Синий</option>
-                      <option value="violet">Фиолетовый</option>
-                      <option value="teal">Бирюзовый</option>
-                      <option value="rose">Розовый</option>
-                    </select>
-                  </label>
-                  {accentMessage && (
-                    <p role="status" className="notice">
-                      {accentMessage}
-                    </p>
-                  )}
-                </div>
-                <aside className="card" aria-label="Предпросмотр оформления">
-                  <h3>Предпросмотр</h3>
-                  <p className="notice">Результат готов.</p>
-                  <div className="actions" aria-hidden="true">
-                    <span className="button-like primary">Основное действие</span>
-                    <span className="tag">Статус</span>
-                  </div>
-                </aside>
-              </div>
-            </section>
+            <AppearancePanel
+              theme={themePreference}
+              accent={accentSelection}
+              accentDisabled={!accountPreferences || accentSaving}
+              message={accentMessage}
+              onThemeChange={(preference) => {
+                setThemePreference(preference);
+                setStudioThemePreference(preference);
+              }}
+              onAccentChange={(color) => void saveAccentPreference(color)}
+            />
           )}
           {section === "notifications" && (
             <NotificationsPanel csrf={csrf} onCsrf={onCsrf} />
@@ -10729,12 +10693,15 @@ function PlatformShell() {
   };
   const navigate = (
     nextPage: Page,
-    nextSettingsSection: SettingsSection = "account",
+    nextSettingsSection: SettingsSection = "overview",
   ) => {
     if (nextPage === "projects") setProjectsOpened(true);
     if (nextPage === "audio") setAudioOpened(true);
     scrollNextPageRef.current = true;
-    focusNextPageRef.current = nextPage !== page;
+    const changingSettingsView = nextPage === "settings" && nextSettingsSection !== settingsSection &&
+      (!SETTINGS_SECTION_IDS.some((item) => item === settingsSection) ||
+        !SETTINGS_SECTION_IDS.some((item) => item === nextSettingsSection));
+    focusNextPageRef.current = nextPage !== page || changingSettingsView;
     const nextRoute = {
       page: nextPage,
       settingsSection:
@@ -10749,7 +10716,7 @@ function PlatformShell() {
       const requestedSection = detail?.section;
       navigate(
         "settings",
-        requestedSection && SETTINGS_SECTION_IDS.includes(requestedSection)
+        requestedSection && SETTINGS_SECTION_IDS.some((item) => item === requestedSection)
           ? requestedSection
           : "account",
       );
@@ -10990,6 +10957,10 @@ function PlatformShell() {
       },
     );
   };
+  const refreshSettingsCsrf = (token: string) => {
+    setSession((current) => ({ ...current, csrf: token }));
+    updatePwaDiagnosticsCsrf(token);
+  };
   return (
     <div className="shell">
       <PlatformSidebar
@@ -11003,6 +10974,7 @@ function PlatformShell() {
         }}
       />
       <main>
+        <PlatformTopbar page={page} />
         {page === "dashboard" && (
           <OverviewPage
             onNavigate={(nextPage) => {
@@ -11011,6 +10983,7 @@ function PlatformShell() {
               }
               navigate(nextPage);
             }}
+            onOpenConnections={() => navigate("settings", "connections")}
             onOpenJob={(job) => {
               setRequestedProjectId(job.project_id);
               setRequestedTranscriptionMode("batch");
@@ -11020,6 +10993,7 @@ function PlatformShell() {
             }}
             onOpenTranscriptions={() => {
               setRequestedProjectId(null);
+              setRequestedTranscriptionMode("batch");
               navigate("projects");
             }}
           />
@@ -11062,14 +11036,28 @@ function PlatformShell() {
             />
           </div>
         )}
-        {page === "settings" && (
+        {page === "settings" && settingsSection === "overview" && (
+          <SettingsLanding onSelect={(target) => navigate("settings", target)} onBack={() => navigate("dashboard")} />
+        )}
+        {page === "settings" && (settingsSection === "analytics" || settingsSection === "devices") && (
+          <section className="settings-landing">
+            <header className="workspace-heading">
+              <h1 className="page-title">{settingsSection === "devices" ? "Windows Companion" : "Аналитика и расход"}</h1>
+              <p>{settingsSection === "devices" ? "Подключайте компьютеры и проверяйте доступность локальных моделей." : "Проверьте задания и данные о расходах провайдеров."}</p>
+            </header>
+            {settingsSection === "devices"
+              ? <LocalExecutionPanel key={user.email} csrf={csrf} onCsrf={refreshSettingsCsrf} />
+              : <SettingsAnalytics csrf={csrf} onCsrf={refreshSettingsCsrf} requestProjects={requestProjectCollection} />}
+            <footer className="workspace-action-bar">
+              <button type="button" onClick={() => navigate("settings", "overview")}>К настройкам</button>
+            </footer>
+          </section>
+        )}
+        {page === "settings" && settingsSection !== "overview" && settingsSection !== "analytics" && settingsSection !== "devices" && (
           <SettingsPage
             user={user}
             csrf={csrf}
-            onCsrf={(token) => {
-              setSession((current) => ({ ...current, csrf: token }));
-              updatePwaDiagnosticsCsrf(token);
-            }}
+            onCsrf={refreshSettingsCsrf}
             onLogout={logout}
             logoutPending={logoutState.pending}
             logoutError={logoutState.error}

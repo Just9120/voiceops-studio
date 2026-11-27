@@ -818,13 +818,13 @@ function installFocusedOutputFixture(options: OutputFixtureOptions = {}) {
 
 async function waitForPlatformOverview() {
   expect(
-    await screen.findByRole("heading", { name: "VoiceOps Studio" }),
+    await screen.findByRole("heading", { name: "Обзор", level: 1 }),
   ).toBeInTheDocument();
   expect(
     screen.getByRole("button", { name: "Обзор", current: "page" }),
   ).toBeInTheDocument();
   await waitFor(() =>
-    expect(screen.getByLabelText("Последние результаты")).not.toHaveTextContent(
+    expect(screen.getByLabelText("В работе")).not.toHaveTextContent(
       "Загрузка…",
     ),
   );
@@ -848,7 +848,7 @@ async function openPlatformNavPage(
 async function openProjectsPage() {
   await openPlatformNavPage("Транскрибации");
   expect(
-    await screen.findByRole("heading", { name: "Транскрибации" }),
+    await screen.findByRole("heading", { name: "Новая транскрибация" }),
   ).toBeInTheDocument();
 }
 
@@ -1001,6 +1001,7 @@ async function reviewAndConfirmBatch() {
 
 async function openSettingsPage() {
   await openPlatformNavPage("Настройки");
+  await userEvent.click(await screen.findByRole("button", { name: "Аккаунт и безопасность" }));
   expect(
     await screen.findByRole("heading", { name: "Аккаунт" }),
   ).toBeInTheDocument();
@@ -1757,7 +1758,7 @@ describe("Studio PWA", () => {
     });
     renderApp();
     await openSelectedProjectJobs();
-    await userEvent.click(screen.getByRole("tab",{name:"Обслуживание",exact:true}));
+    await userEvent.click(screen.getByRole("tab",{name:"Документы",exact:true}));
     await userEvent.click(await screen.findByRole("button",{name:"Настроить доступ Google",exact:true}));
     const panel=document.getElementById("google-maintenance-access") as HTMLDetailsElement;
     await waitFor(() => expect(panel.open).toBe(true));
@@ -2821,10 +2822,10 @@ describe("Studio PWA", () => {
     });
     renderApp();
     await waitForPlatformOverview();
-    expect(screen.getByLabelText("Последние результаты")).toHaveTextContent("Недоступно");
+    expect(screen.getByLabelText("В работе")).toHaveTextContent("Недоступно");
     const retry = await screen.findByRole("button", { name: "Повторить загрузку задач" });
     await userEvent.click(retry);
-    await waitFor(() => expect(screen.getByLabelText("Последние результаты")).toHaveTextContent("Последних задач: 0"));
+    await waitFor(() => expect(screen.getByLabelText("В работе")).toHaveTextContent("Сейчас нет активных задач."));
     expect(projectReads).toBe(1);
     expect(jobReads).toBe(2);
     expect(screen.getByLabelText("Google Drive")).toHaveTextContent("Подключён");
@@ -2832,7 +2833,7 @@ describe("Studio PWA", () => {
       "Можно начинать",
     );
     expect(
-      screen.getByRole("heading", { name: "Последние документы" }),
+      screen.getByRole("heading", { name: "Недавние документы" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Newer")).not.toBeInTheDocument();
     expect(screen.queryByText("Older")).not.toBeInTheDocument();
@@ -2852,11 +2853,11 @@ describe("Studio PWA", () => {
     });
     renderApp();
     await waitForPlatformOverview();
-    expect(await screen.findByText("Начать работу")).toBeInTheDocument();
+    expect(await screen.findByText(/Studio подготовит рабочую область автоматически/)).toBeInTheDocument();
     expect(
-      screen.getAllByRole("button", { name: "Создать транскрибацию" }).length,
+      screen.getAllByRole("button", { name: "Новая транскрибация" }).length,
     ).toBeGreaterThan(0);
-    expect(screen.getByLabelText("Последние результаты")).toHaveTextContent(
+    expect(screen.getByLabelText("В работе")).toHaveTextContent(
       "Начните с первой записи",
     );
   });
@@ -2884,8 +2885,8 @@ describe("Studio PWA", () => {
     });
     renderApp();
     await waitForPlatformOverview();
-    expect(screen.getByLabelText("Последние результаты")).toHaveTextContent(
-      "Последних задач: 0",
+    expect(screen.getByLabelText("В работе")).toHaveTextContent(
+      "Сейчас нет активных задач.",
     );
     expect(screen.getByLabelText("Google Drive")).toHaveTextContent(
       "Недоступно",
@@ -3096,7 +3097,7 @@ describe("Studio PWA", () => {
     try {
       renderApp();
       await waitForPlatformOverview();
-      const projectsCard = screen.getByLabelText("Последние результаты");
+      const projectsCard = screen.getByLabelText("В работе");
       const credentialsCard = screen.getByLabelText("Готовность к работе");
       await waitFor(() => expect(projectsCard).toHaveTextContent("Недоступно"));
       await waitFor(() => expect(credentialsCard).toHaveTextContent("Недоступно"));
@@ -3110,7 +3111,7 @@ describe("Studio PWA", () => {
       await userEvent.click(
         within(credentialsCard).getByRole("button", { name: "Повторить" }),
       );
-      await waitFor(() => expect(projectsCard).toHaveTextContent("Последних задач: 0"));
+      await waitFor(() => expect(projectsCard).toHaveTextContent("Сейчас нет активных задач."));
       await waitFor(() => expect(credentialsCard).toHaveTextContent("Можно начинать"));
       expect(projectReads).toBe(2);
       expect(credentialReads).toBe(2);
@@ -3155,7 +3156,7 @@ describe("Studio PWA", () => {
 
     renderApp();
     await waitForPlatformOverview();
-    const projectsCard = screen.getByLabelText("Последние результаты");
+    const projectsCard = screen.getByLabelText("В работе");
     const credentialsCard = screen.getByLabelText("Готовность к работе");
     await waitFor(() => expect(projectsCard).toHaveTextContent("Недоступно"));
     await waitFor(() => expect(credentialsCard).toHaveTextContent("Недоступно"));
@@ -3168,7 +3169,7 @@ describe("Studio PWA", () => {
     await userEvent.click(
       within(credentialsCard).getByRole("button", { name: "Повторить" }),
     );
-    await waitFor(() => expect(projectsCard).toHaveTextContent("Последних задач: 0"));
+    await waitFor(() => expect(projectsCard).toHaveTextContent("Сейчас нет активных задач."));
     await waitFor(() => expect(credentialsCard).toHaveTextContent("Можно начинать"));
   });
 
@@ -3203,7 +3204,7 @@ describe("Studio PWA", () => {
 
     renderApp();
     await waitForPlatformOverview();
-    const initialProjectsCard = screen.getByLabelText("Последние результаты");
+    const initialProjectsCard = screen.getByLabelText("В работе");
     await waitFor(() =>
       expect(initialProjectsCard).toHaveTextContent("Недоступно"),
     );
@@ -3216,7 +3217,7 @@ describe("Studio PWA", () => {
     expect(olderRetrySignal?.aborted).toBe(true);
     await openPlatformNavPage("Обзор");
     await waitForPlatformOverview();
-    const currentProjectsCard = screen.getByLabelText("Последние результаты");
+    const currentProjectsCard = screen.getByLabelText("В работе");
     await waitFor(() =>
       expect(currentProjectsCard).toHaveTextContent("Недоступно"),
     );
@@ -3240,13 +3241,13 @@ describe("Studio PWA", () => {
     await waitForPlatformOverview();
 
     await userEvent.click(
-      within(await screen.findByRole("banner")).getByRole("button", {
-        name: "Создать транскрибацию",
+      screen.getByRole("button", {
+        name: "Новая транскрибация",
       }),
     );
 
     expect(
-      await screen.findByRole("heading", { name: "Транскрибации" }),
+      await screen.findByRole("heading", { name: "Новая транскрибация" }),
     ).toBeInTheDocument();
     expect(window.location.pathname).toBe("/transcriptions");
     expect(
@@ -3263,12 +3264,26 @@ describe("Studio PWA", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("opens history at its own URL and returns to the mounted batch composer", async () => {
+    renderApp();
+    await openSelectedProjectJobs();
+    const composer = screen.getByRole("form", { name: "Композитор пакетных задач" });
+    await userEvent.click(screen.getByRole("tab", { name: "История" }));
+    expect(window.location.search).toBe("?mode=history");
+    expect(screen.getByRole("heading", { name: "История транскрибаций", level: 1 })).toBeVisible();
+    expect(screen.getByRole("tabpanel", { name: "История" })).toBeVisible();
+    expect(composer).not.toBeVisible();
+    await userEvent.click(screen.getByRole("tab", { name: "Обычная транскрибация" }));
+    expect(window.location.search).toBe("");
+    expect(composer).toBeVisible();
+  });
+
   it("opens audio preparation from the dashboard", async () => {
     renderApp();
     await waitForPlatformOverview();
 
     await userEvent.click(
-      within(await screen.findByRole("banner")).getByRole("button", {
+      screen.getByRole("button", {
         name: "Подготовить аудио",
       }),
     );
@@ -3303,6 +3318,7 @@ describe("Studio PWA", () => {
       const heading = await screen.findByRole("heading", { name: "Подготовка аудио" });
       expect(heading).toHaveFocus();
       expect(scrollTo).toHaveBeenCalledWith(0, 0);
+      await userEvent.click(screen.getByRole("button", { name: "Добавить файлы", exact: true }));
       await userEvent.click(screen.getByRole("tab", { name: "Обработать на устройстве" }));
       const wav = encodeWav({ sampleRate: 48_000, channels: [Float32Array.from([0.2, -0.2])] });
       const file = new File([wav], "safe.wav", { type: "audio/wav" });
@@ -3825,7 +3841,7 @@ describe("Studio PWA", () => {
         name: "Привести документы к текущему формату",
       }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText(/Транскрибации → Обслуживание/)).toBeInTheDocument();
+    expect(screen.getByText(/Транскрибации → Документы/)).toBeInTheDocument();
     expect(screen.getByText(/••••1234/)).toBeInTheDocument();
     expect(window.localStorage.length).toBe(0);
     expectOnlySafeFormDrafts();
@@ -3844,7 +3860,7 @@ describe("Studio PWA", () => {
     await openProjectsPage();
 
     await userEvent.click(
-      screen.getByRole("tab", { name: "Обслуживание" }),
+      screen.getByRole("tab", { name: "Документы" }),
     );
 
     expect(
@@ -3859,7 +3875,7 @@ describe("Studio PWA", () => {
       screen.getByRole("heading", { name: "Учесть готовые документы в Studio" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("tab", { name: "Обслуживание" }),
+      screen.getByRole("tab", { name: "Документы" }),
     ).toHaveAttribute("aria-selected", "true");
   });
 
@@ -4820,7 +4836,7 @@ describe("Studio PWA", () => {
     await userEvent.click(screen.getByRole("tab", { name: "Аккаунт" }));
     await userEvent.click(screen.getByRole("button", { name: "Выйти" }));
     expect(
-      await screen.findByRole("heading", { name: "Вход" }),
+      await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" }),
     ).toBeInTheDocument();
 
     const successfulResponse = await json(googleOauthStartFixture());
@@ -5287,7 +5303,7 @@ describe("Studio PWA", () => {
     });
 
     expect(
-      await screen.findByRole("heading", { name: "Транскрибации" }),
+      await screen.findByRole("heading", { name: "Новая транскрибация" }),
     ).toBeInTheDocument();
     await waitFor(() => expect(
       screen.getByLabelText("Существующий файл для задачи 1"),
@@ -5667,26 +5683,30 @@ describe("Studio PWA", () => {
     ).toBeInTheDocument();
   });
 
-  it("offers and persists system, light, and dark appearance choices", async () => {
+  it("offers and persists all four appearance choices", async () => {
     renderApp();
     await openSettingsSection("Оформление");
-    const selector = screen.getByLabelText("Тема интерфейса");
-    expect(selector).toHaveValue("system");
-    await userEvent.selectOptions(selector, "dark");
+    const themes = within(screen.getByRole("group", { name: "Тема интерфейса" }));
+    expect(themes.getByRole("button", { name: "Системная" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(themes.getByRole("button", { name: "Тёмная" }));
     expect(localStorage.getItem("studio-theme-preference")).toBe("dark");
     expect(document.documentElement.dataset.theme).toBe("dark");
-    await userEvent.selectOptions(selector, "light");
-    expect(localStorage.getItem("studio-theme-preference")).toBe("light");
+    await userEvent.click(themes.getByRole("button", { name: "Светлая" }));
     expect(document.documentElement.dataset.theme).toBe("light");
+    await userEvent.click(themes.getByRole("button", { name: "OLED" }));
+    expect(localStorage.getItem("studio-theme-preference")).toBe("oled");
+    expect(document.documentElement.dataset.theme).toBe("oled");
   });
 
-  it("persists and applies the owner accent color without browser storage", async () => {
+  it("persists the owner accent in OLED without browser storage", async () => {
     renderApp();
     await openSettingsSection("Оформление");
-    const selector = await screen.findByLabelText("Цвет интерфейса");
-    expect(selector).toHaveValue("blue");
+    expect(screen.queryByRole("group", { name: "Акцент OLED" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "OLED" }));
+    const accents = within(await screen.findByRole("group", { name: "Акцент OLED" }));
+    expect(accents.getByRole("button", { name: "Синий" })).toHaveAttribute("aria-pressed", "true");
 
-    await userEvent.selectOptions(selector, "violet");
+    await userEvent.click(accents.getByRole("button", { name: "Фиолетовый" }));
 
     expect(
       await screen.findByText("Цвет интерфейса сохранён."),
@@ -5700,6 +5720,10 @@ describe("Studio PWA", () => {
       }),
     );
     expect(localStorage.getItem("studio-accent-preference")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Светлая" }));
+    expect(screen.queryByRole("group", { name: "Акцент OLED" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "OLED" }));
+    expect(screen.getByRole("button", { name: "Фиолетовый" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("allows replacing the fragment count and blocks incomplete or out-of-range drafts", async () => {
@@ -11413,7 +11437,7 @@ describe("Studio PWA", () => {
     renderApp();
     expect(screen.getByRole("status")).toHaveTextContent("Проверяем сессию…");
     expect(
-      screen.queryByRole("heading", { name: "Вход" }),
+      screen.queryByRole("heading", { name: "Вход в VoiceOps Studio" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Email")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Пароль")).not.toBeInTheDocument();
@@ -11461,7 +11485,7 @@ describe("Studio PWA", () => {
       return json({ csrf_token: "csrf-after-refresh" });
     });
     renderApp();
-    await screen.findByRole("heading", { name: "Вход" });
+    await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" });
     await userEvent.type(screen.getByLabelText("Email"), "user@example.com");
     await userEvent.type(screen.getByLabelText("Пароль"), "password-long");
     await userEvent.click(screen.getByRole("button", { name: "Войти" }));
@@ -11470,7 +11494,7 @@ describe("Studio PWA", () => {
     await openSettingsPage();
     await userEvent.click(await screen.findByRole("button", { name: "Выйти" }));
     expect(
-      await screen.findByRole("heading", { name: "Вход" }),
+      await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" }),
     ).toBeInTheDocument();
     expect(window.location.pathname).toBe("/");
 
@@ -11503,7 +11527,7 @@ describe("Studio PWA", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: "Вход" }),
+      screen.queryByRole("heading", { name: "Вход в VoiceOps Studio" }),
     ).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Повторить" }));
     await waitForPlatformOverview();
@@ -11571,7 +11595,7 @@ describe("Studio PWA", () => {
       expect(sessionSignals).toHaveLength(1);
       expect(sessionSignals[0]?.aborted).toBe(true);
       expect(
-        screen.queryByRole("heading", { name: "Вход" }),
+        screen.queryByRole("heading", { name: "Вход в VoiceOps Studio" }),
       ).not.toBeInTheDocument();
 
       await userEvent.click(screen.getByRole("button", { name: "Повторить" }));
@@ -11635,7 +11659,7 @@ describe("Studio PWA", () => {
     expect(document.body.textContent).not.toContain("raw-session-role");
     expect(document.body.textContent).not.toContain("raw-session-secret");
     expect(
-      screen.queryByRole("heading", { name: "Вход" }),
+      screen.queryByRole("heading", { name: "Вход в VoiceOps Studio" }),
     ).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Повторить" }));
@@ -11714,7 +11738,7 @@ describe("Studio PWA", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Выйти" }));
     expect(
-      await screen.findByRole("heading", { name: "Вход" }),
+      await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" }),
     ).toBeInTheDocument();
     expect(document.body.textContent).not.toContain("older@example.com");
   });
@@ -11788,7 +11812,7 @@ describe("Studio PWA", () => {
 
       await userEvent.click(screen.getByRole("button", { name: "Выйти" }));
       expect(
-        await screen.findByRole("heading", { name: "Вход" }),
+        await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" }),
       ).toBeInTheDocument();
       expect(logoutCalls).toBe(2);
       expect(logoutTokens).toEqual(["csrf-initial", "csrf-reconciled"]);
@@ -11831,7 +11855,7 @@ describe("Studio PWA", () => {
     await userEvent.click(screen.getByRole("button", { name: "Выйти" }));
 
     expect(
-      await screen.findByRole("heading", { name: "Вход" }),
+      await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" }),
     ).toBeInTheDocument();
     expect(logoutCalls).toBe(1);
     expect(sessionReads).toBe(2);
@@ -12099,26 +12123,16 @@ describe("Studio PWA", () => {
     expect(replaceKey).toHaveAttribute("data-lpignore", "true");
     expect(replaceKey).toHaveAttribute("data-bwignore", "true");
   });
-  it("renders polished overview summary cards with separated labels and values", async () => {
+  it("shows the dashboard work, documents, and connection states in distinct panels", async () => {
     renderApp();
-    const projectsCard = await screen.findByLabelText("Последние результаты");
-    expect(within(projectsCard).getByText("Транскрибации и результаты")).toHaveClass(
-      "summary-label",
-    );
-    await waitFor(() =>
-      expect(within(projectsCard).getByText("Последних задач: 0")).toHaveClass(
-        "summary-value",
-      ),
-    );
-    const driveCard = screen.getByLabelText("Google Drive");
-    expect(within(driveCard).getByText("Google Drive")).toHaveClass(
-      "summary-label",
-    );
-    expect(within(driveCard).getByText("Подключён")).toHaveClass(
-      "summary-value",
-    );
-    expect(screen.queryByText("ПРОЕКТЫ1")).not.toBeInTheDocument();
-    expect(screen.queryByText("GOOGLE DRIVEПодключён")).not.toBeInTheDocument();
+    await waitForPlatformOverview();
+    const work = screen.getByRole("article", { name: "В работе" });
+    expect(await within(work).findByText("Сейчас нет активных задач.")).toBeVisible();
+    expect(screen.getByRole("article", { name: "Недавние документы" })).toBeVisible();
+    const connections = screen.getByRole("article", { name: "Подключения" });
+    const drive = within(connections).getByRole("group", { name: "Google Drive" });
+    expect(await within(drive).findByText("Подключён")).toBeVisible();
+    expect(within(connections).getByRole("group", { name: "Windows Companion" })).toBeVisible();
   });
 
   it("does not expose the internal project selector or lifecycle for one workspace", async () => {
@@ -13952,9 +13966,8 @@ describe("Studio PWA", () => {
     expect(css).toMatch(
       /button:where\(\s*:not\(\.primary\):not\(\.danger\)\s*\)/,
     );
-    expect(css).toContain(':root[data-theme="dark"]');
     expect(css).toMatch(
-      /:root\[data-theme="dark"\]\s*\{[^}]*--studio-on-primary:\s*#08111f/s,
+      /:root:is\(\[data-theme="dark"\], \[data-theme="oled"\]\)\s*\{[^}]*--studio-on-primary:\s*#071728/s,
     );
     expect(css).toMatch(/\.shell > main\s*\{[^}]*width:\s*100%/s);
     expect(css).not.toContain("width: min(100%, 1360px)");
@@ -13976,7 +13989,7 @@ describe("Studio PWA", () => {
       /\.meta\s*\{[^}]*grid-template-columns:\s*minmax\(8rem, 0\.35fr\) minmax\(0, 1fr\)/s,
     );
     expect(css).toMatch(
-      /@media \(max-width: 900px\)[\s\S]*?\.app-nav\s*\{[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/,
+      /@media \(max-width: 900px\)[\s\S]*?\.app-nav\s*\{[^}]*flex-wrap:\s*wrap/,
     );
     expect(css).toMatch(
       /@media \(max-width: 620px\)[\s\S]*?\.meta\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/,
@@ -14714,15 +14727,13 @@ describe("settings diagnostics", () => {
       screen.getByRole("button", { name: "Транскрибации" }),
     );
     expect(
-      await screen.findByRole("heading", { name: "Транскрибации" }),
+      await screen.findByRole("heading", { name: "Новая транскрибация" }),
     ).toBeInTheDocument();
     expect(window.location.pathname).toBe("/transcriptions");
     await userEvent.click(screen.getByRole("button", { name: "Настройки" }));
-    expect(
-      await screen.findByRole("heading", { name: "Аккаунт" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Настройки" })).toBeVisible();
     expect(window.location.pathname).toBe("/settings");
-    await userEvent.click(screen.getByRole("tab", { name: "Для поддержки" }));
+    await userEvent.click(screen.getByRole("button", { name: "Поддержка" }));
     expect(
       await screen.findByRole("heading", { name: "Для поддержки" }),
     ).toBeInTheDocument();
@@ -14731,7 +14742,7 @@ describe("settings diagnostics", () => {
     expect(
       await screen.findByRole("heading", { name: "Аккаунт" }),
     ).toBeInTheDocument();
-    expect(window.location.pathname).toBe("/settings");
+    expect(window.location.pathname).toBe("/settings/account");
     cleanup();
     expect(
       removeSpy.mock.calls.filter(([type]) => type === "popstate"),
@@ -14742,7 +14753,7 @@ describe("settings diagnostics", () => {
     expect(
       await screen.findByRole("heading", { name: "Для поддержки" }),
     ).toBeInTheDocument();
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/settings/account");
     fireEvent.popState(window);
     expect(
       await screen.findByRole("heading", { name: "Аккаунт" }),
@@ -14757,11 +14768,11 @@ describe("settings diagnostics", () => {
     window.history.replaceState({}, "", "/projects");
     renderApp();
     expect(
-      await screen.findByRole("heading", { name: "Транскрибации" }),
+      await screen.findByRole("heading", { name: "Новая транскрибация" }),
     ).toBeInTheDocument();
     cleanup();
 
-    window.history.replaceState({}, "", "/settings");
+    window.history.replaceState({}, "", "/settings/account");
     renderApp();
     expect(
       await screen.findByRole("heading", { name: "Аккаунт" }),
@@ -16194,7 +16205,7 @@ describe("Settings DEBUG session controls", () => {
     await userEvent.click(
       screen.getAllByRole("button", { name: "Настройки" })[0],
     );
-    await userEvent.click(screen.getByRole("tab", { name: "Для поддержки" }));
+    await userEvent.click(screen.getByRole("button", { name: "Поддержка" }));
   }
 
   it("renders loading, inactive defaults, active status, start and stop flows without browser storage", async () => {

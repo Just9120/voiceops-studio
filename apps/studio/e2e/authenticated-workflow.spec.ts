@@ -27,7 +27,7 @@ async function login(page: Page) {
     await page.context().addCookies(sharedSessionCookies);
     await page.reload();
   } else {
-    await expect(page.getByRole('heading', { name: 'Вход' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Вход в VoiceOps Studio', exact: true })).toBeVisible();
     await page.getByLabel('Email').fill(E2E_EMAIL);
     await page.getByLabel('Пароль').fill(E2E_PASSWORD);
     await page.getByRole('button', { name: 'Войти' }).click();
@@ -166,7 +166,7 @@ test('authenticated user opens transcriptions and reads a completed job result',
   await navigation
     .getByRole('button', { name: 'Настройки', exact: true })
     .click();
-  await page.getByRole('tab', { name: 'Для поддержки' }).click();
+  await page.getByRole('button', { name: 'Поддержка', exact: true }).click();
   await page.getByText('Расширенные технические фильтры', { exact: true }).click();
   await page
     .getByRole('textbox', { name: 'Internal task ID', exact: true })
@@ -226,7 +226,7 @@ test('authenticated user opens transcriptions and reads a completed job result',
   await page.getByRole('tab', { name: 'Аккаунт' }).click();
   await page.getByRole('button', { name: 'Выйти' }).click();
   sharedSessionCookies = null;
-  await expect(page.getByRole('heading', { name: 'Вход' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Вход в VoiceOps Studio', exact: true })).toBeVisible();
 });
 
 test('mobile Drive dialog stays inside the viewport and locks page scrolling', async ({
@@ -333,7 +333,7 @@ test('mobile Drive dialog stays inside the viewport and locks page scrolling', a
   await page.mouse.move(380, 820);
   await page.mouse.wheel(0, 800);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(pageScrollBefore);
-  await dialog.getByRole('button', { name: 'Закрыть выбор папки' }).click();
+  await dialog.getByRole('button', { name: 'Отмена' }).click();
   await expect(dialog).toHaveCount(0);
   expect(await page.evaluate(() => document.body.style.overflow)).toBe('');
 });
@@ -352,7 +352,7 @@ test('account settings revoke selected and all other active sessions', async ({
       secondaryContexts.map(async (context) => {
         const secondary = await context.newPage();
         await secondary.goto('/');
-        await expect(secondary.getByRole('heading', { name: 'Вход' })).toBeVisible();
+        await expect(secondary.getByRole('heading', { name: 'Вход в VoiceOps Studio', exact: true })).toBeVisible();
         await secondary.getByLabel('Email').fill(E2E_EMAIL);
         await secondary.getByLabel('Пароль').fill(E2E_PASSWORD);
         await secondary.getByRole('button', { name: 'Войти' }).click();
@@ -366,6 +366,7 @@ test('account settings revoke selected and all other active sessions', async ({
     await navigation
       .getByRole('button', { name: 'Настройки', exact: true })
       .click();
+    await page.getByRole('button', { name: 'Аккаунт и безопасность', exact: true }).click();
     const sessions = page.getByRole('region', { name: 'Активные сессии' });
     await expect(sessions.getByText('Текущая сессия', { exact: true })).toBeVisible();
     await expect(sessions.getByText('Другая сессия', { exact: true })).toHaveCount(2);
@@ -404,7 +405,7 @@ test('account settings revoke selected and all other active sessions', async ({
 
     for (const secondary of secondaryPages) {
       await secondary.reload();
-      await expect(secondary.getByRole('heading', { name: 'Вход' })).toBeVisible();
+      await expect(secondary.getByRole('heading', { name: 'Вход в VoiceOps Studio', exact: true })).toBeVisible();
     }
   } finally {
     await Promise.all(secondaryContexts.map((context) => context.close()));
@@ -426,6 +427,7 @@ test('Audio workspace processes a device WAV in-browser without uploading source
     .getByRole('button', { name: 'Подготовка аудио', exact: true })
     .click();
   await expect(page).toHaveURL(/\/audio$/);
+  await page.getByRole('button', { name: 'Добавить файлы', exact: true }).click();
   await page
     .getByRole('tab', { name: 'Обработать на устройстве', exact: true })
     .click();
@@ -443,18 +445,19 @@ test('Audio workspace processes a device WAV in-browser without uploading source
   await expect(page.getByLabel('Формат результата')).toHaveValue('wav');
   await expect(page.getByLabel('Формат результата')).toBeDisabled();
   const parameters = page
-    .getByRole('heading', { name: '2. Параметры' })
+    .getByRole('heading', { name: 'Подготовка' })
     .locator('..');
   await parameters.getByRole('checkbox', { name: 'Уменьшить длинные паузы в аудио или видео' }).check();
   await parameters.getByText('Дополнительные настройки пауз').click();
+  const processAudio = page.getByRole('button', { name: 'Обработать на устройстве', exact: true });
   const threshold = parameters.getByLabel('Что считать тишиной, dB');
   await threshold.fill('');
   await expect(threshold).toHaveValue('');
   await threshold.pressSequentially('-');
   await expect(threshold).toHaveValue('-');
-  await parameters.getByRole('button', { name: 'Обработать на устройстве', exact: true }).click();
+  await processAudio.click();
   await expect(page.getByText(/введите число от −60 до −10/)).toBeVisible();
-  await expect(page.getByRole('heading', { name: '3. Локальные результаты' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Локальные результаты' })).toHaveCount(0);
   await threshold.fill('');
   await threshold.pressSequentially('-45');
   await expect(threshold).toHaveValue('-45');
@@ -462,12 +465,10 @@ test('Audio workspace processes a device WAV in-browser without uploading source
   await keep.fill('');
   await keep.pressSequentially('0.3');
   await expect(keep).toHaveValue('0,3');
-  await parameters
-    .getByRole('button', { name: 'Обработать на устройстве', exact: true })
-    .click();
+  await processAudio.click();
 
   const localResults = page.getByRole('heading', {
-    name: '3. Локальные результаты',
+    name: 'Локальные результаты',
   }).locator('..');
   await expect(localResults).toBeVisible();
   const download = localResults.getByRole('link', { name: 'Скачать файл' });
@@ -806,7 +807,7 @@ test('transcript maintenance stays fail-closed without Google authority', async 
     .click();
   await expect(page).toHaveURL(/\/transcriptions$/);
   await page
-    .getByRole('tab', { name: 'Обслуживание', exact: true })
+    .getByRole('tab', { name: 'Документы', exact: true })
     .click();
 
   const maintenance = page.getByRole('region', {

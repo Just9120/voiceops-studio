@@ -1,13 +1,21 @@
-import { AudioLines, Home, Settings, SlidersHorizontal } from "lucide-react";
 import type { Page } from "./platformRouting";
 import { PublicInfoLinks } from "./PublicInfoLinks";
 
-const platformNav: { id: Page; label: string; icon: typeof Home }[] = [
-  { id: "dashboard", label: "Обзор", icon: Home },
-  { id: "audio", label: "Подготовка аудио", icon: SlidersHorizontal },
-  { id: "projects", label: "Транскрибации", icon: AudioLines },
-  { id: "settings", label: "Настройки", icon: Settings },
+const platformNav: { id: Page; label: string; compactLabel?: string }[] = [
+  { id: "dashboard", label: "Обзор" },
+  { id: "audio", label: "Подготовка аудио", compactLabel: "Аудио" },
+  { id: "projects", label: "Транскрибации" },
+  { id: "settings", label: "Настройки" },
 ];
+
+export function PlatformTopbar({ page }: { page: Page }) {
+  return (
+    <header className="app-topbar">
+      <span>{platformNav.find(({ id }) => id === page)?.label}</span>
+      <span className="app-personal-badge">{page === "projects" ? "Личное пространство" : "Personal"}</span>
+    </header>
+  );
+}
 
 export function PlatformSidebar({
   page,
@@ -18,23 +26,30 @@ export function PlatformSidebar({
 }) {
   return (
     <aside className="app-sidebar">
-      <div className="brand">
-        VoiceOps Studio<span>Транскрибация и обработка аудио</span>
+      <div className="app-brand">
+        <img src="/icons/voiceops-brand.svg" width="32" height="32" alt="" />
+        <span>VoiceOps Studio</span>
+        <span className="app-personal-badge">Studio</span>
       </div>
       <nav className="app-nav" aria-label="Основная навигация">
-        {platformNav.map(({ id, label, icon: Icon }) => (
+        {platformNav.map(({ id, label, compactLabel }) => (
           <button
-            className={page === id ? "active" : ""}
+            type="button"
+            className={page === id ? "active" : undefined}
             aria-current={page === id ? "page" : undefined}
+            aria-label={label}
             onClick={() => onNavigate(id)}
             key={id}
           >
-            <Icon size={18} />
-            {label}
+            <span className={compactLabel ? "app-nav-wide-label" : undefined}>{label}</span>
+            {compactLabel && <span className="app-nav-compact-label">{compactLabel}</span>}
           </button>
         ))}
       </nav>
-      <PublicInfoLinks compact />
+      <div className="app-sidebar-footer">
+        <span>Личный аккаунт</span>
+        <PublicInfoLinks compact />
+      </div>
     </aside>
   );
 }

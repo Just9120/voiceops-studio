@@ -164,7 +164,7 @@ describe("app-owned Google Drive picker", () => {
     await screen.findByText("Актуальная папка");
     await act(async () => resolveOld(json({ files: [{ id: "stale", name: "Устаревший ответ", mimeType: FOLDER_MIME_TYPE }] })));
     expect(screen.queryByText("Устаревший ответ")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Закрыть выбор папки" }));
+    await userEvent.click(screen.getByRole("button", { name: "Отмена" }));
     expect(await resultPromise).toEqual({ action: "cancel" });
   });
 
@@ -601,7 +601,7 @@ describe("app-owned Google Drive picker", () => {
     selectionButtons.slice(0, 50).forEach((button) => fireEvent.click(button));
     expect(await screen.findByText("Выбрано: 50 из 50")).toBeInTheDocument();
     expect(selectionButtons[50]).toBeDisabled();
-    await userEvent.click(screen.getByRole("button", { name: "Закрыть выбор файлов" }));
+    await userEvent.click(screen.getByRole("button", { name: "Отмена" }));
     await expect(resultPromise).resolves.toEqual({ action: "cancel" });
   });
 
@@ -712,7 +712,7 @@ describe("app-owned Google Drive picker", () => {
     ).toBeInTheDocument();
     expect(firstSearchSignal?.aborted).toBe(true);
     await userEvent.click(
-      screen.getByRole("button", { name: "Закрыть выбор папки" }),
+      screen.getByRole("button", { name: "Отмена" }),
     );
     await expect(resultPromise).resolves.toEqual({ action: "cancel" });
   });

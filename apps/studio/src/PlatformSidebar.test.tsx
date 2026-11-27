@@ -6,9 +6,8 @@ describe("PlatformSidebar", () => {
   it("renders the platform brand and all navigation destinations", () => {
     render(<PlatformSidebar page="dashboard" onNavigate={vi.fn()} />);
 
-    expect(screen.getByText("VoiceOps Studio")).toHaveTextContent(
-      "VoiceOps StudioТранскрибация и обработка аудио",
-    );
+    expect(screen.getByText("VoiceOps Studio")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "О приложении" })).toHaveAttribute("href", "/about.html");
     expect(
       screen.getByRole("navigation", { name: "Основная навигация" }),
     ).toBeInTheDocument();

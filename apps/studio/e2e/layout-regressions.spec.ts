@@ -152,18 +152,18 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
     await page.goto('/audio');
     const editor=page.getByRole('group',{name:'Обрезка аудио'});
     await expect(editor).toBeVisible();
-    await editor.getByLabel('Начало, секунд',{exact:true}).fill('600');
-    await editor.getByLabel('Конец, секунд',{exact:true}).fill('5400');
+    await editor.getByLabel('Начало',{exact:true}).fill('600');
+    await editor.getByLabel('Конец',{exact:true}).fill('5400');
     await editor.getByLabel('Масштаб шкалы').selectOption('4');
     await editor.getByRole('slider',{name:'Конец выделения',exact:true}).focus();
     await page.keyboard.press('ArrowLeft');
-    await expect(editor.getByLabel('Конец, секунд',{exact:true})).toHaveValue('5399.99');
+    await expect(editor.getByLabel('Конец',{exact:true})).toHaveValue('01:29:59.99');
     await noHorizontalOverflow(page);
     await editor.getByRole('button',{name:'Применить границы',exact:true}).click();
     expect(requests).toEqual([{start_seconds:600,end_seconds:5399.99,output_format:'wav'}]);
     await page.reload();
-    await expect(editor.getByLabel('Начало, секунд',{exact:true})).toHaveValue('600');
-    await expect(editor.getByLabel('Конец, секунд',{exact:true})).toHaveValue('5399.99');
+    await expect(editor.getByLabel('Начало',{exact:true})).toHaveValue('00:10:00');
+    await expect(editor.getByLabel('Конец',{exact:true})).toHaveValue('01:29:59.99');
     await noHorizontalOverflow(page);
   });
 }
@@ -171,6 +171,7 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
 test('local WAV result survives route navigation and a truncated WAV requests a healthy copy', async ({page}) => {
   await fixtures(page);
   await page.goto('/audio');
+  await page.getByRole('button', {name: 'Добавить файлы', exact: true}).click();
   await page.getByRole('tab', {name: 'Обработать на устройстве', exact: true}).click();
   const input = page.getByLabel('Выбрать файлы для обработки на устройстве');
   const process = page.getByRole('button', {name: 'Обработать на устройстве', exact: true});
@@ -191,6 +192,7 @@ test('local WAV result survives route navigation and a truncated WAV requests a 
   await input.setInputFiles({name: 'truncated.wav', mimeType: 'audio/wav', buffer: wav.subarray(0, 50)});
   await process.click();
   await expect(page.getByText(/Структура WAV повреждена/)).toBeVisible();
+  await page.getByRole('button', {name: 'Добавить файлы', exact: true}).click();
   await input.setInputFiles({name: 'recording.wav', mimeType: 'audio/wav', buffer: wav});
   await process.click();
   const download = page.getByRole('link', {name: 'Скачать файл'});
@@ -265,6 +267,7 @@ for (const viewport of [{width: 1280, height: 720}, {width: 768, height: 1024}, 
   });
 
   test(`layout overview history audio and menus ${viewport.width}`, async ({page}) => {
+    await page.clock.setFixedTime(new Date('2026-10-20T12:00:00Z'));
     await page.setViewportSize(viewport); await fixtures(page); await page.goto('/');
     const navigation = page.getByRole('navigation', {name: 'Основная навигация'});
     await expect(navigation).toBeVisible();
@@ -274,7 +277,7 @@ for (const viewport of [{width: 1280, height: 720}, {width: 768, height: 1024}, 
           const {top, width, height} = node.getBoundingClientRect();
           return {top: Math.round(top), width, height};
         }));
-      expect(new Set(buttons.map(button => button.top)).size).toBe(viewport.width <= 420 ? 2 : 1);
+      expect(new Set(buttons.map(button => button.top)).size).toBe(1);
       expect((await navigation.boundingBox())!.height).toBeLessThan(110);
       if (viewport.width <= 420) {
         for (const button of buttons) {
@@ -283,8 +286,8 @@ for (const viewport of [{width: 1280, height: 720}, {width: 768, height: 1024}, 
         }
       }
     }
-    await expect(page.getByText('Последних задач: 3', {exact: true})).toBeVisible();
-    await expect(page.getByText('Среди последних: в работе 0, документов 3.', {exact: true})).toBeVisible();
+    await expect(page.getByRole('article', {name: 'В работе'}).getByText('Сейчас нет активных задач.')).toBeVisible();
+    await expect(page.getByRole('article', {name: 'Недавние документы'}).getByRole('link')).toHaveCount(3);
     await expect(page.locator('.dashboard-workspace-grid')).toBeVisible();
     await noHorizontalOverflow(page);
     if (viewport.width === 390) {
@@ -292,7 +295,7 @@ for (const viewport of [{width: 1280, height: 720}, {width: 768, height: 1024}, 
       expect(new Set(boxes.map(Math.round)).size).toBe(1);
     }
     await expect(page.getByRole('link',{name:'Открыть документ: Запись 1',exact:true})).toHaveAttribute('href',history[0].primary_output_url);
-    await page.getByRole('button',{name:'Запись 1',exact:true}).click();
+    await page.getByRole('button',{name:'Открыть задачу: Запись 1',exact:true}).click();
     await expect(page.getByRole('dialog',{name:'Запись 1',exact:true})).toBeVisible();
     await page.keyboard.press('Escape');
     if(await page.locator('.recent-jobs').getAttribute('open') !== null) await page.locator('.recent-jobs > summary').click();
@@ -329,6 +332,12 @@ for (const viewport of [{width: 1280, height: 720}, {width: 768, height: 1024}, 
     await search.clear();
     await expect(page.locator('.recent-jobs article[data-job-id]')).toHaveCount(10);
     await expect(page.getByRole('button', {name: 'Предыдущая страница истории', exact: true})).toBeDisabled();
+    await page.getByLabel('Период создания').selectOption('7');
+    await expect(page.locator('.recent-jobs article[data-job-id]')).toHaveCount(0);
+    await page.getByLabel('Период создания').selectOption('30');
+    await expect(page.locator('.recent-jobs article[data-job-id]')).toHaveCount(10);
+    await page.getByRole('button', {name: 'Сбросить фильтры', exact: true}).click();
+    await expect(page.getByLabel('Период создания')).toHaveValue('0');
     await noHorizontalOverflow(page);
     await page.getByLabel('Название документа задачи 1').fill('Synthetic preserved title');
     await page.getByRole('button',{name:'Добавить задачу',exact:true}).click();
@@ -357,9 +366,10 @@ for (const viewport of [{width: 1280, height: 720}, {width: 768, height: 1024}, 
     expect(bounds).not.toBeNull();
     expect(bounds!.height).toBeLessThanOrEqual(viewport.height);
     expect(bounds!.x).toBeGreaterThanOrEqual(0);
-    await dialog.getByRole('button', {name: 'Закрыть выбор папки', exact: true}).click();
+    await dialog.getByRole('button', {name: 'Отмена', exact: true}).click();
     await expect(page.getByRole('button', {name: 'Выбрать папку', exact: true})).toBeFocused();
     await navigation.getByRole('button', {name:'Настройки', exact:true}).click();
+    await page.getByRole('button', {name:'Аккаунт и безопасность', exact:true}).click();
     const settingsTabs = page.locator('.settings-section-tabs');
     await expect(settingsTabs.getByRole('tab')).toHaveCount(6);
     if (viewport.width <= 900) {
@@ -379,7 +389,7 @@ for (const viewport of [{width: 1280, height: 720}, {width: 768, height: 1024}, 
     }
     for (const mode of ['live', 'maintenance']) {
       await page.goto(`/transcriptions?mode=${mode}`);
-      const tabName = mode === 'live' ? 'Live-транскрибация' : 'Обслуживание';
+      const tabName = mode === 'live' ? 'Live-транскрибация' : 'Документы';
       await expect(page.getByRole('tab', {name:tabName, exact:true})).toHaveAttribute('aria-selected', 'true');
       await page.reload();
       await expect(page.getByRole('tab', {name:tabName, exact:true})).toHaveAttribute('aria-selected', 'true');
@@ -446,12 +456,14 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
       const picker=page.locator('.yandex-disk-picker-dialog');
       await expect(picker.locator('.google-drive-folder-list')).toBeVisible();
       const footer=picker.locator('footer');
-      await expect(footer.getByRole('button')).toBeInViewport({ratio:1});
+      for (const button of await footer.getByRole('button').all()) {
+        await expect(button).toBeInViewport({ratio:1});
+      }
       const geometry=await picker.evaluate(element=>{
         const rect=(selector:string)=>element.querySelector(selector)!.getBoundingClientRect();
         const header=rect('header'), toolbar=rect('.yandex-disk-picker-toolbar'), navigation=rect('nav'), body=rect('.yandex-disk-picker-content'), footer=rect('footer');
         const list=element.querySelector('.yandex-disk-picker-content')!;
-        return {ordered:header.bottom<=toolbar.top+1 && toolbar.bottom<=navigation.top+1 && navigation.bottom<=body.top+1 && body.bottom<=footer.top+1,
+        return {ordered:header.bottom<=navigation.top+1 && navigation.bottom<=toolbar.top+1 && toolbar.bottom<=body.top+1 && body.bottom<=footer.top+1,
           bodyHeight:body.height,scrollable:list.scrollHeight>list.clientHeight,inside:element.getBoundingClientRect().top>=0 && element.getBoundingClientRect().bottom<=innerHeight+1,
           noOverflow:element.scrollWidth<=element.clientWidth+1};
       });
@@ -460,7 +472,9 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
       const content=picker.locator('.yandex-disk-picker-content');
       await content.evaluate(element=>{element.scrollTop=element.scrollHeight;});
       await expect(picker.locator('.google-drive-folder-row').last()).toBeInViewport({ratio:1});
-      await expect(footer.getByRole('button')).toBeInViewport({ratio:1});
+      for (const button of await footer.getByRole('button').all()) {
+        await expect(button).toBeInViewport({ratio:1});
+      }
       await page.keyboard.press('Escape');
       await expect(picker).toHaveCount(0);
     }
