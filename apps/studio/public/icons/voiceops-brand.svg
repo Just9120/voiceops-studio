@@ -1,0 +1,14 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="&#208;&#151;&#208;&#189;&#208;&#176;&#208;&#186; &#194;&#183; VoiceOps" clip-path="url(#clip0_0_28)">
+<path id="Vector" d="M24 0H8C3.58172 0 0 3.58172 0 8V24C0 28.4183 3.58172 32 8 32H24C28.4183 32 32 28.4183 32 24V8C32 3.58172 28.4183 0 24 0Z" fill="#214DB0"/>
+<g id="Vector_2">
+<path d="M7.5 14V18ZM11.5 10V22ZM16 7V25ZM20.5 11V21ZM24.5 14V18Z" fill="black"/>
+<path d="M7.5 14V18M11.5 10V22M16 7V25M20.5 11V21M24.5 14V18" stroke-width="1.8" stroke-linecap="round" stroke="white"/>
+</g>
+</g>
+<defs>
+<clipPath id="clip0_0_28">
+<rect width="32" height="32" fill="white"/>
+</clipPath>
+</defs>
+</svg>

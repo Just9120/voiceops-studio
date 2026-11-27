@@ -13960,9 +13960,8 @@ describe("Studio PWA", () => {
     expect(css).toMatch(
       /button:where\(\s*:not\(\.primary\):not\(\.danger\)\s*\)/,
     );
-    expect(css).toContain(':root[data-theme="dark"]');
     expect(css).toMatch(
-      /:root\[data-theme="dark"\]\s*\{[^}]*--studio-on-primary:\s*#08111f/s,
+      /:root:is\(\[data-theme="dark"\], \[data-theme="oled"\]\)\s*\{[^}]*--studio-on-primary:\s*#071728/s,
     );
     expect(css).toMatch(/\.shell > main\s*\{[^}]*width:\s*100%/s);
     expect(css).not.toContain("width: min(100%, 1360px)");

@@ -116,7 +116,7 @@ import {
   requestProjectJobPage,
   requestProjectSourcePage,
 } from "./projectCollectionContracts";
-import { PlatformSidebar } from "./PlatformSidebar";
+import { PlatformSidebar, PlatformTopbar } from "./PlatformSidebar";
 import { AudioPreparationPage } from "./AudioPreparationPage";
 import { ElevenLabsAccountPanel } from "./ElevenLabsAccountPanel";
 import { StorageLifecyclePanel } from "./StorageLifecyclePanel";
@@ -10956,6 +10956,7 @@ function PlatformShell() {
         }}
       />
       <main>
+        <PlatformTopbar page={page} />
         {page === "dashboard" && (
           <OverviewPage
             onNavigate={(nextPage) => {
