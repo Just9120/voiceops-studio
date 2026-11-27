@@ -7,7 +7,7 @@
 | AC | Состояние | CODE | TEST | CI | Остаток / Evidence |
 | --- | --- | --- | --- | --- | --- |
 | `PC-17` | IN_PROGRESS | PARTIAL | PARTIAL | PASS | #362 поставил Web по макетам Figma и Companion 0.1.8. Открыты выборочная очистка истории по фрейму 31:6709 и отдельные неподтверждённые состояния. |
-| `OBS-IMPORT-01` | IN_PROGRESS | PARTIAL | PARTIAL | PENDING | Реализованы локальное извлечение дорожки, отдельная привязка и идемпотентная выдача черновика. Синтетические API-тесты и FFmpeg PASS. Нужна приёмка с нативным OBS и актуальным Setup. |
+| `OBS-IMPORT-01` | IN_PROGRESS | PASS | PARTIAL | PASS | PR #363. Нативный Stop в OBS, FFmpeg, синтетические API/Browser, проверка изоляции и повторов PASS. Web, API, worker и Setup 0.1.9 поставлены из `05e57fa`. Открыт сквозной импорт записи в авторизованной Studio. |
 
 ### `PWA-CORE-01`
 

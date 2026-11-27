@@ -27,10 +27,6 @@ export function preparedAudioContext(source: Source) {
   return parsePreparedAudioContext(source.prepared_audio);
 }
 
-export function sourceLocationLabel(kind: string | null) {
-  return kind === "google_drive" ? "Google Drive" : kind === "yandex_disk" ? "Яндекс Диск" : "Studio";
-}
-
 export function knownSourceDurationSeconds(source: Source | null | undefined): number | null {
   const context = source ? preparedAudioContext(source) : null;
   return context?.original_timeline_available === true && context.input_duration_ms <= 604800000

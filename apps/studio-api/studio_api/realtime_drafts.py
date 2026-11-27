@@ -254,9 +254,6 @@ def load_realtime_draft_state(db: Session, *, owner_user_id: str, project: Proje
 
 
 DEFAULT_REALTIME_DRAFT_CLEANUP_BATCH_SIZE = 500
-MAX_REALTIME_DRAFT_CLEANUP_BATCH_SIZE = 1000
-
-
 def cleanup_expired_realtime_drafts(
     db: Session,
     *,

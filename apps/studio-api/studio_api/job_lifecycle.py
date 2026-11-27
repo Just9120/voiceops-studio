@@ -1,13 +1,5 @@
 from __future__ import annotations
 
-from .models import JobStatus
-
-TERMINAL_JOB_STATUSES = frozenset({
-    JobStatus.cancelled,
-    JobStatus.failed,
-    JobStatus.completed,
-})
-
 SENSITIVE_FAILURE_MARKERS = (
     "secret",
     "token",
@@ -33,16 +25,6 @@ SENSITIVE_FAILURE_MARKERS = (
 )
 
 SAFE_REDACTED_FAILURE_MESSAGE = "Недоступно"
-
-
-def is_terminal_job_status(status: JobStatus) -> bool:
-    """Return whether an existing Studio job status is terminal."""
-    return status in TERMINAL_JOB_STATUSES
-
-
-def can_cancel_job_status(status: JobStatus) -> bool:
-    """Jobs that accept a public cancellation action."""
-    return status in {JobStatus.queued, JobStatus.processing}
 
 
 def safe_failure_metadata_value(value: str | None) -> str | None:

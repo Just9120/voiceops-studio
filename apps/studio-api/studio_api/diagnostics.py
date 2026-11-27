@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from .config import get_settings
 from .db import SessionLocal
-from .signed_cursor import decode_signed_cursor, decode_signed_cursor_payload, encode_signed_cursor
+from .signed_cursor import decode_signed_cursor_payload, encode_signed_cursor
 from .models import AudioPreparationJob, DiagnosticComponent, DiagnosticEvent, DiagnosticLevel, Project, TranscriptionJob, User
 from .trace_context import current_trace_id, valid_trace_id
 
@@ -190,9 +190,6 @@ def new_request_id() -> str:
 def new_correlation_id() -> str:
     return f"corr_{secrets.token_hex(16)}"
 
-def new_opaque_id(prefix: str = "dg") -> str:
-    return new_request_id() if prefix == "req" else new_correlation_id() if prefix == "corr" else f"{prefix}_{secrets.token_urlsafe(24).rstrip('=')}"
-
 def valid_uuid(value: str | None) -> bool:
     if value is None or not isinstance(value, str) or not UUID_RE.fullmatch(value):
         return False
@@ -209,9 +206,6 @@ def valid_request_id(value: str | None) -> bool:
 
 def valid_correlation_id(value: str | None) -> bool:
     return value is None or bool(isinstance(value, str) and (CORRELATION_ID_RE.fullmatch(value) or UUID_RE.fullmatch(value)) and not unsafe_string(value))
-
-def valid_opaque_id(value: str | None) -> bool:
-    return valid_correlation_id(value) or valid_request_id(value)
 
 def sanitize_inbound_correlation(value: str | None) -> str:
     raw = value.strip() if isinstance(value, str) else None
@@ -425,34 +419,11 @@ def resolve_job_correlation_id(*, owner_user_id: str, job_id: str, session_facto
     finally:
         if db is not None and transaction is None: _close(db)
 
-def resolve_job_trace_id(*, owner_user_id: str, job_id: str, session_factory=SessionLocal) -> str | None:
-    db = None
-    try:
-        if not valid_uuid(owner_user_id) or not valid_uuid(job_id): return None
-        db = session_factory()
-        job = db.get(TranscriptionJob, job_id) or db.get(AudioPreparationJob, job_id)
-        if job is None or job.owner_user_id != owner_user_id:
-            return None
-        return job.trace_id if valid_trace_id(job.trace_id) else None
-    except Exception:
-        LOGGER.warning("diagnostic_trace_lookup_failed")
-        return None
-    finally:
-        if db is not None: _close(db)
-
 def cursor_context(*, owner_user_id: str, start: datetime, end: datetime, level=None, component=None, event_code=None, project_id=None, job_id=None) -> dict[str, Any]:
     return {"owner": owner_user_id, "start": _as_utc_naive(start).isoformat(), "end": _as_utc_naive(end).isoformat(), "level": level, "component": component, "event_code": event_code, "project_id": project_id, "job_id": job_id}
 
 def encode_cursor(dt: datetime, event_id: str, context: dict[str, Any], secret: str) -> str:
     return encode_signed_cursor(dt, event_id, context, secret, namespace="studio-diagnostics-cursor-v1")
 
-def decode_cursor(cursor: str, context: dict[str, Any], secret: str) -> tuple[datetime, str] | None:
-    return decode_signed_cursor(cursor, context, secret, namespace="studio-diagnostics-cursor-v1")
-
 def decode_cursor_payload(cursor: str, secret: str) -> tuple[datetime, str, dict[str, Any]] | None:
     return decode_signed_cursor_payload(cursor, secret, namespace="studio-diagnostics-cursor-v1")
-
-def markdown_escape(value: Any) -> str:
-    text = str(value if value is not None else "")
-    text = re.sub(r"<[^>]*>", "", text).replace("`", "\\`")
-    return re.sub(r"([\\*_{}\[\]()#+\-.!|])", r"\\\1", text)[:500]
