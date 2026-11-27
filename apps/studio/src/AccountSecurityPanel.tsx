@@ -49,6 +49,23 @@ function apiReason(error: unknown) {
   return typeof reason === "string" ? reason : "";
 }
 
+export function requestReauthentication(
+  data: FormData,
+  csrf: string,
+  onCsrf: (csrf: string) => void,
+  allowRememberDevice = false,
+) {
+  return mutateWithCsrfRetry("/auth/reauth", csrf, onCsrf, {
+    method: "POST",
+    body: JSON.stringify({
+      password: String(data.get("password") ?? ""),
+      verification_code: String(data.get("verificationCode") ?? "").trim() || undefined,
+      recovery_code: String(data.get("recoveryCode") ?? "").trim() || undefined,
+      ...(allowRememberDevice ? { remember_device: data.get("rememberDevice") === "on" } : {}),
+    }),
+  });
+}
+
 export function AccountSecurityPanel({
   csrf,
   onCsrf,
@@ -81,22 +98,7 @@ export function AccountSecurityPanel({
     const data = new FormData(form);
     setPending(true); setMessage("");
     try {
-      await mutateWithCsrfRetry(
-        "/auth/reauth",
-        csrf,
-        onCsrf,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            password: String(data.get("password") ?? ""),
-            verification_code: String(data.get("verificationCode") ?? "").trim() || undefined,
-            recovery_code: String(data.get("recoveryCode") ?? "").trim() || undefined,
-            ...(status?.trusted_device_supported
-              ? { remember_device: data.get("rememberDevice") === "on" }
-              : {}),
-          }),
-        },
-      );
+      await requestReauthentication(data, csrf, onCsrf, status?.trusted_device_supported);
       form.reset();
       setMessage("Личность подтверждена. Теперь можно выполнить защищённое действие.");
       await load();

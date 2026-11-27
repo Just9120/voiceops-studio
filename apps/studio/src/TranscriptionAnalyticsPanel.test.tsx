@@ -66,7 +66,7 @@ describe("TranscriptionAnalyticsPanel", () => {
     render(<TranscriptionAnalyticsPanel projectId="fixture-project" loadAnalytics={vi.fn().mockResolvedValue({ ...analytics, usage_cost: { ...analytics.usage_cost, confirmed_provider_cost: "0.00077073" } })} />);
     await userEvent.click(screen.getByText("Аналитика транскрибаций"));
     expect(await screen.findByText(/< 0,01 USD/)).toBeInTheDocument();
-    await userEvent.click(screen.getByText("Расход ElevenLabs", { exact: true }));
+    await userEvent.click(screen.getByText("Расход по всем STT-провайдерам", { exact: true }));
     await userEvent.click(screen.getByText("Точное значение стоимости"));
     expect(screen.getByText(/0.00077073 USD/)).toBeVisible();
   });
@@ -109,7 +109,7 @@ describe("TranscriptionAnalyticsPanel", () => {
     expect(screen.getByText("Среднее: 1 ч")).toBeInTheDocument();
     expect(screen.getByText("0,22 USD")).toBeInTheDocument();
     expect(screen.getByText("Подтверждённо отправлено")).toBeInTheDocument();
-    expect(screen.getByText(/Это расчётная стоимость, а не счёт после подписки или квоты/)).toBeInTheDocument();
+    expect(screen.getByText(/Фактические списания после подписки или квоты/)).toBeInTheDocument();
     const outcomes = screen.getByRole("region", {
       name: "Исходы транскрибаций",
     });

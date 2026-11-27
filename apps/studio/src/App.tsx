@@ -203,7 +203,7 @@ import { TranscriptCatalogMigrationPanel } from "./TranscriptCatalogMigrationPan
 import { LiveTranscriptionPanel } from "./LiveTranscriptionPanel";
 import { FolderImportDialog } from "./FolderImportDialog";
 import { AccountSessionsPanel } from "./AccountSessionsPanel";
-import { AccountSecurityPanel } from "./AccountSecurityPanel";
+import { AccountSecurityPanel, requestReauthentication } from "./AccountSecurityPanel";
 import { NotificationsPanel } from "./NotificationsPanel";
 import {
   buildLocalFolderPreview,
@@ -1792,20 +1792,23 @@ function PreparationPanel({
   const [retries, setRetries] = useState<Record<string, JobRetryState>>({});
   const [progress, setProgress] = useState<Record<string, JobProgressState>>({});
   const [historyClearOpen, setHistoryClearOpen] = useState(false);
+  const [historyNeedsReauth, setHistoryNeedsReauth] = useState(false);
+  const historyPasswordRef = useRef<HTMLInputElement>(null);
   const historyClearTriggerRef = useRef<HTMLButtonElement>(null);
   const historyClearBackRef = useRef<HTMLButtonElement>(null);
   const historySummaryRef = useRef<HTMLElement>(null);
   const returnHistoryFocusRef = useRef(false);
   useEffect(() => {
     if (historyClearOpen) {
-      historyClearBackRef.current?.focus();
+      if (historyNeedsReauth) historyPasswordRef.current?.focus();
+      else historyClearBackRef.current?.focus();
     } else if (returnHistoryFocusRef.current) {
       returnHistoryFocusRef.current = false;
       const trigger = historyClearTriggerRef.current;
       if (trigger && !trigger.disabled) trigger.focus();
       else historySummaryRef.current?.focus();
     }
-  }, [historyClearOpen]);
+  }, [historyClearOpen, historyNeedsReauth]);
   const [historyClearPending, setHistoryClearPending] = useState(false);
   const [historyClearMessage, setHistoryClearMessage] = useState("");
   const [historyQuery, setHistoryQuery] = useState("");
@@ -4440,8 +4443,34 @@ function PreparationPanel({
       finishJobMutation("cancel", jobId, notice);
     }
   }
-  async function clearHistory() {
+  function closeHistoryReview() {
+    setHistoryClearOpen(false);
+    setHistoryNeedsReauth(false);
+    setHistoryClearMessage("");
+  }
+
+  async function reauthenticateForHistory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     if (historyClearPendingRef.current) return;
+    const form = event.currentTarget;
+    historyClearPendingRef.current = true;
+    setHistoryClearPending(true);
+    setHistoryClearMessage("");
+    try {
+      await requestReauthentication(new FormData(form), csrf, onCsrf);
+      form.reset();
+      setHistoryNeedsReauth(false);
+      setHistoryClearMessage("Личность подтверждена. Подтвердите очистку истории.");
+    } catch {
+      setHistoryClearMessage("Не удалось подтвердить личность. Проверьте пароль и код.");
+    } finally {
+      historyClearPendingRef.current = false;
+      setHistoryClearPending(false);
+    }
+  }
+
+  async function clearHistory() {
+    if (historyClearPendingRef.current || historyNeedsReauth) return;
     historyClearPendingRef.current = true;
     setHistoryClearPending(true);
     setHistoryClearMessage("");
@@ -4463,8 +4492,13 @@ function PreparationPanel({
         "История очищена. Незавершённые задачи и задачи, требующие решения, сохранены.",
       );
       onReloadJobs(project.id);
-    } catch {
-      setHistoryClearMessage("Не удалось очистить историю. Повторите попытку.");
+    } catch (error) {
+      if (apiErrorDetailReason(error) === "recent_reauthentication_required") {
+        setHistoryNeedsReauth(true);
+        setHistoryClearMessage("Подтвердите личность, чтобы вернуться к проверке последствий.");
+      } else {
+        setHistoryClearMessage("Не удалось очистить историю. Повторите попытку.");
+      }
     } finally {
       historyClearPendingRef.current = false;
       setHistoryClearPending(false);
@@ -6188,10 +6222,7 @@ function PreparationPanel({
             aria-labelledby="history-clear-title"
             aria-busy={historyClearPending || undefined}
             onKeyDown={(event) => {
-              if (event.key === "Escape" && !historyClearPending) {
-                setHistoryClearMessage("");
-                setHistoryClearOpen(false);
-              }
+              if (event.key === "Escape" && !historyClearPending) closeHistoryReview();
             }}
           >
             <p className="muted">История → проверка последствий</p>
@@ -6204,23 +6235,33 @@ function PreparationPanel({
               <dt>Сохранятся</dt>
               <dd>Результаты, Google Docs и журнал аудита.</dd>
             </dl>
+            {historyNeedsReauth && (
+              <form className="security-form" onSubmit={reauthenticateForHistory}>
+                <label>Пароль<input ref={historyPasswordRef} name="password" type="password" autoComplete="current-password" required /></label>
+                <details>
+                  <summary>Код двухфакторной защиты</summary>
+                  <label>Код из приложения<input name="verificationCode" inputMode="numeric" autoComplete="one-time-code" /></label>
+                  <label>Или резервный код<input name="recoveryCode" autoComplete="off" /></label>
+                </details>
+                <button type="submit" className="primary" disabled={historyClearPending}>Подтвердить личность</button>
+              </form>
+            )}
             <div className="actions">
               <button
                 type="button"
                 ref={historyClearBackRef}
                 className="secondary"
                 disabled={historyClearPending}
-                onClick={() => {
-                  setHistoryClearMessage("");
-                  setHistoryClearOpen(false);
-                }}
+                onClick={closeHistoryReview}
               >
                 Назад к истории
               </button>
-              <button type="button" className="danger" disabled={historyClearPending}
-                onClick={() => void clearHistory()}>
-                {historyClearPending ? "Очищаем…" : "Очистить историю"}
-              </button>
+              {!historyNeedsReauth && (
+                <button type="button" className="danger" disabled={historyClearPending}
+                  onClick={() => void clearHistory()}>
+                  {historyClearPending ? "Очищаем…" : "Очистить историю"}
+                </button>
+              )}
             </div>
           </section>
         )}
@@ -6326,6 +6367,21 @@ function OverviewPage({
   const [recentJobs, setRecentJobs] = useState<TranscriptionJob[]>([]);
   const [recentJobsLoading, setRecentJobsLoading] = useState(false);
   const [recentJobsError, setRecentJobsError] = useState(false);
+  const loadRecentJobs = (projectId: string) => {
+    setRecentJobsLoading(true);
+    setRecentJobsError(false);
+    void settleLatestRequest(
+      requestEpochsRef.current,
+      "overview:recent-jobs",
+      (signal) => requestProjectJobPage(projectId, null, signal),
+      (jobsPage) => {
+        setRecentJobs(jobsPage.items.slice(0, 3));
+        setRecentJobsLoading(false);
+      },
+      () => { setRecentJobsLoading(false); setRecentJobsError(true); },
+      { controllers: requestControllersRef.current, timeoutMs: PROJECT_COLLECTION_REQUEST_TIMEOUT_MS },
+    );
+  };
   const loadProjects = () => {
     setProjectsLoading(true);
     setProjectsError(false);
@@ -6343,18 +6399,7 @@ function OverviewPage({
           setRecentJobs([]); setRecentJobsLoading(false); setRecentJobsError(false);
           return;
         }
-        setRecentJobsLoading(true); setRecentJobsError(false);
-        void settleLatestRequest(
-          requestEpochsRef.current,
-          "overview:recent-jobs",
-          (signal) => requestProjectJobPage(workspace.id,null,signal),
-          (jobsPage) => {
-            setRecentJobs(jobsPage.items.slice(0,3));
-            setRecentJobsLoading(false); setRecentJobsError(false);
-          },
-          () => { setRecentJobsLoading(false); setRecentJobsError(true); },
-          { controllers: requestControllersRef.current, timeoutMs: PROJECT_COLLECTION_REQUEST_TIMEOUT_MS },
-        );
+        loadRecentJobs(workspace.id);
       },
       () => {
         setProjectsError(true);
@@ -6559,7 +6604,12 @@ function OverviewPage({
             <button type="button" onClick={onOpenTranscriptions}>Все</button>
           </div>
           {recentJobsLoading && <p role="status">Загружаем последние задачи…</p>}
-          {recentJobsError && <p className="muted">Последние задачи сейчас недоступны.</p>}
+          {recentJobsError && (
+            <div className="inline-actions">
+              <p className="muted">Последние задачи сейчас недоступны.</p>
+              {projects[0] && <button type="button" onClick={() => loadRecentJobs(projects[0].id)}>Повторить загрузку задач</button>}
+            </div>
+          )}
           {!recentJobsLoading && !recentJobsError && recentJobs.length === 0 && <p className="muted">Здесь появятся последние задачи и результаты.</p>}
           {recentJobs.length > 0 && (
             <ul className="dashboard-recent-list">

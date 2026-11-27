@@ -2,6 +2,13 @@
 
 Часть [delivery dashboard](../delivery-plan.md). Полный аудит 2026-10-10 на проверенном `origin/main` `bc5150eb189b44867101ca45b9da201921a99227`; формулировки — [spec](../spec/studio.md), источник — [trace](../spec/source-trace.md). Все действующие ID повторно оценены по реализации и подходящим проверкам A20261010-CODE/CI; runtime scope/ограничения — A20261010-RUNTIME в плане. CODE/TEST/CI — типы Evidence, а не три процента; ◐ ограничивает проверенные условия. ALIAS/SUPERSEDED исключены. READY не требует ручной приёмки и не доказывает commercial rollout.
 
+### Требования от 27 ноября 2026
+
+| AC | Состояние | CODE | TEST | CI | Остаток / Evidence |
+| --- | --- | --- | --- | --- | --- |
+| `PC-17` | BACKLOG | PENDING | PENDING | PENDING | Маршруты и состояния по согласованному Figma, включая мобильный UI. #359 подтверждает предыдущую поставку по локальному альбому. |
+| `OBS-IMPORT-01` | BACKLOG | PENDING | PENDING | PENDING | Требуется импорт после Stop в OBS. Существующие обработка файлов и Live overlay отдельны от этого пути. |
+
 ### `PWA-CORE-01`
 
 | AC | Состояние | CODE | TEST | CI | Остаток / Evidence |
@@ -20,8 +27,8 @@
 | `PC-12` | READY | ✅ | ✅ | ✅ | 07Nov, main 8ad83e3: Appearance предлагает system, light и dark. theme.test.ts проверяет определение системной темы, применение явного выбора и безопасное сохранение. |
 | `PC-13` | READY | ✅ | ✅ | ✅ | 07Nov, main 8ad83e3: Appearance и App.test.tsx проверяют выбор, сохранение через настройки аккаунта и применение цвета интерфейса. |
 | `PC-14` | READY | ✅ | ✅ | ✅ | 07Nov, main 8ad83e3: обе формы вычисляют общий процент по фактическим байтам XHR. directUpload.test.ts, AudioPreparationUpload.test.tsx и App.test.tsx проверяют прогресс и подтверждение результата после сбоя без повторного PUT. |
-| `PC-15` | READY | ✅ | ✅ | ✅ | Восстановлено по code и primary records 2026-09-30: PR #312/e01bc91, CI 35970014222/35970014302, web CD 35970355470 SUCCESS. |
-| `PC-16` | READY | ✅ | ✅ | ✅ | Восстановлено по code и primary records 2026-09-30: PR #312/e01bc91, CI 35970014222/35970014302, web CD 35970355470 SUCCESS. |
+| `PC-15` | IN_PROGRESS | PARTIAL | PARTIAL | PENDING | 27Nov, Chromium, baseline `0178502`: Workbox ищет `/` в precache, где присутствует `/index.html`. Изолированный кандидат исправил fallback и подтвердил контроль страницы и предложение обновления. Исторический PASS: #312/e01bc91, CI 35970014222/35970014302. |
+| `PC-16` | IN_PROGRESS | PARTIAL | PARTIAL | PENDING | 27Nov, Chromium: после ручного применения ожидающего обновления перезагружается только выбравшая его вкладка. Отложенная соседняя вкладка и прямой API-запрос сохраняют собственное поведение. Результат подтверждён на изолированной сборке кандидата, production ещё на предыдущей версии. |
 
 ### `PWA-USER-EXPERIENCE-02`
 
@@ -177,7 +184,7 @@
 | `AP-20` | READY | PASS | PASS | PENDING | F42 · `8ad83e3`. Component: numbered concat plan и ручная перестановка. Код использует origin/size и creation metadata, а не имя; service подтверждает порядок. |
 | `AP-21` | READY | PARTIAL | PARTIAL | PENDING | F42 · `8ad83e3`. Подтверждены copy по умолчанию и отдельный WAV/FLAC path. Каналы и паузы автоматически переключают copy на видимый FLAC, UI показывает предупреждение перед запуском. Достаточность предупреждения для явного выбора в этих двух ветках ещё не квалифицирована. |
 | `AP-22` | READY | PASS | PASS | PENDING | F42 · `8ad83e3`. UI: дружелюбные названия и скрытые параметры, −45 dB, пустой/минус/запятая. Обе ветки используют `silenceValues`; component подтверждает отсутствие POST на invalid input. |
-| `AP-23` | READY | PASS | PASS | PENDING | Independent download/Drive/reuse preserved. Verified source versions, recorded re-render recipe and atomic exported-byte/map receipts reject same-size replacement or missing evidence without creating a Source. Current real FFmpeg/download/export/actual reuse-handler fixtures in523 cohort and browser audio/reload PASS; external Drive fake. 4efbdd6..ddbc172. Required current Linux CI/release and single PR/delivery remain PENDING. |
+| `AP-23` | IN_PROGRESS | PARTIAL | PARTIAL | PENDING | 21Nov, Web `5525f05`: старые готовые результаты отбрасываются UI и ошибка одного запроса мешает обновлению остальных. Кандидат Goal восстанавливает весь возвращённый список и изолирует polling. Исторический Evidence: Independent download/Drive/reuse preserved. Verified source versions, recorded re-render recipe and atomic exported-byte/map receipts reject same-size replacement or missing evidence without creating a Source. Current real FFmpeg/download/export/actual reuse-handler fixtures in523 cohort and browser audio/reload PASS; external Drive fake. 4efbdd6..ddbc172. Required current Linux CI/release and single PR/delivery remain PENDING. |
 | `AP-24` | READY | PASS | PASS | PENDING | F42 · `8ad83e3`. Component показывает точность; real FFmpeg/ffprobe: 24-bit stereo → FLAC mono 16-bit при исходных 44 100 Hz. Filter graph закрепляет `s16`. |
 | `AP-25` | READY | PASS | PASS | PENDING | F42 · `8ad83e3`. Keyboard tablist; direct mode принимает bounded media multiselect. Transfer tests подтверждают сохранение MIME, имени и отправку исходного File. |
 | `AP-26` | READY | PASS | PASS | PENDING | F42 · `8ad83e3`. Direct panel открывает общий output-folder picker и сохраняет launcher. Общий picker подтверждает поиск, shared drives и выбор пустой папки. |

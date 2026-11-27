@@ -128,6 +128,18 @@ describe("PWA update choice", () => {
   it("does not offer an update for an ordinary first registration", () => {
     const controller = new PwaUpdateController(vi.fn());
     controller.setRegistration(registration());
+    controller.onControllerChange(false);
     expect(controller.getSnapshot()).toEqual({ visible: false, applying: false, error: false });
+  });
+
+  it("reloads after an explicitly requested activation even if the page had no controller", async () => {
+    const reload = vi.fn();
+    const controller = new PwaUpdateController(reload);
+    controller.setUpdateWorker(vi.fn(async () => undefined));
+    controller.announceAvailable();
+
+    await controller.apply();
+    controller.onControllerChange(false);
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 });

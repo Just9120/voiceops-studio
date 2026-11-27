@@ -2752,11 +2752,18 @@ describe("Studio PWA", () => {
     expect(document.body.textContent).not.toContain("удален с Google Drive");
   });
 
-  it("renders actionable dashboard summaries without exposing project lifecycle", async () => {
+  it("retries jobs after a dashboard 503 without reloading projects", async () => {
     const baseFetch = fetch as unknown as ReturnType<typeof vi.fn>;
     const defaultFetch = baseFetch.getMockImplementation();
+    let projectReads = 0;
+    let jobReads = 0;
     baseFetch.mockImplementation((url: string, init?: RequestInit) => {
-      if (url.endsWith("/api/projects") && !init?.method)
+      if (url.endsWith("/api/projects/older/jobs")) {
+        jobReads += 1;
+        return jobReads === 1 ? json({}, false, 503) : json({ jobs: [], next_cursor: null });
+      }
+      if (url.endsWith("/api/projects") && !init?.method) {
+        projectReads += 1;
         return json({
           projects: [
             {
@@ -2783,6 +2790,7 @@ describe("Studio PWA", () => {
             },
           ],
         });
+      }
       if (url.endsWith("/api/google/connection"))
         return json({
           connected: true,
@@ -2813,12 +2821,13 @@ describe("Studio PWA", () => {
     });
     renderApp();
     await waitForPlatformOverview();
-    expect(screen.getByLabelText("Последние результаты")).toHaveTextContent(
-      "Недоступно",
-    );
-    expect(screen.getByLabelText("Google Drive")).toHaveTextContent(
-      "Подключён",
-    );
+    expect(screen.getByLabelText("Последние результаты")).toHaveTextContent("Недоступно");
+    const retry = await screen.findByRole("button", { name: "Повторить загрузку задач" });
+    await userEvent.click(retry);
+    await waitFor(() => expect(screen.getByLabelText("Последние результаты")).toHaveTextContent("Последних задач: 0"));
+    expect(projectReads).toBe(1);
+    expect(jobReads).toBe(2);
+    expect(screen.getByLabelText("Google Drive")).toHaveTextContent("Подключён");
     expect(screen.getByLabelText("Готовность к работе")).toHaveTextContent(
       "Можно начинать",
     );
@@ -10185,7 +10194,7 @@ describe("Studio PWA", () => {
     expect(document.body.textContent).not.toContain("raw-private");
   });
 
-  it("clears history only after the review step while preserving the durable job", async () => {
+  it.each([false, true])("clears history only after explicit review (reauth required: %s)", async (needsReauth) => {
     installFocusedOutputFixture({
       jobStatus: "completed",
       terminalDismissedAt: "2026-07-02T00:04:00Z",
@@ -10193,12 +10202,21 @@ describe("Studio PWA", () => {
     const baseFetch = fetch as unknown as ReturnType<typeof vi.fn>;
     const defaultFetch = baseFetch.getMockImplementation();
     const clearCalls: Array<RequestInit | undefined> = [];
+    let reauthenticated = false;
     baseFetch.mockImplementation((url: string, init?: RequestInit) => {
+      if (String(url).endsWith("/api/auth/reauth") && init?.method === "POST") {
+        reauthenticated = true;
+        expect(JSON.parse(String(init.body))).toEqual({ password: "test-password" });
+        return json({ ok: true, recent_auth_expires_at: "2026-08-21T12:05:00Z" });
+      }
       if (
         String(url).endsWith("/api/projects/p1/history/clear") &&
         init?.method === "POST"
       ) {
         clearCalls.push(init);
+        if (needsReauth && !reauthenticated) {
+          return json({ detail: { reason: "recent_reauthentication_required" } }, false, 409);
+        }
         return json({
           ok: true,
           reset_at: "2026-08-21T12:00:00Z",
@@ -10226,13 +10244,22 @@ describe("Studio PWA", () => {
       screen.getByRole("button", { name: "Очистить историю" }),
     );
     await userEvent.click(screen.getByRole("button", { name: "Очистить историю" }));
+    if (needsReauth) {
+      const password = await screen.findByLabelText("Пароль");
+      expect(password).toHaveFocus();
+      await userEvent.type(password, "test-password");
+      await userEvent.click(screen.getByRole("button", { name: "Подтвердить личность" }));
+      const confirm = await screen.findByRole("button", { name: "Очистить историю" });
+      expect(clearCalls).toHaveLength(1);
+      await userEvent.click(confirm);
+    }
     expect(
       await screen.findByText(
         "История очищена. Незавершённые задачи и задачи, требующие решения, сохранены.",
       ),
     ).toBeInTheDocument();
-    expect(clearCalls).toHaveLength(1);
-    expect(clearCalls[0]).toEqual(
+    expect(clearCalls).toHaveLength(needsReauth ? 2 : 1);
+    expect(clearCalls.at(-1)).toEqual(
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ confirm_clear: true }),

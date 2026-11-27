@@ -168,6 +168,40 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
   });
 }
 
+test('local WAV result survives route navigation and a truncated WAV requests a healthy copy', async ({page}) => {
+  await fixtures(page);
+  await page.goto('/audio');
+  await page.getByRole('tab', {name: 'Обработать на устройстве', exact: true}).click();
+  const input = page.getByLabel('Выбрать файлы для обработки на устройстве');
+  const process = page.getByRole('button', {name: 'Обработать на устройстве', exact: true});
+  const wav = Buffer.alloc(44 + 16000 * 2);
+  wav.write('RIFF', 0);
+  wav.writeUInt32LE(wav.length - 8, 4);
+  wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(16000, 24);
+  wav.writeUInt32LE(32000, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write('data', 36);
+  wav.writeUInt32LE(wav.length - 44, 40);
+
+  await input.setInputFiles({name: 'truncated.wav', mimeType: 'audio/wav', buffer: wav.subarray(0, 50)});
+  await process.click();
+  await expect(page.getByText(/Структура WAV повреждена/)).toBeVisible();
+  await input.setInputFiles({name: 'recording.wav', mimeType: 'audio/wav', buffer: wav});
+  await process.click();
+  const download = page.getByRole('link', {name: 'Скачать файл'});
+  await expect(download).toHaveAttribute('href', /^blob:/);
+  const previousUrl = await download.getAttribute('href');
+  const navigation = page.getByRole('navigation');
+  await navigation.getByRole('button', {name: 'Обзор', exact: true}).click();
+  await navigation.getByRole('button', {name: 'Подготовка аудио', exact: true}).click();
+  await expect(download).toHaveAttribute('href', previousUrl!);
+});
+
 async function noHorizontalOverflow(page: Page) {
   const overflow = await page.evaluate(() => ({
     viewport: window.innerWidth,

@@ -203,11 +203,10 @@ export function NotificationsPanel({
                 <div>
                   <h3>{CHANNEL_LABELS[channelName]}</h3>
                   <p className="muted">
-                    {!channel.configured
-                      ? "Пока не настроено на сервере"
-                      : channel.enabled
-                        ? "Включено"
-                        : "Выключено"}
+                    {channel.enabled ? "Подписка включена" : "Подписка выключена"}
+                  </p>
+                  <p className="muted">
+                    {channel.configured ? "Канал настроен на сервере" : "Доставка недоступна: канал не настроен на сервере"}
                   </p>
                 </div>
                 <button

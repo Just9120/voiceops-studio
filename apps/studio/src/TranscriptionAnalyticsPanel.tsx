@@ -352,7 +352,7 @@ export function TranscriptionAnalyticsPanel({
               </div>
               <p className="muted analytics-footnote">
                 Последний интервал объединяет слияние частей и создание
-                результата в Google Docs. Незавершённые этапы в статистику не
+                результата в выбранном хранилище. Незавершённые этапы в статистику не
                 входят.
               </p>
               <details className="analytics-glossary">
@@ -390,8 +390,8 @@ export function TranscriptionAnalyticsPanel({
               </details>
             </details>
 
-            <details className="analytics-breakdown" aria-label="Расход ElevenLabs">
-              <summary>Расход ElevenLabs</summary>
+            <details className="analytics-breakdown" aria-label="Расход по всем STT-провайдерам">
+              <summary>Расход по всем STT-провайдерам</summary>
               <div className="analytics-total-grid">
                 <article>
                   <span>Подтверждённо отправлено</span>
@@ -416,10 +416,9 @@ export function TranscriptionAnalyticsPanel({
                 </article>
               </div>
               <p className="muted analytics-footnote">
-                Сумма рассчитана по подтверждённой длительности, реально
-                отправленной в ElevenLabs, и сохранённому тарифу. Это расчётная
-                стоимость, а не счёт после подписки или квоты; фактические расходы
-                сверх лимита и счета показаны в Настройки → Подключения.
+                Сводка включает подтверждённую длительность и расчётную стоимость
+                по сохранённым тарифам всех провайдеров в выбранном периоде.
+                Фактические списания после подписки или квоты смотрите в подключениях провайдеров.
               </p>
               {(analytics.usage_cost.uncertain_jobs > 0 ||
                 analytics.usage_cost.unavailable_jobs > 0) && (
