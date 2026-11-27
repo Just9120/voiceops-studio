@@ -90,7 +90,8 @@ export class PwaUpdateController {
     }
   }
 
-  onControllerChange() {
+  onControllerChange(isReplacement = true) {
+    if (!isReplacement && !this.available) return;
     this.controllerChanged = true;
     this.available = true;
     this.clearActivationTimer();

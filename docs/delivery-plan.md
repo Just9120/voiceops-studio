@@ -18,7 +18,9 @@ DoD: в локальном бэклоге есть результат и Evidenc
 
 На исходном production Web `5525f05`, API и worker `244a3c4`, схема `0046_local_model_revision`; API readiness подтвердил PostgreSQL 17 и Redis 7. GitHub #357–#360 подтверждены первичным readback, открытых PR нет, required gate `ci-required`.
 
-Этап 1, Windows и синтетические данные: полная frontend suite 911 PASS на промежуточном дереве, Browser layout 26 PASS, отдельный Chromium-сценарий локального WAV и навигации PASS, portable account/usage 20 PASS. Интеграционные тесты API остановились на PostgreSQL/Alembic fixture. Standalone localhost PWA регистрирует активный service worker, но тестовая навигация не получает controller; прежний сбой кнопки в этих условиях подтвердить не удалось. PWA controller tests PASS, runtime-вывод ограничен стендом. Платных/внешних provider calls и production-записей не было. Изолированный Linux preflight до push остаётся REQUIRED, общий launcher не допускает Studio. Следующий шаг после локального checkpoint — допуск совместимого профиля и его точный прогон.
+Этап 1, Windows и синтетические данные: ранее пройдены 911 Vitest, 27 Browser layout и 20 portable account/usage. Интеграционные тесты API остановились на PostgreSQL/Alembic fixture. PWA `PC-15/16`: 27Nov, собранный Web и Chromium на localhost воспроизвели ошибку Workbox `non-precached-url` для `/`. Кандидат активирует ожидающий worker по `controllerchange`. Двухверсионный прогон подтвердил обновление одной вкладки по явному выбору, сохранение соседней вкладки, offline-навигацию и прямой API `401`. Девять целевых Vitest прошли. Production PWA пока не проверена на кандидате. Платных вызовов и production-записей не было.
+
+Независимо для этапа 4 прошли 92 portable-теста синтетических контрактов STT, резервного Colab и SMTP на базовом кандидате `2e58023`. Реальные provider/Google/SMTP операции и Colab proxy не проверялись. До первого push остаётся штатный локальный preflight в совместимом Linux/DB окружении. Общий launcher пока не допускает Studio.
 
 ### История предыдущих поставок
 

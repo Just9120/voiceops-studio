@@ -16,7 +16,9 @@ export default defineConfig({
       manifest: false,
       includeAssets: ['icons/icon.svg', 'manifest.webmanifest', 'push-handler.js'],
       workbox: {
-        navigateFallback: '/',
+        clientsClaim: true,
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/api(?:\/|$)/],
         globPatterns: ['**/*.{js,css,html,svg,webmanifest}'],
         importScripts: ['/push-handler.js'],
         runtimeCaching: [],

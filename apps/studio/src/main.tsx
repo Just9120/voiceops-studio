@@ -16,10 +16,20 @@ export function initializePwaRuntime(enableServiceWorker = import.meta.env.PROD 
   installPwaGlobalErrorHandlers();
   if (pwaRuntimeInitialized || !enableServiceWorker) return;
   pwaRuntimeInitialized = true;
+  const workers = navigator.serviceWorker;
+  let previousController = workers?.controller ?? null;
+  workers?.addEventListener("controllerchange", () => {
+    const nextController = workers.controller;
+    if (!nextController || nextController === previousController) return;
+    const isReplacement = previousController !== null;
+    previousController = nextController;
+    pwaUpdates.onControllerChange(isReplacement);
+  });
   const updateSW = registerSW({
     immediate: true,
     onNeedRefresh: () => pwaUpdates.announceAvailable(),
-    onNeedReload: () => pwaUpdates.onControllerChange(),
+    // Prevent Workbox's default reload. Studio applies the user's choice on controllerchange.
+    onNeedReload: () => {},
     onRegisteredSW: (_url, registration) => pwaUpdates.setRegistration(registration),
     onRegisterError: () => emitPwaServiceWorkerError(),
   });

@@ -47,7 +47,7 @@ describe("service-worker diagnostics registration", () => {
     const { mod, listeners, emit } = await loadMainWithServiceWorker();
     mod.initializePwaRuntime(true);
     mod.initializePwaRuntime(true);
-    expect(Object.keys(listeners)).toEqual(["messageerror"]);
+    expect(Object.keys(listeners)).toEqual(["controllerchange", "messageerror"]);
     listeners.messageerror(new MessageEvent("messageerror", { data: { raw: "synthetic-message-data" } }));
     expect(emit).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(emit.mock.calls)).not.toContain("synthetic-message-data");

@@ -27,8 +27,8 @@
 | `PC-12` | READY | ✅ | ✅ | ✅ | 07Nov, main 8ad83e3: Appearance предлагает system, light и dark. theme.test.ts проверяет определение системной темы, применение явного выбора и безопасное сохранение. |
 | `PC-13` | READY | ✅ | ✅ | ✅ | 07Nov, main 8ad83e3: Appearance и App.test.tsx проверяют выбор, сохранение через настройки аккаунта и применение цвета интерфейса. |
 | `PC-14` | READY | ✅ | ✅ | ✅ | 07Nov, main 8ad83e3: обе формы вычисляют общий процент по фактическим байтам XHR. directUpload.test.ts, AudioPreparationUpload.test.tsx и App.test.tsx проверяют прогресс и подтверждение результата после сбоя без повторного PUT. |
-| `PC-15` | READY | ✅ | ✅ | ✅ | Восстановлено по code и primary records 2026-09-30: PR #312/e01bc91, CI 35970014222/35970014302, web CD 35970355470 SUCCESS. |
-| `PC-16` | READY | ✅ | ✅ | ✅ | Восстановлено по code и primary records 2026-09-30: PR #312/e01bc91, CI 35970014222/35970014302, web CD 35970355470 SUCCESS. |
+| `PC-15` | IN_PROGRESS | PARTIAL | PARTIAL | PENDING | 27Nov, Chromium, baseline `0178502`: Workbox ищет `/` в precache, где присутствует `/index.html`. Изолированный кандидат исправил fallback и подтвердил контроль страницы и предложение обновления. Исторический PASS: #312/e01bc91, CI 35970014222/35970014302. |
+| `PC-16` | IN_PROGRESS | PARTIAL | PARTIAL | PENDING | 27Nov, Chromium: после ручного применения ожидающего обновления перезагружается только выбравшая его вкладка. Отложенная соседняя вкладка и прямой API-запрос сохраняют собственное поведение. Результат подтверждён на изолированной сборке кандидата, production ещё на предыдущей версии. |
 
 ### `PWA-USER-EXPERIENCE-02`
 
