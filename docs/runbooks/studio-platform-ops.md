@@ -182,6 +182,17 @@ Replace `admin@example.com` with the approved admin email. The admin password is
 
 Health evidence should include only safe status booleans/markers, component names, and revision labels.
 
+### Studio Redis major upgrade
+
+Apply the pinned Redis image in an approved maintenance window. Ordinary component CD leaves the running Redis service in place. Redis contains short-lived rate limits, Relay capability markers and pending enrollments. Durable jobs and enrolled devices use PostgreSQL.
+
+1. Verify the exact deployed Compose revision and project name, a healthy API and PostgreSQL, the current Redis version and image digest, and exclusive use by Studio. Confirm the Redis persistence configuration and record safe aggregate counts of durable jobs. Verify the previous image is available for rollback. Run `compose config --images` and `compose pull redis` before stopping the API.
+2. Verify no conflicting rollout, active Live session or source upload. Stop the Studio API with `compose stop studio-api` and confirm every API instance has stopped. Wait at least 300 seconds from the last stop so that previously issued Yandex Realtime capabilities expire before Redis loses their one-time-use markers. Incomplete enrollments or short-lived requests can be restarted after the window.
+3. Run `compose up -d --no-deps --pull never --force-recreate redis`. Verify exactly one Redis service, its image digest and expected server version, and a successful `PING`. Start the existing API with `compose start studio-api`. Verify readiness, public routing, unchanged PostgreSQL schema and durable job inventory, and healthy worker status. A Redis upgrade does not require an Alembic migration.
+4. If the target does not become healthy or a post-check fails, stop API ingress before rollback. If the API was restarted, confirm every API instance is stopped and wait another 300 seconds before replacing Redis. Prepare a private temporary Compose override containing only the captured previous Redis image digest. Validate the image selection and recreate only Redis with the override and `--no-deps --pull never`. Verify the previous version and `PING` before starting the same API container and repeating the checks. Stop promotion until the gate failure is resolved.
+
+Here `compose` uses `deploy/studio/.env` and `deploy/studio/compose.platform.yml` from the trusted Studio deploy directory. Use the existing Docker host and Compose project throughout. Keep the PostgreSQL volume, CloudKeep schedule and sibling services intact.
+
 ## Backup and migration order
 
 ### Audio quality, progress and provider rollout — 0044
