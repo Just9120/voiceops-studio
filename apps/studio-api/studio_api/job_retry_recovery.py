@@ -117,26 +117,6 @@ def _current_attempt(db: Session, *, job_id, job_source_id, lease_owner_id=None,
         raise RuntimeError("retry_state_scope_conflict")
     return job, rel, row
 
-def prepare_source_attempt(db: Session, *, job_id, job_source_id, lease_owner_id, lease_generation, now: datetime):
-    job=db.get(TranscriptionJob, job_id); rel=db.get(TranscriptionJobSource, job_source_id)
-    if not job or not rel or rel.job_id!=job.id:
-        raise RuntimeError("retry_state_prepare_not_allowed")
-    _require_active_processing(job, lease_owner_id, lease_generation, now)
-    n=int(job.attempt_count or 0)
-    if n < 1:
-        raise RuntimeError("retry_state_invalid_attempt_number")
-    if _has_output(db, rel.id):
-        return None
-    if _has_unresolved_reconciliation(db, rel.id):
-        raise RuntimeError("retry_state_reconciliation_exists")
-    row=db.execute(select(TranscriptionJobSourceAttempt).where(TranscriptionJobSourceAttempt.job_source_id==rel.id, TranscriptionJobSourceAttempt.attempt_number==n)).scalar_one_or_none()
-    if row:
-        if row.owner_user_id!=job.owner_user_id or row.project_id!=job.project_id or row.job_id!=job.id:
-            raise RuntimeError("retry_state_scope_conflict")
-        return row
-    row=TranscriptionJobSourceAttempt(owner_user_id=job.owner_user_id, project_id=job.project_id, job_id=job.id, job_source_id=rel.id, attempt_number=n, stage=Stage.prepared, retry_disposition=Disp.undetermined, created_at=now, updated_at=now)
-    db.add(row); db.flush(); return row
-
 def prepare_current_attempt_sources(db: Session, *, job_id, lease_owner_id, lease_generation, now: datetime):
     job=db.get(TranscriptionJob, job_id)
     if job is None:
@@ -389,9 +369,6 @@ def requires_provider_cost_confirmation(readiness: RetryReadiness) -> bool:
 
 def compute_expired_recovery_readiness(db, job, *, now: datetime):
     return _evaluate(db, job, mode="recovery", now=now)
-
-def compute_retry_readiness(db, job):
-    return compute_explicit_retry_readiness(db, job)
 
 def queue_retry(db, *, owner_user_id, job_id, now):
     job=db.execute(select(TranscriptionJob).where(TranscriptionJob.id==job_id, TranscriptionJob.owner_user_id==owner_user_id).with_for_update()).scalar_one_or_none()

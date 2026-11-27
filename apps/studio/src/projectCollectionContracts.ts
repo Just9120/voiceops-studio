@@ -163,19 +163,6 @@ export function parseJobOutputsResponse(
   };
 }
 
-export async function requestProjectSourceCollection(
-  projectId: string,
-  signal?: AbortSignal,
-): Promise<Source[]> {
-  const candidate = await api<unknown>(`/projects/${projectId}/sources`, {
-    signal,
-    ignoredAbortReason: LATEST_REQUEST_CANCEL_REASON,
-  });
-  const sources = parseProjectSourceCollection(candidate, projectId);
-  if (!sources) throw new Error("invalid_project_source_collection");
-  return sources;
-}
-
 export async function requestProjectSourcePage(
   projectId: string,
   cursor: string | null = null,
@@ -189,19 +176,6 @@ export async function requestProjectSourcePage(
   const page = parseProjectSourcePage(candidate, projectId);
   if (!page) throw new Error("invalid_project_source_page");
   return page;
-}
-
-export async function requestProjectJobCollection(
-  projectId: string,
-  signal?: AbortSignal,
-): Promise<TranscriptionJob[]> {
-  const candidate = await api<unknown>(`/projects/${projectId}/jobs`, {
-    signal,
-    ignoredAbortReason: LATEST_REQUEST_CANCEL_REASON,
-  });
-  const jobs = parseProjectJobCollection(candidate, projectId);
-  if (!jobs) throw new Error("invalid_project_job_collection");
-  return jobs;
 }
 
 export async function requestProjectJobPage(
