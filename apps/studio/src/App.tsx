@@ -42,6 +42,7 @@ import {
 import {
   parsePlatformRoute,
   parseTranscriptionMode,
+  type TranscriptionMode,
   pushTranscriptionMode,
   pushPlatformRoute,
   type Page,
@@ -1594,6 +1595,7 @@ function jobMutationKey(kind: JobMutationKind, jobId: string) {
   return `${kind}:${jobId}`;
 }
 function PreparationPanel({
+  historyOnly,
   project,
   csrf,
   onCsrf,
@@ -1627,6 +1629,7 @@ function PreparationPanel({
   markBatchSubmissionAmbiguous,
   clearBatchSubmission,
 }: {
+  historyOnly: boolean;
   project: Project;
   csrf: string;
   onCsrf: (csrf: string) => void;
@@ -4870,7 +4873,8 @@ function PreparationPanel({
     },
   );
   return (
-    <section className="preparation" aria-label={`Подготовка ${project.title}`}>
+    <section className="preparation" aria-label={historyOnly ? "История задач" : `Подготовка ${project.title}`}>
+      <div className="batch-composer-content" hidden={historyOnly}>
       {detachedGooglePickerPending && (
         <p className="muted" role="status">
           Выбор в Google Drive для этого проекта ещё выполняется. Дождитесь
@@ -6065,6 +6069,7 @@ function PreparationPanel({
           </section>
         )}
         <div className="composer-footer">
+          <a href="#current-transcriptions" className="button-like secondary">Текущие задания</a>
           <div>
             <b>Задач: {rows.length}</b>
             <span>Будет создано транскрибаций: {plannedJobCount}</span>
@@ -6114,6 +6119,7 @@ function PreparationPanel({
           </button>
         </section>
       )}
+      </div>
       {visibleJobMutationNotices.map((notice) => (
         <p
           key={jobMutationKey(notice.kind, notice.jobId)}
@@ -6132,6 +6138,7 @@ function PreparationPanel({
       <section
         id="current-transcriptions"
         className="sources"
+        hidden={historyOnly}
         aria-label="Текущие транскрибации"
       >
         <h2>Текущие транскрибации</h2>
@@ -6151,7 +6158,7 @@ function PreparationPanel({
         {currentTranscriptions.map(renderTranscriptionPresentation)}
         {pinnedTerminalTranscriptions.map(renderTranscriptionPresentation)}
       </section>
-      <details className="recent-jobs history-transcriptions">
+      <details className="recent-jobs history-transcriptions" open={historyOnly || undefined}>
         <summary id="history-results" ref={historySummaryRef}>Недавние транскрибации · {recentTranscriptions.length}</summary>
         {historyClearMessage && (
           <p role="status" className={historyClearOpen ? "error" : "notice"}>
@@ -6267,7 +6274,7 @@ function PreparationPanel({
           </section>
         )}
       </details>{" "}
-      {localFolderPreview && (
+      {!historyOnly && localFolderPreview && (
         <FolderImportDialog
           preview={localFolderPreview.preview}
           targetFolderName={
@@ -6290,7 +6297,7 @@ function PreparationPanel({
           onCancel={() => setLocalFolderPreview(null)}
         />
       )}
-      {driveFolderPreview && (
+      {!historyOnly && driveFolderPreview && (
         <FolderImportDialog
           preview={{
             folder_name: driveFolderPreview.preview.folder.name,
@@ -6690,6 +6697,14 @@ function OverviewPage({
   );
 }
 
+const transcriptionSections = [
+  { id: "batch", label: "Обычная", accessibleName: "Обычная транскрибация", title: "Новая транскрибация", intro: "Выберите запись или фрагмент, проверьте план и место сохранения." },
+  { id: "live", label: "Live", accessibleName: "Live-транскрибация", title: "Live-транскрибация", intro: "Выберите источник звука и профиль распознавания." },
+  { id: "history", label: "История", accessibleName: "История", title: "История транскрибаций", intro: "Найдите завершённую задачу или проверьте её результат." },
+  { id: "maintenance", label: "Документы", accessibleName: "Документы", title: "Документы", intro: "Проверьте результаты и выполните обслуживание каталога." },
+] as const;
+const transcriptionSectionIds = transcriptionSections.map(({ id }) => id);
+
 function ProjectsPage({
   active,
   ownerUserId,
@@ -6738,9 +6753,8 @@ function ProjectsPage({
   const [googlePickerNotices, setGooglePickerNotices] = useState<
     Record<string, GooglePickerNotice>
   >({});
-  const [transcriptionMode, setTranscriptionMode] = useState<
-    "batch" | "live" | "maintenance"
-  >(parseTranscriptionMode);
+  const [transcriptionMode, setTranscriptionMode] =
+    useState<TranscriptionMode>(parseTranscriptionMode);
   const [liveTranscripts, setLiveTranscripts] = useState<
     Record<string, string[]>
   >({});
@@ -7195,7 +7209,7 @@ function ProjectsPage({
     if (!becameActive || !selectedProject) return;
     loadSources(selectedProject.id);
   }, [active, selectedProject?.id]);
-  const selectTranscriptionMode = (mode: "batch" | "live" | "maintenance") => {
+  const selectTranscriptionMode = (mode: TranscriptionMode) => {
     setTranscriptionMode(mode);
     pushTranscriptionMode(mode);
   };
@@ -7223,16 +7237,13 @@ function ProjectsPage({
     selectTranscriptionMode(requestedTranscriptionMode);
     onRequestedTranscriptionModeHandled();
   }, [requestedTranscriptionMode, selectedProject?.id]);
+  const section = transcriptionSections.find(({ id }) => id === transcriptionMode) ?? transcriptionSections[0];
+  const tasksView = transcriptionMode === "history" ? "history" : "batch";
   return (
     <section className="page transcriptions-page">
-      <header className="page-header">
-        <div>
-          <h1 className="page-title">Транскрибации</h1>
-          <p>
-            Обычная обработка файлов и Live-транскрибация находятся в одном
-            рабочем пространстве.
-          </p>
-        </div>
+      <header className="workspace-heading">
+        <h1 className="page-title">{section.title}</h1>
+        <p>{section.intro}</p>
       </header>
       {loading && <p role="status">Подготавливаем транскрибации…</p>}
       {error && (
@@ -7292,79 +7303,38 @@ function ProjectsPage({
         </details>
       )}
       {!loading && !error && selectedProject ? (
-        <article className="card workspace-card">
+        <article className="workspace-card">
           {projects.length > 1 && (
             <p className="workspace-context muted">
               Открыта прежняя рабочая область: {selectedProject.title}
             </p>
           )}
-          <div
-            className="tabs transcription-mode-tabs"
-            role="tablist"
-            aria-label="Рабочие разделы транскрибации"
-          >
-                <button
-                  id="transcription-tab-batch"
-                  type="button"
-                  role="tab"
-                  aria-controls="transcription-panel-batch"
-                  aria-selected={transcriptionMode === "batch"}
-                  tabIndex={transcriptionMode === "batch" ? 0 : -1}
-                  onClick={() => selectTranscriptionMode("batch")}
-                  onKeyDown={(event) =>
-                    navigateTabList(
-                      event,
-                      ["batch", "live", "maintenance"] as const,
-                      selectTranscriptionMode,
-                    )
-                  }
-                >
-                  Обычная транскрибация
-                </button>
-                <button
-                  id="transcription-tab-live"
-                  type="button"
-                  role="tab"
-                  aria-controls="transcription-panel-live"
-                  aria-selected={transcriptionMode === "live"}
-                  tabIndex={transcriptionMode === "live" ? 0 : -1}
-                  onClick={() => selectTranscriptionMode("live")}
-                  onKeyDown={(event) =>
-                    navigateTabList(
-                      event,
-                      ["batch", "live", "maintenance"] as const,
-                      selectTranscriptionMode,
-                    )
-                  }
-                >
-                  Live-транскрибация
-                </button>
-                <button
-                  id="transcription-tab-maintenance"
-                  type="button"
-                  role="tab"
-                  aria-controls="transcription-panel-maintenance"
-                  aria-selected={transcriptionMode === "maintenance"}
-                  tabIndex={transcriptionMode === "maintenance" ? 0 : -1}
-                  onClick={() => selectTranscriptionMode("maintenance")}
-                  onKeyDown={(event) =>
-                    navigateTabList(
-                      event,
-                      ["batch", "live", "maintenance"] as const,
-                      selectTranscriptionMode,
-                    )
-                  }
-                >
-                  Обслуживание
-                </button>
-              </div>
+          <div className="tabs transcription-mode-tabs" role="tablist" aria-label="Рабочие разделы транскрибации">
+            {transcriptionSections.map(({ id, label, accessibleName }) => (
+              <button
+                id={`transcription-tab-${id}`}
+                key={id}
+                type="button"
+                role="tab"
+                aria-label={accessibleName}
+                aria-controls={`transcription-panel-${id}`}
+                aria-selected={transcriptionMode === id}
+                tabIndex={transcriptionMode === id ? 0 : -1}
+                onClick={() => selectTranscriptionMode(id)}
+                onKeyDown={(event) => navigateTabList(event, transcriptionSectionIds, selectTranscriptionMode)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
               <div
-                id="transcription-panel-batch"
+                id={`transcription-panel-${tasksView}`}
                 role="tabpanel"
-                aria-labelledby="transcription-tab-batch"
-                hidden={transcriptionMode !== "batch"}
+                aria-labelledby={`transcription-tab-${tasksView}`}
+                hidden={transcriptionMode !== "batch" && transcriptionMode !== "history"}
               >
                 <PreparationPanel
+                  historyOnly={transcriptionMode === "history"}
                   key={selectedProject.id}
                   project={selectedProject}
                   csrf={csrf}
@@ -7427,6 +7397,7 @@ function ProjectsPage({
                   csrf={csrf}
                   onCsrf={onCsrf}
                   active={active && transcriptionMode === "live"}
+                  onOpenBatch={() => selectTranscriptionMode("batch")}
                   initialSegments={liveTranscripts[selectedProject.id] ?? []}
                   onSegmentsChange={(segments) =>
                     setLiveTranscripts((current) => ({
@@ -10998,6 +10969,7 @@ function PlatformShell() {
             }}
             onOpenTranscriptions={() => {
               setRequestedProjectId(null);
+              setRequestedTranscriptionMode("batch");
               navigate("projects");
             }}
           />

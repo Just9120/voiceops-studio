@@ -7,11 +7,11 @@ export type SettingsSection =
   | "appearance"
   | "diagnostics";
 export type PlatformRoute = { page: Page; settingsSection: SettingsSection };
-export type TranscriptionMode = "batch" | "live" | "maintenance";
+export type TranscriptionMode = "batch" | "live" | "history" | "maintenance";
 
 export function parseTranscriptionMode(search = window.location.search): TranscriptionMode {
   const mode = new URLSearchParams(search).get("mode");
-  return mode === "live" || mode === "maintenance" ? mode : "batch";
+  return mode === "live" || mode === "history" || mode === "maintenance" ? mode : "batch";
 }
 
 export function pushTranscriptionMode(mode: TranscriptionMode, replace = false) {

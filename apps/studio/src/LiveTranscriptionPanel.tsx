@@ -62,6 +62,7 @@ type Props = {
   active: boolean;
   initialSegments?: string[];
   onSegmentsChange?: (segments: string[]) => void;
+  onOpenBatch?: () => void;
 };
 
 const STATUS_LABELS: Omit<Record<RealtimeSessionStatus, string>, "connecting"> = {
@@ -148,6 +149,7 @@ export function LiveTranscriptionPanel({
   active,
   initialSegments = [],
   onSegmentsChange,
+  onOpenBatch,
 }: Props) {
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [provider, setProvider] = useState<"elevenlabs" | "yandex">(
@@ -1246,10 +1248,8 @@ export function LiveTranscriptionPanel({
         </section>
       )}
 
-      <RealtimeSessionHistory ownerUserId={ownerUserId} projectId={projectId} disabled={running || preparingStart}
-        currentDraft={draftRef.current} refreshKey={historyVersion} onOpen={openSavedSession} />
-
-      <div className="live-config-grid">
+      <div className="live-settings-workspace">
+        <div className="live-config-grid">
         <section className="live-config-card">
           <h3>Источники звука</h3>
           <label className="check-row">
@@ -1470,21 +1470,18 @@ export function LiveTranscriptionPanel({
               VAD.
             </p>
           </details>
-          <div className="actions">
-            <button
-              className="primary"
-              type="button"
-              disabled={startDisabled}
-              ref={startButtonRef}
-              onClick={() => void start()}
-            >
-              Начать
-            </button>
-            <button ref={stopButtonRef} type="button" disabled={!running || clearPending} onClick={stop}>
-              Остановить
-            </button>
-          </div>
         </section>
+        </div>
+        <aside className="live-settings-history" aria-label="Сохранённые Live-сессии">
+          <RealtimeSessionHistory
+            ownerUserId={ownerUserId}
+            projectId={projectId}
+            disabled={running || preparingStart}
+            currentDraft={draftRef.current}
+            refreshKey={historyVersion}
+            onOpen={openSavedSession}
+          />
+        </aside>
       </div>
 
       <details className="live-config-card realtime-consumers" onToggle={(event) => setConsumersOpen(event.currentTarget.open)}>
@@ -1723,6 +1720,15 @@ export function LiveTranscriptionPanel({
           </li>
         </ul>
       </details>
+      <footer className="workspace-action-bar live-actions">
+        {onOpenBatch && <button type="button" onClick={onOpenBatch}>Обычная транскрибация</button>}
+        <button className="primary" type="button" disabled={startDisabled} ref={startButtonRef} onClick={() => void start()}>
+          Начать
+        </button>
+        <button className="danger" ref={stopButtonRef} type="button" disabled={!running || clearPending} onClick={stop}>
+          Остановить
+        </button>
+      </footer>
     </section>
   );
 }

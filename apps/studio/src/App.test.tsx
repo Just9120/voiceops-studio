@@ -848,7 +848,7 @@ async function openPlatformNavPage(
 async function openProjectsPage() {
   await openPlatformNavPage("Транскрибации");
   expect(
-    await screen.findByRole("heading", { name: "Транскрибации" }),
+    await screen.findByRole("heading", { name: "Новая транскрибация" }),
   ).toBeInTheDocument();
 }
 
@@ -3246,7 +3246,7 @@ describe("Studio PWA", () => {
     );
 
     expect(
-      await screen.findByRole("heading", { name: "Транскрибации" }),
+      await screen.findByRole("heading", { name: "Новая транскрибация" }),
     ).toBeInTheDocument();
     expect(window.location.pathname).toBe("/transcriptions");
     expect(
@@ -3261,6 +3261,20 @@ describe("Studio PWA", () => {
     expect(
       screen.queryByRole("button", { name: "Архивировать" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("opens history at its own URL and returns to the mounted batch composer", async () => {
+    renderApp();
+    await openSelectedProjectJobs();
+    const composer = screen.getByRole("form", { name: "Композитор пакетных задач" });
+    await userEvent.click(screen.getByRole("tab", { name: "История" }));
+    expect(window.location.search).toBe("?mode=history");
+    expect(screen.getByRole("heading", { name: "История транскрибаций", level: 1 })).toBeVisible();
+    expect(screen.getByRole("tabpanel", { name: "История" })).toBeVisible();
+    expect(composer).not.toBeVisible();
+    await userEvent.click(screen.getByRole("tab", { name: "Обычная транскрибация" }));
+    expect(window.location.search).toBe("");
+    expect(composer).toBeVisible();
   });
 
   it("opens audio preparation from the dashboard", async () => {
@@ -3845,7 +3859,7 @@ describe("Studio PWA", () => {
     await openProjectsPage();
 
     await userEvent.click(
-      screen.getByRole("tab", { name: "Обслуживание" }),
+      screen.getByRole("tab", { name: "Документы" }),
     );
 
     expect(
@@ -3860,7 +3874,7 @@ describe("Studio PWA", () => {
       screen.getByRole("heading", { name: "Учесть готовые документы в Studio" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("tab", { name: "Обслуживание" }),
+      screen.getByRole("tab", { name: "Документы" }),
     ).toHaveAttribute("aria-selected", "true");
   });
 
@@ -5288,7 +5302,7 @@ describe("Studio PWA", () => {
     });
 
     expect(
-      await screen.findByRole("heading", { name: "Транскрибации" }),
+      await screen.findByRole("heading", { name: "Новая транскрибация" }),
     ).toBeInTheDocument();
     await waitFor(() => expect(
       screen.getByLabelText("Существующий файл для задачи 1"),
@@ -14712,7 +14726,7 @@ describe("settings diagnostics", () => {
       screen.getByRole("button", { name: "Транскрибации" }),
     );
     expect(
-      await screen.findByRole("heading", { name: "Транскрибации" }),
+      await screen.findByRole("heading", { name: "Новая транскрибация" }),
     ).toBeInTheDocument();
     expect(window.location.pathname).toBe("/transcriptions");
     await userEvent.click(screen.getByRole("button", { name: "Настройки" }));
@@ -14755,7 +14769,7 @@ describe("settings diagnostics", () => {
     window.history.replaceState({}, "", "/projects");
     renderApp();
     expect(
-      await screen.findByRole("heading", { name: "Транскрибации" }),
+      await screen.findByRole("heading", { name: "Новая транскрибация" }),
     ).toBeInTheDocument();
     cleanup();
 

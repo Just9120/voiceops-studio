@@ -987,13 +987,41 @@ code {
 .tab-panel {
   padding-top: 0.5rem;
 }
+.transcriptions-page {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.batch-composer-content:not([hidden]) {
+  display: contents;
+}
+.preparation .sources[hidden] {
+  display: none;
+}
 .transcription-mode-tabs {
-  margin-top: 1.25rem;
-  scroll-snap-type: x proximity;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0 0 12px;
+  padding: 4px;
+  border: 1px solid var(--studio-border);
+  border-radius: 7px;
+  background: var(--studio-soft);
 }
 .transcription-mode-tabs button {
-  flex: 1 1 12rem;
-  scroll-snap-align: start;
+  border-radius: 6px;
+  border: 0;
+  min-width: 0;
+  padding-inline: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: normal;
+}
+.transcription-mode-tabs button[aria-selected="true"] {
+  background: var(--studio-active-bg);
+  text-decoration: underline;
+  text-underline-offset: .35em;
+  text-decoration-thickness: 2px;
 }
 .live-transcription {
   display: grid;
@@ -1026,10 +1054,34 @@ code {
   background: var(--studio-success-bg);
   color: var(--studio-success-text);
 }
+.live-settings-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+}
 .live-config-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+.live-settings-workspace .live-config-card {
+  border-radius: 10px;
+  background: var(--studio-surface);
+}
+@media (max-width: 900px) {
+  .live-settings-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 480px) {
+  .workspace-action-bar.live-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .live-actions > button:first-child:nth-last-child(3) {
+    grid-column: 1 / -1;
+  }
 }
 .live-config-card,
 .live-transcript-card {
@@ -2139,8 +2191,8 @@ button.studio-appearance-option[aria-pressed="true"] {
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 10px var(--studio-workspace-inset);
-  margin-inline: calc(0px - var(--studio-workspace-inset));
+  padding: 10px var(--studio-workspace-inset, 12px);
+  margin-inline: calc(0px - var(--studio-workspace-inset, 0px));
   background: var(--studio-surface);
   border-top: 1px solid var(--studio-border);
 }
@@ -2327,16 +2379,6 @@ button.studio-appearance-option[aria-pressed="true"] {
   }
   .meta dd + dt {
     margin-top: 0.65rem;
-  }
-  .transcription-mode-tabs {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    overflow: visible;
-  }
-  .transcription-mode-tabs button {
-    min-width: 0;
-    padding-inline: 0.5rem;
-    white-space: normal;
   }
   .multi-transcription-header {
     flex-direction: column;

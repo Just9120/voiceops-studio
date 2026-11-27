@@ -12,7 +12,7 @@ export function PlatformTopbar({ page }: { page: Page }) {
   return (
     <header className="app-topbar">
       <span>{platformNav.find(({ id }) => id === page)?.label}</span>
-      <span className="app-personal-badge">Personal</span>
+      <span className="app-personal-badge">{page === "projects" ? "Личное пространство" : "Personal"}</span>
     </header>
   );
 }
