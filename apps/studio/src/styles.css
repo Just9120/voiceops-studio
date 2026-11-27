@@ -2185,6 +2185,7 @@ button.studio-appearance-option[aria-pressed="true"] {
 }
 .settings-landing-entry {
   display: grid;
+  justify-content: start;
   justify-items: start;
   gap: 4px;
   text-align: start;
@@ -2226,6 +2227,7 @@ button.studio-appearance-option[aria-pressed="true"] {
 }
 .action-menu { position: relative; display: inline-flex; }
 .history-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: .75rem; margin: .75rem 0; }
+.history-filters :is(input, select) { width: 100%; }
 .action-menu-trigger { min-width: 44px; min-height: 44px; font-size: 1.5rem; padding: .25rem .65rem; }
 .action-menu-items { position: absolute; right: 0; top: calc(100% + .25rem); z-index: 20; display: grid; width: min(280px, calc(100vw - 2rem)); padding: .35rem; border: 1px solid var(--studio-border); border-radius: 12px; background: var(--studio-surface); box-shadow: 0 8px 24px #0004; }
 .action-menu-items > * { min-height: 44px; width: 100%; padding: .6rem .75rem; text-align: left; white-space: normal; box-sizing: border-box; }
