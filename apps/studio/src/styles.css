@@ -3503,6 +3503,55 @@ button.studio-appearance-option[aria-pressed="true"] {
 }
 /* Keep the zoomed timeline inside its editor, including on touch viewports. */
 .audio-trim-editor { min-width: 0; margin-block: 1rem; }
+.audio-trim-workbench,
+.audio-trim-main,
+.audio-trim-settings,
+.audio-trim-boundaries {
+  display: grid;
+  align-items: start;
+  min-width: 0;
+  gap: 12px;
+}
+.audio-trim-boundaries {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.audio-trim-main label,
+.audio-trim-settings label {
+  display: grid;
+  gap: 4px;
+}
+.audio-trim-settings {
+  padding: 12px;
+  border: 1px solid var(--studio-border);
+  border-radius: 10px;
+  background: var(--studio-soft);
+}
+.audio-trim-main p,
+.audio-trim-settings p {
+  margin: 0;
+}
+.audio-waveform-caption,
+.audio-waveform-ticks {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 12px;
+  background: #13243c;
+  color: #eff4ff;
+  font-size: 13px;
+}
+.audio-waveform-caption {
+  border-radius: 8px 8px 0 0;
+}
+.audio-waveform-ticks {
+  border-radius: 0 0 8px 8px;
+  font-variant-numeric: tabular-nums;
+}
+@media (min-width: 1050px) {
+  .audio-trim-workbench {
+    grid-template-columns: minmax(0, 1fr) minmax(164px, 230px);
+  }
+}
 .audio-trim-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior: contain; }
 .audio-trim-scroll input[type="range"] { width: 100%; min-height: 44px; }
 .audio-trim-scroll .audio-waveform { min-width: 0; }

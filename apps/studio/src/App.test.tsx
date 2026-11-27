@@ -1758,7 +1758,7 @@ describe("Studio PWA", () => {
     });
     renderApp();
     await openSelectedProjectJobs();
-    await userEvent.click(screen.getByRole("tab",{name:"Обслуживание",exact:true}));
+    await userEvent.click(screen.getByRole("tab",{name:"Документы",exact:true}));
     await userEvent.click(await screen.findByRole("button",{name:"Настроить доступ Google",exact:true}));
     const panel=document.getElementById("google-maintenance-access") as HTMLDetailsElement;
     await waitFor(() => expect(panel.open).toBe(true));
@@ -3841,7 +3841,7 @@ describe("Studio PWA", () => {
         name: "Привести документы к текущему формату",
       }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText(/Транскрибации → Обслуживание/)).toBeInTheDocument();
+    expect(screen.getByText(/Транскрибации → Документы/)).toBeInTheDocument();
     expect(screen.getByText(/••••1234/)).toBeInTheDocument();
     expect(window.localStorage.length).toBe(0);
     expectOnlySafeFormDrafts();

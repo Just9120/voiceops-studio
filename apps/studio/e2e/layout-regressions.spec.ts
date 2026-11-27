@@ -152,18 +152,18 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
     await page.goto('/audio');
     const editor=page.getByRole('group',{name:'Обрезка аудио'});
     await expect(editor).toBeVisible();
-    await editor.getByLabel('Начало, секунд',{exact:true}).fill('600');
-    await editor.getByLabel('Конец, секунд',{exact:true}).fill('5400');
+    await editor.getByLabel('Начало',{exact:true}).fill('600');
+    await editor.getByLabel('Конец',{exact:true}).fill('5400');
     await editor.getByLabel('Масштаб шкалы').selectOption('4');
     await editor.getByRole('slider',{name:'Конец выделения',exact:true}).focus();
     await page.keyboard.press('ArrowLeft');
-    await expect(editor.getByLabel('Конец, секунд',{exact:true})).toHaveValue('5399.99');
+    await expect(editor.getByLabel('Конец',{exact:true})).toHaveValue('01:29:59.99');
     await noHorizontalOverflow(page);
     await editor.getByRole('button',{name:'Применить границы',exact:true}).click();
     expect(requests).toEqual([{start_seconds:600,end_seconds:5399.99,output_format:'wav'}]);
     await page.reload();
-    await expect(editor.getByLabel('Начало, секунд',{exact:true})).toHaveValue('600');
-    await expect(editor.getByLabel('Конец, секунд',{exact:true})).toHaveValue('5399.99');
+    await expect(editor.getByLabel('Начало',{exact:true})).toHaveValue('00:10:00');
+    await expect(editor.getByLabel('Конец',{exact:true})).toHaveValue('01:29:59.99');
     await noHorizontalOverflow(page);
   });
 }
