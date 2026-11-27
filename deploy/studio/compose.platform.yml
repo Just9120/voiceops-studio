@@ -398,7 +398,7 @@ services:
       timeout: 5s
       retries: 5
   redis:
-    image: redis:7-alpine
+    image: redis:8.12.0-alpine@sha256:bf33e63600ae8240c9f8b553c8fae427550dae17042bc24b06bbe06d3057c9bc
     restart: unless-stopped
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     networks: [studio-api-cache]
