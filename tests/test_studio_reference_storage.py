@@ -156,6 +156,24 @@ def test_reference_class_migration_is_additive_repository_head():
     assert "create_index" in source
 
 
+def test_obs_single_put_signs_an_exact_non_overwriting_object():
+    import boto3
+    from botocore.config import Config
+    from urllib.parse import parse_qs, urlsplit
+    from studio_api.source_storage import S3SourceStorage
+
+    storage = object.__new__(S3SourceStorage)
+    storage.bucket = "private"
+    storage.client = boto3.client(
+        "s3", endpoint_url="https://synthetic.r2.cloudflarestorage.com", region_name="auto",
+        aws_access_key_id="synthetic", aws_secret_access_key="synthetic", config=Config(signature_version="s3v4"),
+    )
+    url = storage.presigned_create_url("synthetic/key", "audio/flac", 300, 4096, "AHh4eHh4eHh4eHh4eHh4eA==")
+    signed = parse_qs(urlsplit(url).query)
+    assert signed["X-Amz-Expires"] == ["300"]
+    assert signed["X-Amz-SignedHeaders"] == ["content-length;content-md5;content-type;host;if-none-match"]
+
+
 def test_s3_storage_multipart_and_verified_delete_are_bounded():
     from botocore.exceptions import ClientError
     from studio_api.source_storage import S3SourceStorage

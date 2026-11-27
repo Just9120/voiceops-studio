@@ -5356,7 +5356,7 @@ app.include_router(build_obs_binding_router(recent_auth=require_recent_auth, lim
 
 class ObsUploadIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    filename: str = Field(min_length=6, max_length=255)
+    filename: str = Field(min_length=6, max_length=260)
     size_bytes: StrictInt = Field(gt=0, le=512 * 1024 * 1024)
     content_md5: str = Field(pattern=r"^[A-Za-z0-9+/]{21}[AQgw]==$")
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -5414,8 +5414,11 @@ def initiate_obs_import(
     if source.upload_status != SourceUploadStatus.pending or source.s3_bucket != bucket:
         raise HTTPException(409, "Состояние импорта OBS изменилось")
     # A conditional signed creation cannot replace the audio after completion.
+    expires_in = min(settings.source_presign_ttl_seconds, int((source.expires_at - now).total_seconds()))
+    if expires_in < 1:
+        raise HTTPException(409, "Срок подготовки импорта истёк. Повторите импорт.")
     url = get_reference_storage(settings, reference_class).presigned_create_url(
-        source.s3_object_key, mime, settings.source_presign_ttl_seconds, data.size_bytes, draft.content_md5,
+        source.s3_object_key, mime, expires_in, data.size_bytes, draft.content_md5,
     )
     db.commit()
     return {
