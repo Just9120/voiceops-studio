@@ -4836,7 +4836,7 @@ describe("Studio PWA", () => {
     await userEvent.click(screen.getByRole("tab", { name: "Аккаунт" }));
     await userEvent.click(screen.getByRole("button", { name: "Выйти" }));
     expect(
-      await screen.findByRole("heading", { name: "Вход" }),
+      await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" }),
     ).toBeInTheDocument();
 
     const successfulResponse = await json(googleOauthStartFixture());
@@ -11437,7 +11437,7 @@ describe("Studio PWA", () => {
     renderApp();
     expect(screen.getByRole("status")).toHaveTextContent("Проверяем сессию…");
     expect(
-      screen.queryByRole("heading", { name: "Вход" }),
+      screen.queryByRole("heading", { name: "Вход в VoiceOps Studio" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Email")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Пароль")).not.toBeInTheDocument();
@@ -11485,7 +11485,7 @@ describe("Studio PWA", () => {
       return json({ csrf_token: "csrf-after-refresh" });
     });
     renderApp();
-    await screen.findByRole("heading", { name: "Вход" });
+    await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" });
     await userEvent.type(screen.getByLabelText("Email"), "user@example.com");
     await userEvent.type(screen.getByLabelText("Пароль"), "password-long");
     await userEvent.click(screen.getByRole("button", { name: "Войти" }));
@@ -11494,7 +11494,7 @@ describe("Studio PWA", () => {
     await openSettingsPage();
     await userEvent.click(await screen.findByRole("button", { name: "Выйти" }));
     expect(
-      await screen.findByRole("heading", { name: "Вход" }),
+      await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" }),
     ).toBeInTheDocument();
     expect(window.location.pathname).toBe("/");
 
@@ -11527,7 +11527,7 @@ describe("Studio PWA", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: "Вход" }),
+      screen.queryByRole("heading", { name: "Вход в VoiceOps Studio" }),
     ).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Повторить" }));
     await waitForPlatformOverview();
@@ -11595,7 +11595,7 @@ describe("Studio PWA", () => {
       expect(sessionSignals).toHaveLength(1);
       expect(sessionSignals[0]?.aborted).toBe(true);
       expect(
-        screen.queryByRole("heading", { name: "Вход" }),
+        screen.queryByRole("heading", { name: "Вход в VoiceOps Studio" }),
       ).not.toBeInTheDocument();
 
       await userEvent.click(screen.getByRole("button", { name: "Повторить" }));
@@ -11659,7 +11659,7 @@ describe("Studio PWA", () => {
     expect(document.body.textContent).not.toContain("raw-session-role");
     expect(document.body.textContent).not.toContain("raw-session-secret");
     expect(
-      screen.queryByRole("heading", { name: "Вход" }),
+      screen.queryByRole("heading", { name: "Вход в VoiceOps Studio" }),
     ).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Повторить" }));
@@ -11738,7 +11738,7 @@ describe("Studio PWA", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Выйти" }));
     expect(
-      await screen.findByRole("heading", { name: "Вход" }),
+      await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" }),
     ).toBeInTheDocument();
     expect(document.body.textContent).not.toContain("older@example.com");
   });
@@ -11812,7 +11812,7 @@ describe("Studio PWA", () => {
 
       await userEvent.click(screen.getByRole("button", { name: "Выйти" }));
       expect(
-        await screen.findByRole("heading", { name: "Вход" }),
+        await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" }),
       ).toBeInTheDocument();
       expect(logoutCalls).toBe(2);
       expect(logoutTokens).toEqual(["csrf-initial", "csrf-reconciled"]);
@@ -11855,7 +11855,7 @@ describe("Studio PWA", () => {
     await userEvent.click(screen.getByRole("button", { name: "Выйти" }));
 
     expect(
-      await screen.findByRole("heading", { name: "Вход" }),
+      await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" }),
     ).toBeInTheDocument();
     expect(logoutCalls).toBe(1);
     expect(sessionReads).toBe(2);

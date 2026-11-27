@@ -246,7 +246,6 @@ export function Login({
           </>
         ) : (
           <form className="card login studio-login-card" onSubmit={submit}>
-            <h2>{secondFactorRequired ? (recoveryCodeMode ? "Подтверждение доступа" : "Одноразовый код") : "Вход"}</h2>
             <div className="studio-login-fields" hidden={secondFactorRequired}>
               <label>
                 Email

@@ -27,7 +27,7 @@ async function login(page: Page) {
     await page.context().addCookies(sharedSessionCookies);
     await page.reload();
   } else {
-    await expect(page.getByRole('heading', { name: 'Вход' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Вход в VoiceOps Studio', exact: true })).toBeVisible();
     await page.getByLabel('Email').fill(E2E_EMAIL);
     await page.getByLabel('Пароль').fill(E2E_PASSWORD);
     await page.getByRole('button', { name: 'Войти' }).click();
@@ -226,7 +226,7 @@ test('authenticated user opens transcriptions and reads a completed job result',
   await page.getByRole('tab', { name: 'Аккаунт' }).click();
   await page.getByRole('button', { name: 'Выйти' }).click();
   sharedSessionCookies = null;
-  await expect(page.getByRole('heading', { name: 'Вход' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Вход в VoiceOps Studio', exact: true })).toBeVisible();
 });
 
 test('mobile Drive dialog stays inside the viewport and locks page scrolling', async ({
@@ -352,7 +352,7 @@ test('account settings revoke selected and all other active sessions', async ({
       secondaryContexts.map(async (context) => {
         const secondary = await context.newPage();
         await secondary.goto('/');
-        await expect(secondary.getByRole('heading', { name: 'Вход' })).toBeVisible();
+        await expect(secondary.getByRole('heading', { name: 'Вход в VoiceOps Studio', exact: true })).toBeVisible();
         await secondary.getByLabel('Email').fill(E2E_EMAIL);
         await secondary.getByLabel('Пароль').fill(E2E_PASSWORD);
         await secondary.getByRole('button', { name: 'Войти' }).click();
@@ -405,7 +405,7 @@ test('account settings revoke selected and all other active sessions', async ({
 
     for (const secondary of secondaryPages) {
       await secondary.reload();
-      await expect(secondary.getByRole('heading', { name: 'Вход' })).toBeVisible();
+      await expect(secondary.getByRole('heading', { name: 'Вход в VoiceOps Studio', exact: true })).toBeVisible();
     }
   } finally {
     await Promise.all(secondaryContexts.map((context) => context.close()));

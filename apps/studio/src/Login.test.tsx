@@ -61,7 +61,7 @@ describe("Login auth boundary", () => {
         "Проверяем готовность входа",
       );
       expect(
-        screen.queryByRole("heading", { name: "Вход" }),
+        screen.queryByRole("heading", { name: "Вход в VoiceOps Studio" }),
       ).not.toBeInTheDocument();
 
       expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -79,7 +79,7 @@ describe("Login auth boundary", () => {
 
       await userEvent.click(screen.getByRole("button", { name: "Повторить" }));
       expect(
-        await screen.findByRole("heading", { name: "Вход" }),
+        await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" }),
       ).toBeInTheDocument();
       expect(bootstrapReads).toBe(3);
       expect(screen.queryByRole("button", { name: "Забыли пароль?" })).not.toBeInTheDocument();
@@ -161,7 +161,7 @@ describe("Login auth boundary", () => {
 
     try {
       const { container } = render(<Login onLogin={onLogin} />);
-      await screen.findByRole("heading", { name: "Вход" });
+      await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" });
       await userEvent.type(screen.getByLabelText("Email"), "user@example.com");
       await userEvent.type(screen.getByLabelText("Пароль"), "password-long");
       const form = container.querySelector("form");
@@ -241,7 +241,7 @@ describe("Login auth boundary", () => {
     );
 
     const { container } = render(<Login onLogin={onLogin} />);
-    await screen.findByRole("heading", { name: "Вход" });
+    await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" });
     await userEvent.type(screen.getByLabelText("Email"), "user@example.com");
     await userEvent.type(screen.getByLabelText("Пароль"), "password-long");
     const form = container.querySelector("form");
@@ -297,7 +297,7 @@ describe("Login auth boundary", () => {
     );
 
     const { unmount } = render(<Login onLogin={onLogin} />);
-    await screen.findByRole("heading", { name: "Вход" });
+    await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" });
     await userEvent.type(screen.getByLabelText("Email"), "user@example.com");
     await userEvent.type(screen.getByLabelText("Пароль"), "password-long");
     await userEvent.click(screen.getByRole("button", { name: "Войти" }));
@@ -356,7 +356,7 @@ describe("Login auth boundary", () => {
     );
 
     render(<Login onLogin={onLogin} />);
-    await screen.findByRole("heading", { name: "Вход" });
+    await screen.findByRole("heading", { name: "Вход в VoiceOps Studio" });
     await userEvent.type(screen.getByLabelText("Email"), "user@example.com");
     await userEvent.type(screen.getByLabelText("Пароль"), "password-long");
     await userEvent.click(screen.getByRole("button", { name: "Войти" }));
