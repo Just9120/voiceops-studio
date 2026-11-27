@@ -188,6 +188,21 @@ class S3SourceStorage:
             ExpiresIn=expires_seconds,
         )
 
+    def presigned_create_url(self, key: str, content_type: str, expires_seconds: int,
+                             size_bytes: int, content_md5: str) -> str:
+        return self.client.generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket": self.bucket,
+                "Key": key,
+                "ContentType": content_type,
+                "ContentLength": size_bytes,
+                "ContentMD5": content_md5,
+                "IfNoneMatch": "*",
+            },
+            ExpiresIn=expires_seconds,
+        )
+
     def create_multipart_upload(self, key: str, content_type: str) -> str:
         result = self.client.create_multipart_upload(
             Bucket=self.bucket,

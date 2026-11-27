@@ -49,7 +49,7 @@ def test_additive_audio_diagnostics_migration_preserves_legacy_events(monkeypatc
     cfg.set_main_option("script_location", str(ROOT / "apps/studio-api/alembic"))
     scripts = ScriptDirectory.from_config(cfg)
     revision = scripts.get_revision("0039_audio_diagnostics")
-    assert scripts.get_heads() == ["0046_local_model_revision"]
+    assert scripts.get_heads() == ["0047_obs_import"]
     assert revision.down_revision == "0038_trusted_devices"
     assert revision.module.release_safety == "additive"
     engine = create_engine("sqlite+pysqlite:///:memory:")

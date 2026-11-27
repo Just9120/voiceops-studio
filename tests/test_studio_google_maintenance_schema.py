@@ -36,8 +36,8 @@ def test_google_maintenance_grant_has_separate_encrypted_columns(
 def test_google_maintenance_oauth_migration_precedes_current_head():
     script = ScriptDirectory.from_config(Config(str(ALEMBIC)))
 
-    assert script.get_heads() == ["0046_local_model_revision"]
-    assert script.get_current_head() == "0046_local_model_revision"
+    assert script.get_heads() == ["0047_obs_import"]
+    assert script.get_current_head() == "0047_obs_import"
     revision = script.get_revision("0017_google_maintenance_oauth")
     assert revision is not None
     assert revision.down_revision == "0016_transcript_catalog_entries"

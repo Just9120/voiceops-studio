@@ -251,7 +251,7 @@ def test_trusted_device_migration_is_additive_and_repeat_safe(monkeypatch):
     from sqlalchemy import inspect, text
 
     script = ScriptDirectory.from_config(Config(str(ROOT / "apps/studio-api/alembic.ini")))
-    assert script.get_heads() == ["0046_local_model_revision"]
+    assert script.get_heads() == ["0047_obs_import"]
     migration = script.get_revision("0038_trusted_devices")
     assert migration.down_revision == "0037_ux_audit_controls"
     assert migration.module.release_safety == "additive"

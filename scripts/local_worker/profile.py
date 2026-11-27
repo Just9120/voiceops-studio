@@ -4,13 +4,15 @@ import ctypes
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 
 from .model_profiles import INITIAL_MODEL_REVISIONS, model_profile
-from .protocol import MODEL, PARAKEET_MODEL, StudioClient, WorkerError, strict_json
+from .protocol import MODEL, PARAKEET_MODEL, StudioClient, WorkerError, canonical_id, origin, strict_json
 
 FORMAT = "voiceops-local-worker-v1"
 IDENTITY_FORMAT = "voiceops-local-companion-identity-v1"
+OBS_IDENTITY_FORMAT = "voiceops-obs-import-identity-v1"
 ENTROPY = b"VoiceOpsStudio.local-worker.profile.v1"
 
 
@@ -50,23 +52,29 @@ def default_profile():
     return Path(os.environ["LOCALAPPDATA"]) / "VoiceOpsStudio" / "local-worker" / "profile.json"
 
 
-def read_profile(path, *, unseal=None, identity_only=False):
+def read_profile(path, *, unseal=None, identity_only=False, obs_identity=False):
     unseal = unseal or (lambda value: protect(value, decrypt=True))
     try:
         if Path(path).stat().st_size > 65536:
             raise ValueError()
         outer = strict_json(Path(path).read_bytes())
-        expected_format = IDENTITY_FORMAT if identity_only else FORMAT
+        expected_format = OBS_IDENTITY_FORMAT if obs_identity else IDENTITY_FORMAT if identity_only else FORMAT
         if not isinstance(outer, dict) or set(outer) != {"format", "sealed"} or outer["format"] != expected_format:
             raise ValueError()
         raw = unseal(base64.b64decode(outer["sealed"], validate=True))
         if len(raw) > 32768:
             raise ValueError()
         data = strict_json(raw)
-        if identity_only:
+        if identity_only or obs_identity:
             if not isinstance(data, dict) or set(data) != {"origin", "token"}:
                 raise ValueError()
-            StudioClient(data["origin"], data["token"])
+            if obs_identity:
+                origin(data["origin"])
+                if re.fullmatch(r"vs-obs\.[a-f0-9-]{36}\.[A-Za-z0-9_-]{43}", data["token"]) is None:
+                    raise ValueError()
+                canonical_id(data["token"].split(".")[1])
+            else:
+                StudioClient(data["origin"], data["token"])
             return data
         fields = {"origin", "token", "paths", "verified_files"}
         if (not isinstance(data, dict) or not fields <= data.keys() <= fields | {"model", "model_revision", "managed_root"}
@@ -94,13 +102,13 @@ def read_profile(path, *, unseal=None, identity_only=False):
         raise WorkerError("local_profile_unavailable") from None
 
 
-def write_profile(path, data, *, replace=False, seal=None, unseal=None, identity_only=False):
+def write_profile(path, data, *, replace=False, seal=None, unseal=None, identity_only=False, obs_identity=False):
     seal = seal or protect
     path = Path(path)
     previous = None
     if path.exists():
         # Never overwrite an unrelated file or silently replace another pairing.
-        read_profile(path, unseal=unseal, identity_only=identity_only)
+        read_profile(path, unseal=unseal, identity_only=identity_only, obs_identity=obs_identity)
         if not replace:
             raise WorkerError("local_profile_already_exists")
         previous = path.read_bytes()
@@ -108,7 +116,8 @@ def write_profile(path, data, *, replace=False, seal=None, unseal=None, identity
     raw = json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
     if len(raw) > 32768:
         raise WorkerError("local_profile_unavailable")
-    outer = json.dumps({"format": IDENTITY_FORMAT if identity_only else FORMAT,
+    profile_format = OBS_IDENTITY_FORMAT if obs_identity else IDENTITY_FORMAT if identity_only else FORMAT
+    outer = json.dumps({"format": profile_format,
                         "sealed": base64.b64encode(seal(raw)).decode()}, separators=(",", ":")).encode()
     descriptor, temporary = tempfile.mkstemp(prefix=".pairing-", dir=path.parent)
     try:
@@ -128,7 +137,7 @@ def write_profile(path, data, *, replace=False, seal=None, unseal=None, identity
                     os.link(temporary, path)
             except FileExistsError:
                 raise WorkerError("local_profile_changed") from None
-        if read_profile(path, unseal=unseal, identity_only=identity_only) != data:
+        if read_profile(path, unseal=unseal, identity_only=identity_only, obs_identity=obs_identity) != data:
             raise WorkerError("local_profile_unavailable")
     finally:
         if os.path.exists(temporary):

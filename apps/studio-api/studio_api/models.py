@@ -71,6 +71,30 @@ class LocalExecutionDevice(Base):
     )
 
 
+class ObsImportBinding(Base):
+    """Grants a recorder permission to submit audio for the owner."""
+
+    __tablename__ = "obs_import_bindings"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(80), nullable=False)
+    verifier_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ObsImportDraft(Base):
+    """Durable receipt for one completed recording, including across reconnects."""
+
+    __tablename__ = "obs_import_drafts"
+    owner_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    source_id: Mapped[str | None] = mapped_column(ForeignKey("sources.id", ondelete="SET NULL"), unique=True)
+    content_md5: Mapped[str] = mapped_column(String(24), nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class UserNotificationPreference(Base):
     __tablename__="user_notification_preferences"
     user_id: Mapped[str]=mapped_column(ForeignKey("users.id"), primary_key=True)

@@ -2,6 +2,7 @@ import { openYandexDiskPicker, diskFailureMessage, type DiskPickerMode } from ".
 import { parseProjectSourceCollection } from "./projectCollectionContracts";
 import { YandexDiskConnectionPanel } from "./YandexDiskConnectionPanel";
 import { LocalExecutionPanel } from "./LocalExecutionPanel";
+import { ObsImportDrafts } from "./ObsImportDrafts";
 import { SettingsAnalytics, SettingsLanding } from "./SettingsLanding";
 import { localDeviceReady, localDeviceStatus, localExecutionFailure, localModelName, LOCAL_MODEL, PARAKEET_MODEL,
   useLocalExecutionDevices, type LocalModelSelection } from "./localExecutionContracts";
@@ -2433,6 +2434,21 @@ function PreparationPanel({
       );
       return next.length > 0 ? next : [newComposerRow()];
     });
+  }
+
+  function addObsDraft(source: Source) {
+    if (!isUsableJobSource(source)) {
+      setRowAdditionStatus("Срок хранения аудио истёк. Обновите список черновиков.");
+      return;
+    }
+    if (rows.some((row) => row.source_id === source.id)) return;
+    const empty = rows.find((row) => !row.source_id);
+    if (!empty && rows.length >= MAX_BATCH_ITEMS) {
+      setRowAdditionStatus("В одной пачке можно подготовить до 50 задач.");
+      return;
+    }
+    placeSourcesInRows(empty?.id ?? "", [source]);
+    setRowAdditionStatus("Аудио OBS добавлено. Проверьте параметры задачи перед запуском.");
   }
   async function readLocalUploadCompletionState(
     sourceId: string,
@@ -4924,6 +4940,8 @@ function PreparationPanel({
           </button>
         </div>
       )}
+      {!historyOnly && <ObsImportDrafts projectId={project.id} selectedIds={rows.map((row) => row.source_id)}
+        onAdd={addObsDraft} />}
       <form
         className="job-creator composer"
         ref={composerFormRef}

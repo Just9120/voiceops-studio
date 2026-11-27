@@ -1,8 +1,8 @@
-from typing import Literal
+from typing import Annotated, Literal
 import hashlib, json, logging, re
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, status
+from fastapi import Depends, FastAPI, HTTPException, Path as PathParam, Query, Request, Response, WebSocket, status
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse, Response as FastAPIResponse, FileResponse
@@ -1504,6 +1504,12 @@ def ensure_transcription_workspace(
 ):
     _, user = pair
     limiter.check("transcription:workspace:ensure:" + user.id, 30, 3600)
+    project, created = _ensure_batch_workspace(db, user)
+    db.commit()
+    return {"project": project_payload(project), "created": created}
+
+
+def _ensure_batch_workspace(db, user):
     db.execute(select(User).where(User.id == user.id).with_for_update()).scalar_one()
     project = db.execute(
         select(Project)
@@ -1529,8 +1535,7 @@ def ensure_transcription_workspace(
             actor_user_id=user.id,
             subject_user_id=user.id,
         )
-    db.commit()
-    return {"project": project_payload(project), "created": created}
+    return project, created
 
 @app.post("/api/projects")
 def create_project(data: ProjectIn, pair=Depends(require_csrf), db: Session=Depends(get_db)):
@@ -3150,11 +3155,18 @@ def abort_local_multipart_upload(source_id: str, response: Response, pair=Depend
 
 @app.post("/api/sources/{source_id}/local-upload/complete")
 def complete_local_upload(source_id: str, pair=Depends(require_csrf), db: Session=Depends(get_db)):
-    _,user=pair; src=owned_source_or_404(db,user,source_id)
+    _, user = pair
+    source = _complete_local_upload(source_id, user, db)
+    db.commit()
+    return source_payload(source)
+
+
+def _complete_local_upload(source_id, user, db):
+    src = owned_source_or_404(db, user, source_id)
     if src.source_type!=SourceType.local_upload or src.deleted_at is not None: raise HTTPException(404,"Не найдено")
     if src.upload_status==SourceUploadStatus.uploaded:
         if is_source_expired(src, utcnow()): raise HTTPException(404,"Не найдено")
-        return source_payload(src)
+        return src
     if src.upload_protocol != SourceUploadProtocol.single_put.value: raise HTTPException(409,"Используйте multipart completion")
     if src.upload_status!=SourceUploadStatus.pending: raise HTTPException(404,"Не найдено")
     initial_project_id=src.project_id
@@ -3214,8 +3226,7 @@ def complete_local_upload(source_id: str, pair=Depends(require_csrf), db: Sessio
     src.expires_at=now+timedelta(seconds=_completed_source_retention_seconds(src,user))
     src.updated_at=now
     audit(db,"source.local_upload.completed",actor_user_id=user.id,subject_user_id=user.id)
-    db.commit()
-    return source_payload(src)
+    return src
 
 @app.delete("/api/sources/{source_id}")
 def delete_source(source_id: str, request: Request, pair=Depends(require_csrf), db: Session=Depends(get_db), _=Depends(require_same_origin)):
@@ -5338,7 +5349,139 @@ app.include_router(build_yandex_disk_router(recent_auth=require_recent_auth, lim
     project_loader=owned_project_or_404, source_serializer=source_payload, project_serializer=project_payload))
 
 from .local_execution_routes import build_router as build_local_execution_router
+from .obs_import_binding import authenticate_recorder, build_router as build_obs_binding_router
 app.include_router(build_local_execution_router(recent_auth=require_recent_auth, limiter=limiter))
+app.include_router(build_obs_binding_router(recent_auth=require_recent_auth, limiter=limiter))
+
+
+class ObsUploadIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    filename: str = Field(min_length=6, max_length=260)
+    size_bytes: StrictInt = Field(gt=0, le=512 * 1024 * 1024)
+    content_md5: str = Field(pattern=r"^[A-Za-z0-9+/]{21}[AQgw]==$")
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+@app.post("/api/obs-import/events/{event_id}/initiate")
+def initiate_obs_import(
+    event_id: Annotated[str, PathParam(pattern=r"^[a-f0-9]{32}$")],
+    data: ObsUploadIn, response: Response, user=Depends(authenticate_recorder), db: Session=Depends(get_db),
+):
+    limiter.check("obs-import:initiate:" + user.id, 60, 3600)
+    _browser_capability_cache_headers(response)
+    filename = normalize_source_display_filename(data.filename)
+    if not filename.lower().endswith(".flac"):
+        raise HTTPException(422, "Импорт OBS принимает только FLAC")
+    mime = validate_upload("audio/flac", data.size_bytes)
+    db.execute(select(User.id).where(User.id == user.id).with_for_update()).scalar_one()
+    draft = db.get(ObsImportDraft, (user.id, event_id))
+    if draft is not None:
+        if (draft.content_sha256, draft.content_md5) != (data.content_sha256, data.content_md5):
+            raise HTTPException(409, "Запись OBS изменилась после первой попытки импорта")
+        if draft.completed_at is not None:
+            return {"status": "completed", "event_id": event_id}
+    else:
+        draft = ObsImportDraft(owner_user_id=user.id, event_id=event_id,
+                               content_md5=data.content_md5, content_sha256=data.content_sha256)
+        db.add(draft)
+
+    reference_class = SourceReferenceClass.transcription.value
+    bucket = reference_storage_bucket(settings, reference_class)
+    if not reference_storage_isolation_configured(settings) or not bucket:
+        raise HTTPException(503, "Хранилище Studio не настроено")
+    now = utcnow()
+    source = db.get(Source, draft.source_id) if draft.source_id else None
+    if source is None or is_source_expired(source, now) or source.deleted_at is not None:
+        project, _ = _ensure_batch_workspace(db, user)
+        source = Source(project_id=project.id, source_type=SourceType.local_upload,
+                        original_filename=filename, mime_type=mime, size_bytes=data.size_bytes,
+                        reference_class=reference_class, upload_protocol=SourceUploadProtocol.single_put.value,
+                        upload_status=SourceUploadStatus.pending,
+                        expires_at=now + timedelta(seconds=settings.source_upload_ttl_seconds))
+        db.add(source)
+        db.flush()
+        source.s3_bucket = bucket
+        source.s3_object_key = f"{reference_class}/users/{user.id}/projects/{project.id}/sources/{source.id}/source"
+        draft.source_id = source.id
+    else:
+        owned_source_or_404(db, user, source.id)
+        if source.size_bytes != data.size_bytes or source.original_filename != filename:
+            raise HTTPException(409, "Метаданные записи OBS изменились после первой попытки")
+        if source.upload_status == SourceUploadStatus.uploaded:
+            draft.completed_at = now
+            db.commit()
+            return {"status": "completed", "event_id": event_id}
+    if source.upload_status != SourceUploadStatus.pending or source.s3_bucket != bucket:
+        raise HTTPException(409, "Состояние импорта OBS изменилось")
+    # A conditional signed creation cannot replace the audio after completion.
+    expires_in = min(settings.source_presign_ttl_seconds, int((source.expires_at - now).total_seconds()))
+    if expires_in < 1:
+        raise HTTPException(409, "Срок подготовки импорта истёк. Повторите импорт.")
+    url = get_reference_storage(settings, reference_class).presigned_create_url(
+        source.s3_object_key, mime, expires_in, data.size_bytes, draft.content_md5,
+    )
+    db.commit()
+    return {
+        "status": "pending", "event_id": event_id, "url": url,
+        "headers": {"Content-Type": mime, "Content-MD5": draft.content_md5, "If-None-Match": "*"},
+    }
+
+
+@app.post("/api/obs-import/events/{event_id}/complete")
+def complete_obs_import(
+    event_id: Annotated[str, PathParam(pattern=r"^[a-f0-9]{32}$")],
+    response: Response, user=Depends(authenticate_recorder), db: Session=Depends(get_db),
+):
+    limiter.check("obs-import:complete:" + user.id, 60, 3600)
+    _browser_capability_cache_headers(response)
+    db.execute(select(User.id).where(User.id == user.id).with_for_update()).scalar_one()
+    draft = db.get(ObsImportDraft, (user.id, event_id))
+    if draft is None or (draft.source_id is None and draft.completed_at is None):
+        raise HTTPException(404, "Черновик OBS не найден")
+    if draft.completed_at is None:
+        source = _complete_local_upload(draft.source_id, user, db)
+        draft.completed_at = source.uploaded_at or utcnow()
+        audit(db, "obs_import.completed", actor_user_id=user.id, subject_user_id=user.id, project_id=source.project_id)
+        db.commit()
+    return {"status": "completed", "event_id": event_id}
+
+
+@app.get("/api/projects/{project_id}/obs-drafts")
+def list_obs_import_drafts(
+    project_id: str, response: Response,
+    cursor: str | None = Query(None, max_length=MAX_COLLECTION_CURSOR_LENGTH),
+    page_size: int = Query(DEFAULT_COLLECTION_PAGE_SIZE, ge=1, le=MAX_COLLECTION_PAGE_SIZE),
+    pair=Depends(current_session), db: Session=Depends(get_db),
+):
+    _browser_capability_cache_headers(response)
+    session, user = pair
+    owned_project_or_404(db, user, project_id)
+    limiter.check("obs-import:drafts:" + user.id, 120, 60)
+    surface = "obs-drafts:" + project_id
+    try:
+        position = decode_collection_cursor(cursor, secret=session.csrf_hash, owner_user_id=user.id, surface=surface)
+    except CollectionCursorError:
+        raise HTTPException(422, "Некорректная страница черновиков OBS") from None
+    query = (
+        select(Source).join(ObsImportDraft, ObsImportDraft.source_id == Source.id)
+        .where(
+            ObsImportDraft.owner_user_id == user.id, Source.project_id == project_id,
+            ObsImportDraft.completed_at.is_not(None), Source.uploaded_at.is_not(None),
+            Source.deleted_at.is_(None), Source.upload_status == SourceUploadStatus.uploaded,
+            Source.expires_at > utcnow(),
+            ~select(TranscriptionJobSource.source_id).where(TranscriptionJobSource.source_id == Source.id).exists(),
+        )
+    )
+    if position:
+        uploaded_at, row_id = position
+        query = query.where(or_(Source.uploaded_at < uploaded_at,
+                               and_(Source.uploaded_at == uploaded_at, Source.id < row_id)))
+    rows = db.scalars(query.order_by(Source.uploaded_at.desc(), Source.id.desc()).limit(page_size + 1)).all()
+    rows, next_cursor = page_envelope(
+        rows, page_size=page_size, timestamp_attribute="uploaded_at", secret=session.csrf_hash,
+        owner_user_id=user.id, surface=surface,
+    )
+    return {"sources": [source_payload(row) for row in rows], "next_cursor": next_cursor, "page_size": page_size}
 
 
 def _output_folder_key(provider, folder_id):

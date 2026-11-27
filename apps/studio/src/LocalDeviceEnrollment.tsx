@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, api, mutateWithCsrfRetry } from "./apiClient";
 import { localExecutionFailure } from "./localExecutionContracts";
 
@@ -19,15 +19,21 @@ function enrollmentError(error: unknown) {
   return localExecutionFailure(error);
 }
 
-export function LocalDeviceEnrollment({ requestId, csrf, onCsrf }: {
+export function LocalDeviceEnrollment({ requestId, csrf, onCsrf, obs = false }: {
   requestId: string;
   csrf: string;
   onCsrf: (value: string) => void;
+  obs?: boolean;
 }) {
   const [view, setView] = useState<Enrollment | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const path = `/local-execution/enrollment/${requestId}`;
+  const path = `/${obs ? "obs-import" : "local-execution"}/enrollment/${requestId}`;
+  const titleRef = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => {
+    if (obs) titleRef.current?.focus();
+  }, [obs]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -59,12 +65,14 @@ export function LocalDeviceEnrollment({ requestId, csrf, onCsrf }: {
   }
 
   return <section className="notice" aria-labelledby="local-enrollment-title">
-    <h4 id="local-enrollment-title">Подключение компьютера</h4>
+    <h4 id="local-enrollment-title" ref={titleRef} tabIndex={-1}>{obs ? "Подключение импорта OBS" : "Подключение компьютера"}</h4>
     {error && <p role="alert">{error}</p>}
     {!view && !error && <p role="status">Проверяем запрос…</p>}
     {view?.approved && <p role="status">Подключение «{view.label}» подтверждено. Вернитесь в приложение на компьютере.</p>}
     {view && !view.approved && <>
-      <p>Подключить «{view.label}» к вашему аккаунту Studio? Подтвердите запрос, если вы запустили подключение на этом компьютере.</p>
+      <p>{obs
+        ? `Разрешить «${view.label}» загружать аудио после остановки записи? Импортёр сможет создавать черновики транскрибации.`
+        : `Подключить «${view.label}» к вашему аккаунту Studio? Подтвердите запрос, если вы запустили подключение на этом компьютере.`}</p>
       <button type="button" className="primary" disabled={busy} onClick={() => void approve()}>
         {busy ? "Подтверждаем…" : "Подтвердить подключение"}
       </button>

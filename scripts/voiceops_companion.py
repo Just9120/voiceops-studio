@@ -886,6 +886,24 @@ def run_window():
 
 
 def main():
+    arguments = sys.argv[1:]
+    if arguments == ["--obs-settings"] or (len(arguments) == 2 and arguments[0] == "--obs-import"):
+        from local_worker.obs_import import process_import
+
+        directory = default_profile().parent / "obs-import"
+        ffmpeg = Path(bundled_paths(Path("."), PROFILES["nemotron-transcribe-iq4-nl"])["ffmpeg"])
+        try:
+            if arguments[0] == "--obs-settings":
+                from local_worker.obs_window import open_obs_settings
+
+                script = Path(sys.executable).with_name("voiceops-obs-import.lua")
+                with single_instance(directory / "settings"):
+                    open_obs_settings(directory, ffmpeg, script)
+            else:
+                process_import(directory, arguments[1], ffmpeg)
+        except (OSError, WorkerError):
+            return 1
+        return 0
     if "--self-test" in sys.argv[1:]:
         return self_test()
     if "--disable-autostart" in sys.argv[1:]:
