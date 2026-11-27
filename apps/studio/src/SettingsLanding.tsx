@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { SettingsSection } from "./platformRouting";
-import { requestProjectCollection } from "./projectCollectionContracts";
+import type { CollectionPage } from "./projectCollectionContracts";
 import { readStudioThemePreference } from "./theme";
 import { TranscriptionAnalyticsPanel } from "./TranscriptionAnalyticsPanel";
 
@@ -62,12 +62,16 @@ export function SettingsLanding({
   );
 }
 
+type WorkspaceListItem = { id: string; archived_at: string | null };
+
 export function SettingsAnalytics({
   csrf,
+  requestProjects,
   onCsrf,
 }: {
   csrf: string;
   onCsrf: (csrf: string) => void;
+  requestProjects: (signal: AbortSignal, cursor: string | null) => Promise<CollectionPage<WorkspaceListItem>>;
 }) {
   const [attempt, setAttempt] = useState(0);
   const [workspace, setWorkspace] = useState<string | null>(null);
@@ -77,10 +81,20 @@ export function SettingsAnalytics({
     const request = new AbortController();
     const timeout = window.setTimeout(() => request.abort(), 15_000);
     let disposed = false;
-    void requestProjectCollection(request.signal)
-      .then((page) => {
+    const findWorkspace = async () => {
+      let cursor: string | null = null;
+      do {
+        const page = await requestProjects(request.signal, cursor);
+        const active = page.items.find((item) => item.archived_at === null);
+        if (active) return active.id;
+        cursor = page.nextCursor;
+      } while (cursor !== null);
+      return null;
+    };
+    void findWorkspace()
+      .then((workspaceId) => {
         if (disposed) return;
-        setWorkspace(page.items.find((item) => !item.archived_at)?.id ?? null);
+        setWorkspace(workspaceId);
         setStatus("ready");
       })
       .catch(() => {
@@ -92,7 +106,7 @@ export function SettingsAnalytics({
       window.clearTimeout(timeout);
       request.abort();
     };
-  }, [attempt]);
+  }, [attempt, requestProjects]);
 
   if (status === "loading") return <p role="status">Загружаем аналитику…</p>;
   if (status === "error") return (

@@ -11034,7 +11034,7 @@ function PlatformShell() {
             </header>
             {settingsSection === "devices"
               ? <LocalExecutionPanel key={user.email} csrf={csrf} onCsrf={refreshSettingsCsrf} />
-              : <SettingsAnalytics csrf={csrf} onCsrf={refreshSettingsCsrf} />}
+              : <SettingsAnalytics csrf={csrf} onCsrf={refreshSettingsCsrf} requestProjects={requestProjectCollection} />}
             <footer className="workspace-action-bar">
               <button type="button" onClick={() => navigate("settings", "overview")}>К настройкам</button>
             </footer>
