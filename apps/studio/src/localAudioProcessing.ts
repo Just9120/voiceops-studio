@@ -236,17 +236,18 @@ export function processDecodedPcm(inputs: PcmAudio[], options: LocalAudioOptions
 
 function boundedWavSamples(bytes: ArrayBuffer, outputSampleRate: number) {
   const unknown = () => new Error("local_audio_unbounded_format");
-  if (bytes.byteLength < 44 || !Number.isFinite(outputSampleRate) || outputSampleRate <= 0) throw unknown();
+  const invalid = () => new Error("local_audio_invalid_wav");
+  if (bytes.byteLength < 12 || !Number.isFinite(outputSampleRate) || outputSampleRate <= 0) throw unknown();
   const view = new DataView(bytes);
-  if (view.getUint32(0) !== 0x52494646 || view.getUint32(8) !== 0x57415645
-      || view.getUint32(4, true) !== bytes.byteLength - 8) throw unknown();
+  if (view.getUint32(0) !== 0x52494646 || view.getUint32(8) !== 0x57415645) throw unknown();
+  if (bytes.byteLength < 44 || view.getUint32(4, true) !== bytes.byteLength - 8) throw invalid();
   let offset = 12, channels = 0, rate = 0, frameBytes = 0, dataBytes = 0;
   while (offset + 8 <= bytes.byteLength) {
     const tag = view.getUint32(offset);
     const size = view.getUint32(offset + 4, true);
     const start = offset + 8;
     offset = start + size + size % 2;
-    if (offset > bytes.byteLength) throw unknown();
+    if (offset > bytes.byteLength) throw invalid();
     if (tag === 0x666d7420) { // fmt
       if (channels || size < 16) throw unknown();
       const codec = view.getUint16(start, true);
@@ -264,7 +265,7 @@ function boundedWavSamples(bytes: ArrayBuffer, outputSampleRate: number) {
       dataBytes = size;
     }
   }
-  if (!dataBytes || offset !== bytes.byteLength) throw unknown();
+  if (!dataBytes || offset !== bytes.byteLength) throw invalid();
   const frames = dataBytes / frameBytes;
   return channels * Math.max(frames, Math.ceil(frames * outputSampleRate / rate));
 }

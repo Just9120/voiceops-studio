@@ -431,6 +431,7 @@ def test_optional_totp_enrollment_login_recovery_and_disable_lifecycle(monkeypat
     replayed = with_factor.post("/api/auth/login", json={"email": "owner@example.com", "password": password,
         "login_csrf_token": login_context, "verification_code": code}, headers={"origin": "https://studio.test"})
     assert replayed.status_code == 401
+    assert replayed.json() == {"detail": {"reason": "second_factor_invalid"}}
     clock[0] += 30
     code = _totp(material["secret"], int(time.time()) // 30)
     accepted = with_factor.post(

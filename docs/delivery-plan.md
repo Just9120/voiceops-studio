@@ -2,8 +2,27 @@
 
 ## Current work и checkpoint
 
+### Personal backlog — ACTIVE
 
-### PERSONAL-REDESIGN — ACTIVE
+Поручение владельца от 27Nov2026. Одна Goal, последовательные PR с обязательным CI и штатным CD. Начальная база `01785020e409795a060176229ac9e636b173db6c`. Ветка первого PR `codex/personal-studio-recovery`, отдельный worktree `voiceops-personal-studio-fixes`. Пользовательский checkout содержит незакоммиченные документы. Материалы сверки и локальный бэклог хранятся вне Git.
+
+| Этап и критерий закрытия | Validation Plan и Evidence |
+| --- | --- |
+| 1. Восстановление UI и документация. AP-23, пароли и 2FA, очистка истории после повторной авторизации, независимое чтение проектов, точная аналитика, статус Telegram, сверка #357–#359 и CI/CD. | REQUIRED до push: точный кандидат по штатному selector из [Validation runbook](runbooks/validation.md), локальный lightweight, применимые Python/Studio/Browser suites и ссылки. Focused regression на синтетических ответах и безопасная проверка версии после CD. Канонический профиль общего local-ci для Studio пока отсутствует. PENDING. |
+| 2. Утверждённые Figma экраны и Companion. Полный согласованный personal UI, чистая установка и новая привязка опубликованного Companion. | REQUIRED: карта фреймов, визуальная приёмка 390/768/1280, клавиатура, темы, DPI, Windows Sandbox, SHA-256, привязка и отзыв, синтетический экспорт обеих локальных моделей. PENDING. |
+| 3. После Stop в OBS появляется один редактируемый черновик, содержащий только аудио. | REQUIRED: нативный OBS Windows и synthetic API/Browser, включение, повтор события, восстановление после отказа, изоляция владельца и отсутствие запуска STT. PENDING. |
+| 4. Готовность внешних интеграций, пилот F62 и разбор shrink-anything. | Контракты пяти STT на синтетических ответах, бесплатная диагностика резервного Colab, операторское восстановление и SMTP на loopback, проверка потребителей кандидатов. Новые ключи, платные прогоны и активация почты отложены. PENDING. |
+| 5. Redis, затем PostgreSQL. | REQUIRED: два отдельных окна после подтверждения владельцем, isolated rehearsal, проверенная резервная копия, smoke после cutover и подтверждённые версии. CloudKeep сохраняет RPO 4 суток и RTO 4 часа. PENDING. |
+
+DoD: в локальном бэклоге есть результат и Evidence по 13 пунктам, применимые PR и поставки проверены, отложенные внешние действия имеют условия запуска, готовность personal пересчитана от актуального origin/main. Следующий шаг — локальные исправления этапа 1 и проверка применимого профиля. Commercial, распознавание личности, macOS/Linux и TTS вне Goal.
+
+На исходном production Web `5525f05`, API и worker `244a3c4`, схема `0046_local_model_revision`; API readiness подтвердил PostgreSQL 17 и Redis 7. GitHub #357–#360 подтверждены первичным readback, открытых PR нет, required gate `ci-required`.
+
+Этап 1, Windows и синтетические данные: полная frontend suite 911 PASS на промежуточном дереве, Browser layout 26 PASS, отдельный Chromium-сценарий локального WAV и навигации PASS, portable account/usage 20 PASS. Интеграционные тесты API остановились на PostgreSQL/Alembic fixture. Standalone localhost PWA регистрирует активный service worker, но тестовая навигация не получает controller; прежний сбой кнопки в этих условиях подтвердить не удалось. PWA controller tests PASS, runtime-вывод ограничен стендом. Платных/внешних provider calls и production-записей не было. Изолированный Linux preflight до push остаётся REQUIRED, общий launcher не допускает Studio. Следующий шаг после локального checkpoint — допуск совместимого профиля и его точный прогон.
+
+### История предыдущих поставок
+
+### PERSONAL-REDESIGN — DELIVERED (#359)
 
 Основание — поручение владельца реализовать варианты из открытой вкладки отчёта одной Goal через loop. Base `d582ea3`, ветка `codex/personal-redesign`, отдельный worktree `.tmp/redesign-personal-d582ea3`. Local implementation и проверки входят в поручение. Публикация PR после обязательной визуальной проверки. Production merge/CD и выпуск установщика требуют подтверждённого объёма поставки.
 

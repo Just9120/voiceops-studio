@@ -82,6 +82,8 @@ describe("NotificationsPanel", () => {
 
     const disable = await screen.findByRole("button", { name: "Выключить" });
     expect(disable).toBeEnabled();
+    expect(screen.getByText("Подписка включена")).toBeInTheDocument();
+    expect(screen.getByText(/Доставка недоступна/)).toBeInTheDocument();
     await userEvent.click(disable);
 
     await waitFor(() =>

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import * as googlePicker from "./googlePicker";
 import { AudioPreparationPage } from "./AudioPreparationPage";
@@ -64,6 +64,53 @@ describe("AudioPreparationPage", () => {
     expect(fetchMock.mock.calls.some(([,init])=>(init as RequestInit|undefined)?.method==="POST" && String((init as RequestInit)?.body).includes("removed-source"))).toBe(false);
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  it("restores older results and recovers an individual progress failure", async () => {
+    const active = previewJob("active", "Новый файл", []);
+    const secondActive = previewJob("second-active", "Ещё один файл", []);
+    const completed = (id: string, title: string) => ({
+      ...previewJob(id, title, []),
+      status: "completed",
+      progress: { percent: 100, stage: "completed" },
+      output: { download_ready: true, source_id: "out", google_drive_url: null },
+    });
+    let firstRequest = true;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/workspace")) return json({ project: { id: "project-id", title: "Studio" } });
+      if (url.endsWith("/sources")) return json({ sources: [] });
+      if (url.endsWith("/audio-preparations")) {
+        return json({ jobs: [active, secondActive, completed("newest", "Готовая запись"), completed("older", "Предыдущая запись")] });
+      }
+      if (url.endsWith("/second-active")) return json(completed("second-active", "Ещё один файл"));
+      if (url.endsWith("/active")) {
+        if (firstRequest) {
+          firstRequest = false;
+          return new Response(null, { status: 503 });
+        }
+        return json(completed("active", "Новый файл"));
+      }
+      throw new Error("Unexpected request: " + url);
+    }));
+
+    vi.useFakeTimers();
+    const page = render(<AudioPreparationPage csrf="csrf" onCsrf={vi.fn()} />);
+    try {
+      await act(async () => {});
+      expect(screen.getByRole("heading", { name: /Предыдущая запись/ })).toBeInTheDocument();
+      expect(screen.getAllByRole("link", { name: "Скачать файл" })).toHaveLength(2);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+      expect(screen.getByText(/Прогресс временно недоступен/)).toBeInTheDocument();
+      const successful = screen.getByRole("heading", { name: /Ещё один файл/ }).closest("article");
+      expect(within(successful!).getByRole("link", { name: "Скачать файл" })).toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+      expect(screen.queryByText(/Прогресс временно недоступен/)).not.toBeInTheDocument();
+      expect(screen.getAllByRole("link", { name: "Скачать файл" })).toHaveLength(4);
+    } finally {
+      page.unmount();
+      vi.useRealTimers();
+    }
+  });
 
   it("keeps audio settings available when Drive does not confirm the selected source", async () => {
     const picker = vi.spyOn(googlePicker, "openGooglePicker").mockResolvedValue({

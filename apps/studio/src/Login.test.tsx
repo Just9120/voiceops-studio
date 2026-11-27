@@ -340,7 +340,10 @@ describe("Login auth boundary", () => {
             );
           }
           if (loginAttempts === 2) {
-            return json({ detail: "safe failure" }, false, 401);
+            return json({ detail: "Неверная почта или пароль" }, false, 401);
+          }
+          if (loginAttempts === 3) {
+            return json({ detail: { reason: "second_factor_invalid" } }, false, 401);
           }
           return json({
             authenticated: true,
@@ -366,6 +369,8 @@ describe("Login auth boundary", () => {
       "one-time-code",
     );
     await userEvent.type(screen.getByLabelText("Одноразовый код"), "000000");
+    await userEvent.click(screen.getByRole("button", { name: "Войти" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Неверная почта или пароль");
     await userEvent.click(screen.getByRole("button", { name: "Войти" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Неверный одноразовый или резервный код",
@@ -396,6 +401,12 @@ describe("Login auth boundary", () => {
         email: "user@example.com",
         password: "password-long",
         login_csrf_token: "context-3",
+        verification_code: "000000",
+      },
+      {
+        email: "user@example.com",
+        password: "password-long",
+        login_csrf_token: "context-4",
         verification_code: "123456",
       },
     ]);

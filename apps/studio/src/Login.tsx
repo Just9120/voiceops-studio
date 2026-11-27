@@ -128,12 +128,13 @@ export function Login({
         setLoginPending(false);
         const detail =
           failure instanceof ApiError && failure.data && typeof failure.data === "object"
-            ? (failure.data as { detail?: { reason?: unknown } }).detail
+            ? (failure.data as { detail?: unknown }).detail
             : undefined;
+        const reason = detail && typeof detail === "object" && "reason" in detail ? detail.reason : null;
         if (
           failure instanceof ApiError &&
           failure.status === 409 &&
-          detail?.reason === "second_factor_required"
+          reason === "second_factor_required"
         ) {
           setSecondFactorRequired(true);
           setError("Введите код из приложения-аутентификатора или резервный код.");
@@ -142,8 +143,9 @@ export function Login({
         if (
           failure instanceof ApiError &&
           failure.status === 401 &&
-          secondFactorRequired
+          (reason === "second_factor_invalid" || detail === "Не удалось подтвердить вход")
         ) {
+          setSecondFactorRequired(true);
           setError("Неверный одноразовый или резервный код.");
           return;
         }

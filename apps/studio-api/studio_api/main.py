@@ -903,7 +903,7 @@ def login(data: LoginIn, request: Request, response: Response, db: Session=Depen
             raise HTTPException(409,detail={"reason":"second_factor_required"})
         if not _verify_second_factor(db,user=user,verification_code=data.verification_code,recovery_code=data.recovery_code,now=now):
             audit(db,"auth.login_failed",outcome="rejected",reason="second_factor_invalid"); db.commit()
-            raise HTTPException(401,"Не удалось подтвердить вход")
+            raise HTTPException(401, detail={"reason": "second_factor_invalid"})
     ctx.used_at=now
     raw_session, raw_csrf = new_token(), new_token()
     sess=Session(user_id=user.id, token_hash=token_hash(raw_session), csrf_hash=token_hash(raw_csrf), expires_at=expires(settings.session_days), rotated_at=now, reauthenticated_at=now)
