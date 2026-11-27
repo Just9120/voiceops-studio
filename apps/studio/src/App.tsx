@@ -6344,13 +6344,22 @@ function isProjectClearResponse(value: unknown): value is {
   );
 }
 
+type OverviewAudioJob = {
+  id: string;
+  title: string;
+  status: string;
+  progress: { percent: number };
+};
+
 function OverviewPage({
   onNavigate,
   onOpenTranscriptions,
+  onOpenConnections,
   onOpenJob,
 }: {
   onNavigate: (page: Page) => void;
   onOpenTranscriptions: () => void;
+  onOpenConnections: () => void;
   onOpenJob: (job: TranscriptionJob) => void;
 }) {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -6368,6 +6377,33 @@ function OverviewPage({
   const [recentJobs, setRecentJobs] = useState<TranscriptionJob[]>([]);
   const [recentJobsLoading, setRecentJobsLoading] = useState(false);
   const [recentJobsError, setRecentJobsError] = useState(false);
+  const [audioJobs, setAudioJobs] = useState<OverviewAudioJob[]>([]);
+  const [audioStatus, setAudioStatus] = useState<"loading" | "ready" | "error">("ready");
+  const devices = useLocalExecutionDevices();
+
+  const loadAudioJobs = (projectId: string) => {
+    setAudioStatus("loading");
+    void settleLatestRequest(
+      requestEpochsRef.current,
+      "overview:audio-preparations",
+      async (signal) => {
+        const { jobs } = await api<{ jobs: OverviewAudioJob[] }>(
+          `/projects/${projectId}/audio-preparations`,
+          { cache: "no-store", signal },
+        );
+        return Array.isArray(jobs)
+          ? jobs.filter((job) => ["preview_queued", "analyzing", "queued", "processing"].includes(job?.status)).slice(0, 3)
+          : [];
+      },
+      (jobs) => {
+        setAudioJobs(jobs);
+        setAudioStatus("ready");
+      },
+      () => setAudioStatus("error"),
+      { controllers: requestControllersRef.current, timeoutMs: PROJECT_COLLECTION_REQUEST_TIMEOUT_MS },
+    );
+  };
+
   const loadRecentJobs = (projectId: string) => {
     setRecentJobsLoading(true);
     setRecentJobsError(false);
@@ -6376,7 +6412,7 @@ function OverviewPage({
       "overview:recent-jobs",
       (signal) => requestProjectJobPage(projectId, null, signal),
       (jobsPage) => {
-        setRecentJobs(jobsPage.items.slice(0, 3));
+        setRecentJobs(jobsPage.items);
         setRecentJobsLoading(false);
       },
       () => { setRecentJobsLoading(false); setRecentJobsError(true); },
@@ -6397,10 +6433,15 @@ function OverviewPage({
         setProjectsLoading(false);
         const workspace=activeProjects[0];
         if (!workspace) {
-          setRecentJobs([]); setRecentJobsLoading(false); setRecentJobsError(false);
+          setRecentJobs([]);
+          setRecentJobsLoading(false);
+          setRecentJobsError(false);
+          setAudioJobs([]);
+          setAudioStatus("ready");
           return;
         }
         loadRecentJobs(workspace.id);
+        loadAudioJobs(workspace.id);
       },
       () => {
         setProjectsError(true);
@@ -6497,172 +6538,151 @@ function OverviewPage({
     !credentialsLoading &&
     !credentialsError &&
     activeCredentials.length > 0;
+  const ongoingJobs = recentJobs
+    .filter((job) => job.status === "queued" || job.status === "processing")
+    .slice(0, 3);
   const recentDocuments = recentJobs
     .filter((job) => job.status === "completed")
     .slice(0, 3);
+  const readyDevice = devices.items.find((device) => localDeviceReady(device));
+  const deviceStatus = devices.error
+    ? "Недоступно"
+    : readyDevice
+      ? `Доступен · ${readyDevice.label}`
+      : devices.loading
+        ? "Загрузка…"
+        : devices.items.length
+          ? "Компьютер не готов"
+          : "Нужна привязка";
+  const jobsLoading = projectsLoading || recentJobsLoading;
+  const jobsError = projectsError || recentJobsError;
+  const workspaceId = projects[0]?.id;
+
   return (
     <section className="page dashboard-page">
-      <header className="page-header split">
-        <div>
-          <h1 className="page-title">VoiceOps Studio</h1>
-          <p>
-            Подготовьте запись, создайте транскрибацию или вернитесь к готовым
-            результатам.
-          </p>
-        </div>
-        <div className="actions">
-          <button onClick={() => onNavigate("audio")}>
-            Подготовить аудио
-          </button>
-          <button className="primary" onClick={onOpenTranscriptions}>
-            Создать транскрибацию
-          </button>
-        </div>
+      <header className="dashboard-heading">
+        <h1 className="page-title">Обзор</h1>
+        <p>Продолжите текущую работу или начните новую.</p>
       </header>
-      <div className="summary-grid dashboard-summary">
-        <article className="card summary-card" aria-label="Последние результаты">
-          <span className="summary-label">Транскрибации и результаты</span>
-          <strong className="summary-value">
-            {projectsLoading || recentJobsLoading
-              ? "Загрузка…"
-              : projectsError || recentJobsError
-                ? "Недоступно"
-                : projects.length > 0
-                  ? `Последних задач: ${recentJobs.length}`
-                  : "Начните с первой записи"}
-          </strong>
-          {!projectsLoading && !projectsError && projects.length > 0 && (
-            <>
-              {!recentJobsLoading && !recentJobsError && <small className="muted">Среди последних: в работе {recentJobs.filter(job => job.status === "queued" || job.status === "processing").length}, документов {recentDocuments.length}.</small>}
-              <button type="button" onClick={onOpenTranscriptions}>Открыть</button>
-            </>
-          )}
-          {projectsError && (
-            <button type="button" onClick={loadProjects}>
-              Повторить
-            </button>
-          )}
-        </article>
-        <article className="card summary-card" aria-label="Google Drive">
-          <span className="summary-label">Google Drive</span>
-          <strong className="summary-value">{googleStatus}</strong>
-          {googleError && (
-            <button type="button" onClick={loadGoogleConnection}>
-              Повторить
-            </button>
-          )}
-        </article>
-        <article className="card summary-card" aria-label="Готовность к работе">
-          <span className="summary-label">Готовность к транскрибации</span>
-          <strong className="summary-value">
-            {credentialsLoading || googleLoading
-              ? "Загрузка…"
-              : credentialsError || googleError
-                ? "Недоступно"
-                : readyToTranscribe
-                  ? "Можно начинать"
-                  : "Нужна настройка"}
-          </strong>
-          {credentialsError && (
-            <button type="button" onClick={loadCredentials}>
-              Повторить
-            </button>
-          )}
-        </article>
-      </div>
-      {(projectsError || googleError || credentialsError) && (
-        <p className="notice">
-          Часть данных панели сейчас недоступна. Остальные сведения показаны
-          ниже.
-        </p>
-      )}
-      {needsAttention.length > 0 && (
-        <article className="card attention-card">
-          <h2>Требует внимания</h2>
-          <ul>
-            {needsAttention.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </article>
+      {(jobsError || googleError || credentialsError) && (
+        <p className="notice" role="status">Часть данных панели сейчас недоступна.</p>
       )}
       <div className="dashboard-workspace-grid">
-        <article className="card dashboard-next-step">
-          <h2>Следующий шаг</h2>
-          <p>
-            {readyToTranscribe
-              ? "Подключения готовы — можно выбрать запись и запустить транскрибацию."
-              : "Завершите отмеченные настройки, затем Studio проведёт по созданию результата."}
-          </p>
-          <div className="actions">
-            <button className="primary" onClick={onOpenTranscriptions}>Создать транскрибацию</button>
-            <button onClick={() => onNavigate("audio")}>Подготовить аудио</button>
-          </div>
-        </article>
-        <article className="card dashboard-recent" aria-labelledby="dashboard-recent-title">
-          <div className="split">
-            <h2 id="dashboard-recent-title">Недавние транскрибации</h2>
-            <button type="button" onClick={onOpenTranscriptions}>Все</button>
-          </div>
-          {recentJobsLoading && <p role="status">Загружаем последние задачи…</p>}
-          {recentJobsError && (
-            <div className="inline-actions">
-              <p className="muted">Последние задачи сейчас недоступны.</p>
-              {projects[0] && <button type="button" onClick={() => loadRecentJobs(projects[0].id)}>Повторить загрузку задач</button>}
+        <article className="card dashboard-panel" aria-labelledby="dashboard-work-title">
+          <h2 id="dashboard-work-title">В работе</h2>
+          {jobsLoading ? <p role="status">Загрузка…</p> : jobsError && (
+            <p className="muted">Недоступно состояние транскрибаций.</p>
+          )}
+          {projectsError && <button type="button" onClick={loadProjects}>Повторить</button>}
+          {recentJobsError && workspaceId && (
+            <button type="button" onClick={() => loadRecentJobs(workspaceId)}>Повторить загрузку задач</button>
+          )}
+          {!jobsLoading && !jobsError && !workspaceId && (
+            <p className="muted">Начните с первой записи. Studio подготовит рабочую область автоматически.</p>
+          )}
+          {!jobsLoading && !jobsError && workspaceId && !ongoingJobs.length && !audioJobs.length && audioStatus === "ready" && (
+            <p className="muted">Сейчас нет активных задач.</p>
+          )}
+          {audioStatus === "loading" && <p role="status">Проверяем подготовку аудио…</p>}
+          {audioStatus === "error" && workspaceId && (
+            <div className="dashboard-row">
+              <span>Недоступен прогресс подготовки.</span>
+              <button type="button" onClick={() => loadAudioJobs(workspaceId)}>Повторить загрузку подготовки</button>
             </div>
           )}
-          {!recentJobsLoading && !recentJobsError && recentJobs.length === 0 && <p className="muted">Здесь появятся последние задачи и результаты.</p>}
-          {recentJobs.length > 0 && (
+          {(ongoingJobs.length > 0 || audioJobs.length > 0) && (
             <ul className="dashboard-recent-list">
-              {recentJobs.map((job) => (
-                <li key={job.id}>
-                  <span><button type="button" className="text-link" onClick={() => onOpenJob(job)}>{jobTitle(job)}</button><small>{formatTime(job.updated_at)}</small></span>
+              {ongoingJobs.map((job) => (
+                <li className="dashboard-row" key={job.id}>
+                  <span>
+                    <button type="button" className="text-link" onClick={() => onOpenJob(job)}>{jobTitle(job)}</button>
+                    <small>Транскрибация · {formatTime(job.updated_at)}</small>
+                  </span>
                   <span className={`tag job-${job.status}`}>{jobСтатусLabel(job.status)}</span>
+                </li>
+              ))}
+              {audioJobs.map((job) => (
+                <li className="dashboard-row" key={job.id}>
+                  <span>
+                    <button type="button" className="text-link" onClick={() => onNavigate("audio")}>{job.title}</button>
+                    <small>Подготовка аудио</small>
+                  </span>
+                  {Number.isFinite(job.progress?.percent) && (
+                    <span className="tag">{job.progress.percent}%</span>
+                  )}
                 </li>
               ))}
             </ul>
           )}
         </article>
-        <article className="card dashboard-recent" aria-labelledby="dashboard-documents-title">
-          <div className="split">
-            <h2 id="dashboard-documents-title">Последние документы</h2>
-            <button type="button" onClick={onOpenTranscriptions}>Открыть</button>
-          </div>
-          {recentJobsLoading && <p role="status">Проверяем готовые документы…</p>}
-          {recentJobsError && <p className="muted">Список документов сейчас недоступен.</p>}
-          {!recentJobsLoading && !recentJobsError && recentDocuments.length === 0 && (
+        <article className="card dashboard-panel" aria-labelledby="dashboard-documents-title">
+          <h2 id="dashboard-documents-title">Недавние документы</h2>
+          {jobsLoading && <p role="status">Проверяем готовые документы…</p>}
+          {jobsError && <p className="muted">Список документов сейчас недоступен.</p>}
+          {!jobsLoading && !jobsError && recentDocuments.length === 0 && (
             <p className="muted">Здесь появятся документы завершённых транскрибаций.</p>
           )}
           {recentDocuments.length > 0 && (
             <ul className="dashboard-recent-list">
-              {recentDocuments.map((job) => (
-                <li key={job.id}>
-                  <span>{isApprovedOutputUrl(job.primary_output_url ?? null) ? <ResourceExternalLink href={job.primary_output_url!} label={jobTitle(job)} ariaLabel={`Открыть документ: ${jobTitle(job)}`} /> : <button type="button" className="text-link" onClick={() => onOpenJob(job)}>{jobTitle(job)} — открыть задачу</button>}<small>{formatTime(job.finished_at ?? job.updated_at)}</small></span>
-                  <span className="tag job-completed">Готов</span>
-                </li>
-              ))}
+              {recentDocuments.map((job) => {
+                const title = jobTitle(job);
+                const documentUrl = job.primary_output_url;
+                const storage = job.output_provider === "yandex_disk" ? "Яндекс Диск" : "Google Docs";
+                const hasDocument = documentUrl && isApprovedOutputUrl(documentUrl);
+                return (
+                  <li className="dashboard-row" key={job.id}>
+                    <span>
+                      {hasDocument
+                        ? <ResourceExternalLink href={documentUrl} label={title} ariaLabel={`Открыть документ: ${title}`} />
+                        : <span>{title}</span>}
+                      <small>{hasDocument ? storage : "Ссылка не подтверждена"} · {formatTime(job.finished_at ?? job.updated_at)}</small>
+                    </span>
+                    <button type="button" onClick={() => onOpenJob(job)} aria-label={`Открыть задачу: ${title}`}>Задача</button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </article>
-      </div>
-      {!projectsLoading && !projectsError && projects.length === 0 && (
-        <article className="card">
-          <h2>Начать работу</h2>
-          <p>
-            Рабочая область создаётся автоматически при первом открытии. Затем
-            подготовьте аудио либо выберите обычную или Live-транскрибацию.
-          </p>
-          <div className="actions">
-            <button onClick={() => onNavigate("audio")}>
-              Подготовить аудио
-            </button>
-            <button className="primary" onClick={onOpenTranscriptions}>
-              Создать транскрибацию
-            </button>
-            <button onClick={() => onNavigate("settings")}>Настройки</button>
+        <article className="card dashboard-panel dashboard-connections" aria-labelledby="dashboard-connections-title">
+          <h2 id="dashboard-connections-title">Подключения</h2>
+          <div className="dashboard-connection-list">
+            <div className="dashboard-row" role="group" aria-label="Google Drive">
+              <span><strong>Google Drive</strong><small>{googleStatus}</small></span>
+              {googleError && <button type="button" onClick={loadGoogleConnection}>Повторить</button>}
+            </div>
+            <div className="dashboard-row" role="group" aria-label="Windows Companion">
+              <span><strong>Windows Companion</strong><small>{deviceStatus}</small></span>
+              {devices.error && <button type="button" onClick={() => void devices.refresh()}>Повторить</button>}
+            </div>
+          </div>
+          <div className="dashboard-connection-status">
+            <div role="group" aria-label="Готовность к работе">
+              <span>ElevenLabs и Google Drive · </span>
+              <strong>
+                {credentialsLoading || googleLoading
+                  ? "Загрузка…"
+                  : credentialsError || googleError
+                    ? "Недоступно"
+                    : readyToTranscribe
+                      ? "Можно начинать"
+                      : "Нужна настройка"}
+              </strong>
+              {credentialsError && <button type="button" onClick={loadCredentials}>Повторить</button>}
+            </div>
+            {needsAttention.length > 0 && (
+              <ul className="dashboard-attention">
+                {needsAttention.map((item) => <li key={item}>{item}</li>)}
+              </ul>
+            )}
+            <button type="button" onClick={onOpenConnections}>Настроить подключения</button>
           </div>
         </article>
-      )}
+      </div>
+      <footer className="dashboard-actions">
+        <button type="button" onClick={() => onNavigate("audio")}>Подготовить аудио</button>
+        <button type="button" className="primary" onClick={onOpenTranscriptions}>Новая транскрибация</button>
+      </footer>
     </section>
   );
 }
@@ -10965,6 +10985,7 @@ function PlatformShell() {
               }
               navigate(nextPage);
             }}
+            onOpenConnections={() => navigate("settings", "connections")}
             onOpenJob={(job) => {
               setRequestedProjectId(job.project_id);
               setRequestedTranscriptionMode("batch");

@@ -818,13 +818,13 @@ function installFocusedOutputFixture(options: OutputFixtureOptions = {}) {
 
 async function waitForPlatformOverview() {
   expect(
-    await screen.findByRole("heading", { name: "VoiceOps Studio" }),
+    await screen.findByRole("heading", { name: "Обзор", level: 1 }),
   ).toBeInTheDocument();
   expect(
     screen.getByRole("button", { name: "Обзор", current: "page" }),
   ).toBeInTheDocument();
   await waitFor(() =>
-    expect(screen.getByLabelText("Последние результаты")).not.toHaveTextContent(
+    expect(screen.getByLabelText("В работе")).not.toHaveTextContent(
       "Загрузка…",
     ),
   );
@@ -2821,10 +2821,10 @@ describe("Studio PWA", () => {
     });
     renderApp();
     await waitForPlatformOverview();
-    expect(screen.getByLabelText("Последние результаты")).toHaveTextContent("Недоступно");
+    expect(screen.getByLabelText("В работе")).toHaveTextContent("Недоступно");
     const retry = await screen.findByRole("button", { name: "Повторить загрузку задач" });
     await userEvent.click(retry);
-    await waitFor(() => expect(screen.getByLabelText("Последние результаты")).toHaveTextContent("Последних задач: 0"));
+    await waitFor(() => expect(screen.getByLabelText("В работе")).toHaveTextContent("Сейчас нет активных задач."));
     expect(projectReads).toBe(1);
     expect(jobReads).toBe(2);
     expect(screen.getByLabelText("Google Drive")).toHaveTextContent("Подключён");
@@ -2832,7 +2832,7 @@ describe("Studio PWA", () => {
       "Можно начинать",
     );
     expect(
-      screen.getByRole("heading", { name: "Последние документы" }),
+      screen.getByRole("heading", { name: "Недавние документы" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Newer")).not.toBeInTheDocument();
     expect(screen.queryByText("Older")).not.toBeInTheDocument();
@@ -2852,11 +2852,11 @@ describe("Studio PWA", () => {
     });
     renderApp();
     await waitForPlatformOverview();
-    expect(await screen.findByText("Начать работу")).toBeInTheDocument();
+    expect(await screen.findByText(/Studio подготовит рабочую область автоматически/)).toBeInTheDocument();
     expect(
-      screen.getAllByRole("button", { name: "Создать транскрибацию" }).length,
+      screen.getAllByRole("button", { name: "Новая транскрибация" }).length,
     ).toBeGreaterThan(0);
-    expect(screen.getByLabelText("Последние результаты")).toHaveTextContent(
+    expect(screen.getByLabelText("В работе")).toHaveTextContent(
       "Начните с первой записи",
     );
   });
@@ -2884,8 +2884,8 @@ describe("Studio PWA", () => {
     });
     renderApp();
     await waitForPlatformOverview();
-    expect(screen.getByLabelText("Последние результаты")).toHaveTextContent(
-      "Последних задач: 0",
+    expect(screen.getByLabelText("В работе")).toHaveTextContent(
+      "Сейчас нет активных задач.",
     );
     expect(screen.getByLabelText("Google Drive")).toHaveTextContent(
       "Недоступно",
@@ -3096,7 +3096,7 @@ describe("Studio PWA", () => {
     try {
       renderApp();
       await waitForPlatformOverview();
-      const projectsCard = screen.getByLabelText("Последние результаты");
+      const projectsCard = screen.getByLabelText("В работе");
       const credentialsCard = screen.getByLabelText("Готовность к работе");
       await waitFor(() => expect(projectsCard).toHaveTextContent("Недоступно"));
       await waitFor(() => expect(credentialsCard).toHaveTextContent("Недоступно"));
@@ -3110,7 +3110,7 @@ describe("Studio PWA", () => {
       await userEvent.click(
         within(credentialsCard).getByRole("button", { name: "Повторить" }),
       );
-      await waitFor(() => expect(projectsCard).toHaveTextContent("Последних задач: 0"));
+      await waitFor(() => expect(projectsCard).toHaveTextContent("Сейчас нет активных задач."));
       await waitFor(() => expect(credentialsCard).toHaveTextContent("Можно начинать"));
       expect(projectReads).toBe(2);
       expect(credentialReads).toBe(2);
@@ -3155,7 +3155,7 @@ describe("Studio PWA", () => {
 
     renderApp();
     await waitForPlatformOverview();
-    const projectsCard = screen.getByLabelText("Последние результаты");
+    const projectsCard = screen.getByLabelText("В работе");
     const credentialsCard = screen.getByLabelText("Готовность к работе");
     await waitFor(() => expect(projectsCard).toHaveTextContent("Недоступно"));
     await waitFor(() => expect(credentialsCard).toHaveTextContent("Недоступно"));
@@ -3168,7 +3168,7 @@ describe("Studio PWA", () => {
     await userEvent.click(
       within(credentialsCard).getByRole("button", { name: "Повторить" }),
     );
-    await waitFor(() => expect(projectsCard).toHaveTextContent("Последних задач: 0"));
+    await waitFor(() => expect(projectsCard).toHaveTextContent("Сейчас нет активных задач."));
     await waitFor(() => expect(credentialsCard).toHaveTextContent("Можно начинать"));
   });
 
@@ -3203,7 +3203,7 @@ describe("Studio PWA", () => {
 
     renderApp();
     await waitForPlatformOverview();
-    const initialProjectsCard = screen.getByLabelText("Последние результаты");
+    const initialProjectsCard = screen.getByLabelText("В работе");
     await waitFor(() =>
       expect(initialProjectsCard).toHaveTextContent("Недоступно"),
     );
@@ -3216,7 +3216,7 @@ describe("Studio PWA", () => {
     expect(olderRetrySignal?.aborted).toBe(true);
     await openPlatformNavPage("Обзор");
     await waitForPlatformOverview();
-    const currentProjectsCard = screen.getByLabelText("Последние результаты");
+    const currentProjectsCard = screen.getByLabelText("В работе");
     await waitFor(() =>
       expect(currentProjectsCard).toHaveTextContent("Недоступно"),
     );
@@ -3240,8 +3240,8 @@ describe("Studio PWA", () => {
     await waitForPlatformOverview();
 
     await userEvent.click(
-      within(await screen.findByRole("banner")).getByRole("button", {
-        name: "Создать транскрибацию",
+      screen.getByRole("button", {
+        name: "Новая транскрибация",
       }),
     );
 
@@ -3268,7 +3268,7 @@ describe("Studio PWA", () => {
     await waitForPlatformOverview();
 
     await userEvent.click(
-      within(await screen.findByRole("banner")).getByRole("button", {
+      screen.getByRole("button", {
         name: "Подготовить аудио",
       }),
     );
@@ -12107,26 +12107,16 @@ describe("Studio PWA", () => {
     expect(replaceKey).toHaveAttribute("data-lpignore", "true");
     expect(replaceKey).toHaveAttribute("data-bwignore", "true");
   });
-  it("renders polished overview summary cards with separated labels and values", async () => {
+  it("shows the dashboard work, documents, and connection states in distinct panels", async () => {
     renderApp();
-    const projectsCard = await screen.findByLabelText("Последние результаты");
-    expect(within(projectsCard).getByText("Транскрибации и результаты")).toHaveClass(
-      "summary-label",
-    );
-    await waitFor(() =>
-      expect(within(projectsCard).getByText("Последних задач: 0")).toHaveClass(
-        "summary-value",
-      ),
-    );
-    const driveCard = screen.getByLabelText("Google Drive");
-    expect(within(driveCard).getByText("Google Drive")).toHaveClass(
-      "summary-label",
-    );
-    expect(within(driveCard).getByText("Подключён")).toHaveClass(
-      "summary-value",
-    );
-    expect(screen.queryByText("ПРОЕКТЫ1")).not.toBeInTheDocument();
-    expect(screen.queryByText("GOOGLE DRIVEПодключён")).not.toBeInTheDocument();
+    await waitForPlatformOverview();
+    const work = screen.getByRole("article", { name: "В работе" });
+    expect(await within(work).findByText("Сейчас нет активных задач.")).toBeVisible();
+    expect(screen.getByRole("article", { name: "Недавние документы" })).toBeVisible();
+    const connections = screen.getByRole("article", { name: "Подключения" });
+    const drive = within(connections).getByRole("group", { name: "Google Drive" });
+    expect(await within(drive).findByText("Подключён")).toBeVisible();
+    expect(within(connections).getByRole("group", { name: "Windows Companion" })).toBeVisible();
   });
 
   it("does not expose the internal project selector or lifecycle for one workspace", async () => {
@@ -13983,7 +13973,7 @@ describe("Studio PWA", () => {
       /\.meta\s*\{[^}]*grid-template-columns:\s*minmax\(8rem, 0\.35fr\) minmax\(0, 1fr\)/s,
     );
     expect(css).toMatch(
-      /@media \(max-width: 900px\)[\s\S]*?\.app-nav\s*\{[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/,
+      /@media \(max-width: 900px\)[\s\S]*?\.app-nav\s*\{[^}]*flex-wrap:\s*wrap/,
     );
     expect(css).toMatch(
       /@media \(max-width: 620px\)[\s\S]*?\.meta\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/,

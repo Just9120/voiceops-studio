@@ -274,7 +274,7 @@ for (const viewport of [{width: 1280, height: 720}, {width: 768, height: 1024}, 
           const {top, width, height} = node.getBoundingClientRect();
           return {top: Math.round(top), width, height};
         }));
-      expect(new Set(buttons.map(button => button.top)).size).toBe(viewport.width <= 420 ? 2 : 1);
+      expect(new Set(buttons.map(button => button.top)).size).toBe(1);
       expect((await navigation.boundingBox())!.height).toBeLessThan(110);
       if (viewport.width <= 420) {
         for (const button of buttons) {
@@ -283,8 +283,8 @@ for (const viewport of [{width: 1280, height: 720}, {width: 768, height: 1024}, 
         }
       }
     }
-    await expect(page.getByText('Последних задач: 3', {exact: true})).toBeVisible();
-    await expect(page.getByText('Среди последних: в работе 0, документов 3.', {exact: true})).toBeVisible();
+    await expect(page.getByRole('article', {name: 'В работе'}).getByText('Сейчас нет активных задач.')).toBeVisible();
+    await expect(page.getByRole('article', {name: 'Недавние документы'}).getByRole('link')).toHaveCount(3);
     await expect(page.locator('.dashboard-workspace-grid')).toBeVisible();
     await noHorizontalOverflow(page);
     if (viewport.width === 390) {
@@ -292,7 +292,7 @@ for (const viewport of [{width: 1280, height: 720}, {width: 768, height: 1024}, 
       expect(new Set(boxes.map(Math.round)).size).toBe(1);
     }
     await expect(page.getByRole('link',{name:'Открыть документ: Запись 1',exact:true})).toHaveAttribute('href',history[0].primary_output_url);
-    await page.getByRole('button',{name:'Запись 1',exact:true}).click();
+    await page.getByRole('button',{name:'Открыть задачу: Запись 1',exact:true}).click();
     await expect(page.getByRole('dialog',{name:'Запись 1',exact:true})).toBeVisible();
     await page.keyboard.press('Escape');
     if(await page.locator('.recent-jobs').getAttribute('open') !== null) await page.locator('.recent-jobs > summary').click();
