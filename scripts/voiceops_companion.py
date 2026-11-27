@@ -59,6 +59,12 @@ def bundled_probe():
     return Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) / "voiceops-tools" / "probe.wav"
 
 
+def brand_asset():
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / "voiceops-tools" / "brand.png"
+    return Path(__file__).resolve().parent.parent / "deploy" / "companion" / "voiceops-brand.png"
+
+
 def autostart(enable=None):
     if os.name != "nt" or not getattr(sys, "frozen", False):
         return False
@@ -108,48 +114,77 @@ class CompanionWindow:
         self.status = tk.StringVar(value="Обработчик остановлен.")
         self.label = tk.StringVar(value="Мой компьютер")
         self.auto = tk.BooleanVar(value=False)
-        window.title("VoiceOps Studio — локальный обработчик")
+        self.view = "pairing"
+        window.title("VoiceOps Companion")
+        window.geometry("900x540")
         window.minsize(440, 375)
         window.protocol("WM_DELETE_WINDOW", self.close_window)
-        scroll = ttk.Frame(window)
-        ttk.Separator(window).grid(row=1, column=0, sticky="ew")
-        window.grid_rowconfigure(0, weight=1)
+        window.grid_rowconfigure(1, weight=1)
         window.grid_columnconfigure(0, weight=1)
-        scroll.grid(row=0, column=0, sticky="nsew")
+
         style = ttk.Style(window)
-        self.canvas = tk.Canvas(scroll, width=424, height=326, highlightthickness=0, takefocus=False,
-                                background=style.lookup("TFrame", "background") or window.cget("background"))
+        style.theme_use("clam")
+        style.configure("TFrame", background="#edf2f8")
+        style.configure("TLabel", background="#edf2f8", foreground="#152440", font=("Segoe UI", 10))
+        style.configure("CompanionHeader.TFrame", background="#f4f7fc")
+        style.configure("CompanionHeader.TLabel", background="#f4f7fc")
+        style.configure("CompanionTitle.TLabel", font=("Segoe UI", 17, "bold"))
+        style.configure("CompanionCard.TLabelframe", background="#ffffff", bordercolor="#cdd8ea")
+        style.configure("CompanionCard.TLabelframe.Label", background="#ffffff",
+                        foreground="#152440", font=("Segoe UI", 12, "bold"))
+        style.configure("CompanionCard.TFrame", background="#ffffff")
+        style.configure("CompanionCard.TLabel", background="#ffffff")
+        style.configure("TButton", padding=(10, 8), font=("Segoe UI", 10), foreground="#152440")
+        style.configure("CompanionPrimary.TButton", background="#214db0", foreground="#ffffff")
+        style.map("CompanionPrimary.TButton", background=[("disabled", "#dbe5f5"), ("active", "#173d94")],
+                  foreground=[("disabled", "#425570"), ("!disabled", "#ffffff")])
+        style.configure("CompanionStop.TButton", background="#fce6ea", foreground="#981e37")
+        style.map("CompanionStop.TButton", background=[("active", "#f8d3db")])
+
+        header = ttk.Frame(window, style="CompanionHeader.TFrame", padding=(12, 8))
+        header.grid(row=0, column=0, sticky="ew")
+        asset = brand_asset()
+        if asset.is_file():
+            self.brand = tk.PhotoImage(file=asset, master=window)
+            ttk.Label(header, image=self.brand, style="CompanionHeader.TLabel").pack(side="left", padx=(0, 8))
+            window.iconphoto(True, self.brand)
+        ttk.Label(header, text="VoiceOps Companion", style="CompanionHeader.TLabel").pack(side="left")
+        ttk.Label(header, text="Windows x64", style="CompanionHeader.TLabel").pack(side="right")
+
+        scroll = ttk.Frame(window)
+        scroll.grid(row=1, column=0, sticky="nsew")
+        self.canvas = tk.Canvas(scroll, highlightthickness=0, takefocus=False,
+                                background=style.lookup("TFrame", "background"))
         scrollbar = ttk.Scrollbar(scroll, orient="vertical", command=self.canvas.yview, takefocus=False)
         self.canvas.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
-        body = ttk.Frame(self.canvas, padding=(16, 12))
+        body = ttk.Frame(self.canvas, padding=(12, 12))
+        body.columnconfigure(0, weight=1)
         body_item = self.canvas.create_window(0, 0, anchor="nw", window=body)
         body.bind("<Configure>", lambda _: self.update_scroll())
+        self.step_title = ttk.Label(body, style="CompanionTitle.TLabel")
+        self.step_title.grid(row=0, column=0, sticky="ew")
+        self.step_intro = ttk.Label(body)
+        self.step_intro.grid(row=1, column=0, sticky="ew", pady=(4, 10))
 
-
-        pairing = ttk.LabelFrame(body, text="1. Привязка", padding=10)
-        pairing.grid(row=0, column=0, sticky="new")
-        body.columnconfigure(0, weight=1)
-        self.connection_label = ttk.Label(pairing)
-        self.connection_label.pack(anchor="w", pady=(0, 6))
-        ttk.Label(pairing, text="Имя компьютера").pack(anchor="w")
+        pairing = ttk.LabelFrame(body, text="Привязка", padding=12, style="CompanionCard.TLabelframe")
+        ttk.Label(pairing, text="Имя компьютера", style="CompanionCard.TLabel").pack(anchor="w")
         self.label_field = ttk.Entry(pairing, textvariable=self.label)
-        self.label_field.pack(fill="x")
-        self.pair_button = ttk.Button(pairing, text="Связать со Studio", command=self.pair)
-        self.pair_button.pack(anchor="w", pady=(6, 0))
+        self.label_field.pack(fill="x", pady=(6, 8), ipady=5)
+        self.connection_label = ttk.Label(pairing, style="CompanionCard.TLabel")
+        self.connection_label.pack(anchor="w")
         self.import_connection = ttk.Button(pairing, text="Использовать прежнее подключение", command=self.adopt)
         self.approve_button = ttk.Button(pairing, text="Открыть подтверждение в браузере", command=self.open_approval)
 
-        model = ttk.LabelFrame(body, text="2. Модель и версия", padding=10)
-        model.grid(row=1, column=0, sticky="new", pady=(10, 0))
-        self.model_hint = ttk.Label(model, text="Станет доступно после привязки компьютера.")
-        self.model_options = ttk.Frame(model)
+        model = ttk.LabelFrame(body, text="Модель и версия", padding=12, style="CompanionCard.TLabelframe")
+        self.model_options = ttk.Frame(model, style="CompanionCard.TFrame")
+        self.model_options.pack(fill="x")
         defaults = {(profile_id, profile.revision): profile for profile_id, profile in PROFILES.items()}
         self.model_choices = tuple((defaults | RETAINED_PROFILES).items())
         self.model_choice = ttk.Combobox(self.model_options, state="readonly", values=self.model_labels())
         self.model_choice.current(0)
-        self.model_choice.pack(fill="x")
+        self.model_choice.pack(fill="x", ipady=4)
         self.import_model = ttk.Button(self.model_options, text="Импортировать файлы выбранной модели",
                                        command=self.import_models)
         self.install_model = ttk.Button(self.model_options, text="Выбрать диск и скачать / продолжить",
@@ -157,46 +192,46 @@ class CompanionWindow:
         self.probe_button = ttk.Button(self.model_options, text="Проверить скорость выбранной модели",
                                        command=self.probe_model)
         self.remove_model_button = ttk.Button(self.model_options, text="Удалить выбранную версию", command=self.remove_model)
-        for button in (self.import_model, self.install_model, self.probe_button, self.remove_model_button):
-            button.pack(anchor="w", pady=(5, 0))
+        for button in (self.install_model, self.import_model, self.probe_button, self.remove_model_button):
+            button.pack(anchor="w", pady=(6, 0))
 
-        tray_hint = ttk.Label(body, text="Закрытие окна сворачивает обработчик в трей. Остановка — внизу окна.")
-        tray_hint.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        side_by_side = False
+        worker = ttk.LabelFrame(body, text="Состояние", padding=12, style="CompanionCard.TLabelframe")
+        self.worker_model = ttk.Label(worker, style="CompanionCard.TLabel")
+        self.worker_model.pack(fill="x")
+        self.auto_button = ttk.Checkbutton(worker, text="Запускать при входе в Windows",
+                                           variable=self.auto, command=self.toggle_autostart)
+        self.auto_button.pack(anchor="w", pady=(6, 0))
+        self.step_panels = {"pairing": pairing, "models": model, "worker": worker}
+        self.status_label = ttk.Label(body, textvariable=self.status, wraplength=390)
+        self.status_label.grid(row=3, column=0, sticky="ew", pady=(8, 0))
 
         def resize_panels(event):
-            nonlocal side_by_side
             self.canvas.itemconfigure(body_item, width=event.width)
-            tray_hint.configure(wraplength=max(1, event.width - 32))
-            wide = event.width >= max(720, self.model_options.winfo_reqwidth() * 2 + 56)
-            if side_by_side == wide:
-                return
-            side_by_side = wide
-            body.columnconfigure(1, weight=1 if wide else 0)
-            pairing.grid_configure(padx=(0, 10) if wide else 0)
-            model.grid_configure(row=0 if wide else 1, column=1 if wide else 0, pady=0 if wide else (10, 0))
+            length = max(1, event.width - 32)
+            for widget in (self.step_intro, self.status_label, self.worker_model, self.connection_label):
+                widget.configure(wraplength=length)
 
         self.canvas.bind("<Configure>", resize_panels)
-
-        footer = ttk.Frame(window, padding=(16, 8, 16, 12))
-        footer.grid(row=2, column=0, sticky="ew")
-        ttk.Label(footer, text="3. Запуск").pack(anchor="w")
-        actions = ttk.Frame(footer)
-        actions.pack(fill="x", pady=(4, 4))
-        self.start_button = ttk.Button(actions, text="Запустить обработчик", command=self.start)
-        self.stop_button = ttk.Button(actions, text="Остановить", command=self.stop_task)
-        self.start_button.pack(side="left")
-        self.stop_button.pack(side="left", padx=(8, 0))
-        self.auto_button = ttk.Checkbutton(footer, text="Запускать при входе в Windows",
-                                           variable=self.auto, command=self.toggle_autostart)
-        self.auto_button.pack(anchor="w")
-        self.status_label = ttk.Label(footer, textvariable=self.status, wraplength=400)
-        self.status_label.pack(fill="x", pady=(6, 0))
-        footer.bind("<Configure>", lambda event: self.status_label.configure(wraplength=max(1, event.width - 32)))
+        ttk.Separator(window).grid(row=2, column=0, sticky="ew")
+        footer = ttk.Frame(window, style="CompanionHeader.TFrame", padding=(12, 8))
+        footer.grid(row=3, column=0, sticky="ew")
+        self.stop_button = ttk.Button(footer, text="Остановить", command=self.stop_task, style="CompanionStop.TButton")
+        self.stop_button.pack(side="right")
+        self.step_actions = ttk.Frame(footer, style="CompanionHeader.TFrame")
+        self.step_actions.pack(side="right", padx=(0, 8))
+        self.pair_button = ttk.Button(self.step_actions, text="Связать со Studio", command=self.pair,
+                                      style="CompanionPrimary.TButton")
+        self.to_worker = ttk.Button(self.step_actions, text="К запуску", style="CompanionPrimary.TButton",
+                                    command=lambda: self.show_step("worker"))
+        self.start_button = ttk.Button(self.step_actions, text="Запустить", command=self.start,
+                                       style="CompanionPrimary.TButton")
+        self.back_button = ttk.Button(footer, text="Компьютер", command=self.previous_step)
+        self.back_button.pack(side="left")
 
         window.bind("<MouseWheel>", self.scroll_window, add="+")
-        for control in (self.label_field, self.pair_button, self.import_connection, self.approve_button,
-                        self.model_choice, self.import_model, self.install_model, self.probe_button, self.remove_model_button):
+        for control in (self.label_field, self.import_connection, self.approve_button,
+                        self.model_choice, self.import_model, self.install_model, self.probe_button,
+                        self.remove_model_button, self.auto_button):
             control.bind("<FocusIn>", self.reveal_control, add="+")
         restore_active = False
         try:
@@ -218,7 +253,8 @@ class CompanionWindow:
         except (WorkerError, OSError):
             self.status.set("Не удалось прочитать настройки. Проверьте профиль подключения.")
         self.refresh_model_labels()
-        self.enable_controls()
+        first_step = ("worker" if restore_active else "models") if self.identity else "pairing"
+        self.show_step(first_step)
         window.after(100, self.pump)
         window.after(250, self.publish_inventory)
         self.add_tray()
@@ -253,9 +289,9 @@ class CompanionWindow:
 
     def add_tray(self):
         import pystray
-        from PIL import Image, ImageDraw
-        image = Image.new("RGB", (64, 64), "#14213d")
-        ImageDraw.Draw(image).polygon([(16, 16), (51, 32), (16, 48)], fill="#74dcff")
+        from PIL import Image
+        asset = brand_asset()
+        image = Image.open(asset).convert("RGBA") if asset.is_file() else Image.new("RGB", (32, 32), "#214db0")
         self.tray = pystray.Icon("voiceops_companion", image, "VoiceOps Studio", pystray.Menu(
             pystray.MenuItem("Открыть", lambda *_: self.events.put(("show", None)), default=True),
             pystray.MenuItem("Остановить", lambda *_: self.events.put(("stop", None))),
@@ -263,13 +299,35 @@ class CompanionWindow:
         ))
         threading.Thread(target=self.tray.run, name="voiceops-tray", daemon=True).start()
 
+    def show_step(self, step):
+        self.view = step
+        steps = {
+            "pairing": ("Подключите компьютер", "Свяжите этот ПК с личным Studio.", self.pair_button),
+            "models": ("Модели на этом ПК", "Выберите активную версию для новых заданий.", self.to_worker),
+            "worker": ("Локальный обработчик", "Назначенные задания выполняются на этом компьютере.", self.start_button),
+        }
+        title, subtitle, action = steps[step]
+        self.step_title.configure(text=title)
+        self.step_intro.configure(text=subtitle)
+        for panel in self.step_panels.values():
+            panel.grid_remove()
+        self.step_panels[step].grid(row=2, column=0, sticky="ew")
+        for button in (self.pair_button, self.to_worker, self.start_button):
+            button.pack_forget()
+        action.pack()
+        self.canvas.yview_moveto(0)
+        self.enable_controls()
+
+    def previous_step(self):
+        self.show_step({"worker": "models", "models": "pairing", "pairing": "models"}[self.view])
+
     def enable_controls(self):
         busy = self.thread is not None
         self.pair_button.configure(state="disabled" if busy else "normal",
                                    text="Переподключить к Studio" if self.identity else "Связать со Studio")
         self.label_field.configure(state="disabled" if busy else "normal")
-        self.connection_label.configure(text="Компьютер привязан к Studio." if self.identity
-                                        else "Подключите компьютер к своему аккаунту Studio.")
+        self.connection_label.configure(text="Компьютер уже привязан. Вы можете подтвердить новое подключение."
+                                        if self.identity else "Подтверждение откроется в браузере.")
         if self.legacy and not self.identity:
             self.import_connection.pack(anchor="w", pady=(5, 0))
         else:
@@ -278,12 +336,14 @@ class CompanionWindow:
             self.approve_button.pack(anchor="w", pady=(5, 0))
         else:
             self.approve_button.pack_forget()
-        if self.identity:
-            self.model_hint.pack_forget()
-            self.model_options.pack(fill="x")
-        else:
-            self.model_options.pack_forget()
-            self.model_hint.pack(anchor="w")
+        self.back_button.configure(
+            text={"worker": "Модели", "models": "Компьютер", "pairing": "К моделям"}[self.view],
+            state="normal" if self.identity and not busy else "disabled",
+        )
+        self.to_worker.configure(state="normal" if self.identity and not busy else "disabled")
+        selected = self.selected_model()
+        model_name = f"{selected[1].name} · {selected[1].revision[:8]}" if selected else "Модель не выбрана"
+        self.worker_model.configure(text=model_name)
         self.import_connection.configure(state="normal" if self.legacy and not self.identity and not busy else "disabled")
         self.approve_button.configure(state="normal" if self.approval_url else "disabled")
         self.import_model.configure(state="normal" if self.identity and not busy else "disabled")
@@ -343,6 +403,7 @@ class CompanionWindow:
                 self.enable_controls()
             elif kind == "identity":
                 self.identity = data
+                self.show_step("models")
             elif kind == "inventory-disk":
                 self.inventory_disk = data
             elif kind == "probe":
