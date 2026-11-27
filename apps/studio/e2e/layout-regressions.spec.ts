@@ -267,6 +267,7 @@ for (const viewport of [{width: 1280, height: 720}, {width: 768, height: 1024}, 
   });
 
   test(`layout overview history audio and menus ${viewport.width}`, async ({page}) => {
+    await page.clock.setFixedTime(new Date('2026-10-20T12:00:00Z'));
     await page.setViewportSize(viewport); await fixtures(page); await page.goto('/');
     const navigation = page.getByRole('navigation', {name: 'Основная навигация'});
     await expect(navigation).toBeVisible();
@@ -331,6 +332,12 @@ for (const viewport of [{width: 1280, height: 720}, {width: 768, height: 1024}, 
     await search.clear();
     await expect(page.locator('.recent-jobs article[data-job-id]')).toHaveCount(10);
     await expect(page.getByRole('button', {name: 'Предыдущая страница истории', exact: true})).toBeDisabled();
+    await page.getByLabel('Период создания').selectOption('7');
+    await expect(page.locator('.recent-jobs article[data-job-id]')).toHaveCount(0);
+    await page.getByLabel('Период создания').selectOption('30');
+    await expect(page.locator('.recent-jobs article[data-job-id]')).toHaveCount(10);
+    await page.getByRole('button', {name: 'Сбросить фильтры', exact: true}).click();
+    await expect(page.getByLabel('Период создания')).toHaveValue('0');
     await noHorizontalOverflow(page);
     await page.getByLabel('Название документа задачи 1').fill('Synthetic preserved title');
     await page.getByRole('button',{name:'Добавить задачу',exact:true}).click();
@@ -449,12 +456,14 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
       const picker=page.locator('.yandex-disk-picker-dialog');
       await expect(picker.locator('.google-drive-folder-list')).toBeVisible();
       const footer=picker.locator('footer');
-      await expect(footer.getByRole('button')).toBeInViewport({ratio:1});
+      for (const button of await footer.getByRole('button').all()) {
+        await expect(button).toBeInViewport({ratio:1});
+      }
       const geometry=await picker.evaluate(element=>{
         const rect=(selector:string)=>element.querySelector(selector)!.getBoundingClientRect();
         const header=rect('header'), toolbar=rect('.yandex-disk-picker-toolbar'), navigation=rect('nav'), body=rect('.yandex-disk-picker-content'), footer=rect('footer');
         const list=element.querySelector('.yandex-disk-picker-content')!;
-        return {ordered:header.bottom<=toolbar.top+1 && toolbar.bottom<=navigation.top+1 && navigation.bottom<=body.top+1 && body.bottom<=footer.top+1,
+        return {ordered:header.bottom<=navigation.top+1 && navigation.bottom<=toolbar.top+1 && toolbar.bottom<=body.top+1 && body.bottom<=footer.top+1,
           bodyHeight:body.height,scrollable:list.scrollHeight>list.clientHeight,inside:element.getBoundingClientRect().top>=0 && element.getBoundingClientRect().bottom<=innerHeight+1,
           noOverflow:element.scrollWidth<=element.clientWidth+1};
       });
@@ -463,7 +472,9 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
       const content=picker.locator('.yandex-disk-picker-content');
       await content.evaluate(element=>{element.scrollTop=element.scrollHeight;});
       await expect(picker.locator('.google-drive-folder-row').last()).toBeInViewport({ratio:1});
-      await expect(footer.getByRole('button')).toBeInViewport({ratio:1});
+      for (const button of await footer.getByRole('button').all()) {
+        await expect(button).toBeInViewport({ratio:1});
+      }
       await page.keyboard.press('Escape');
       await expect(picker).toHaveCount(0);
     }
