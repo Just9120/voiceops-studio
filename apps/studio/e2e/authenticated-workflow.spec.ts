@@ -447,14 +447,15 @@ test('Audio workspace processes a device WAV in-browser without uploading source
     .locator('..');
   await parameters.getByRole('checkbox', { name: 'Уменьшить длинные паузы в аудио или видео' }).check();
   await parameters.getByText('Дополнительные настройки пауз').click();
+  const processAudio = page.getByRole('button', { name: 'Обработать на устройстве', exact: true });
   const threshold = parameters.getByLabel('Что считать тишиной, dB');
   await threshold.fill('');
   await expect(threshold).toHaveValue('');
   await threshold.pressSequentially('-');
   await expect(threshold).toHaveValue('-');
-  await parameters.getByRole('button', { name: 'Обработать на устройстве', exact: true }).click();
+  await processAudio.click();
   await expect(page.getByText(/введите число от −60 до −10/)).toBeVisible();
-  await expect(page.getByRole('heading', { name: '3. Локальные результаты' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Локальные результаты' })).toHaveCount(0);
   await threshold.fill('');
   await threshold.pressSequentially('-45');
   await expect(threshold).toHaveValue('-45');
@@ -462,12 +463,10 @@ test('Audio workspace processes a device WAV in-browser without uploading source
   await keep.fill('');
   await keep.pressSequentially('0.3');
   await expect(keep).toHaveValue('0,3');
-  await parameters
-    .getByRole('button', { name: 'Обработать на устройстве', exact: true })
-    .click();
+  await processAudio.click();
 
   const localResults = page.getByRole('heading', {
-    name: '3. Локальные результаты',
+    name: 'Локальные результаты',
   }).locator('..');
   await expect(localResults).toBeVisible();
   const download = localResults.getByRole('link', { name: 'Скачать файл' });
