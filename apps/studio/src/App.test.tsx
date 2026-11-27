@@ -3303,6 +3303,7 @@ describe("Studio PWA", () => {
       const heading = await screen.findByRole("heading", { name: "Подготовка аудио" });
       expect(heading).toHaveFocus();
       expect(scrollTo).toHaveBeenCalledWith(0, 0);
+      await userEvent.click(screen.getByRole("button", { name: "Добавить файлы", exact: true }));
       await userEvent.click(screen.getByRole("tab", { name: "Обработать на устройстве" }));
       const wav = encodeWav({ sampleRate: 48_000, channels: [Float32Array.from([0.2, -0.2])] });
       const file = new File([wav], "safe.wav", { type: "audio/wav" });

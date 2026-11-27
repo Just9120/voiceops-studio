@@ -1,3 +1,36 @@
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("/fonts/inter-cyrillic.woff2") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("/fonts/inter-latin.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-weight: 600 800;
+  font-display: swap;
+  src: url("/fonts/manrope-cyrillic.woff2") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-weight: 600 800;
+  font-display: swap;
+  src: url("/fonts/manrope-latin.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
   font-family: Inter, system-ui, sans-serif;
   --studio-bg: #eff2f7;
@@ -2029,6 +2062,8 @@ button.studio-appearance-option[aria-pressed="true"] {
   margin: 0;
 }
 .workspace-heading .page-title {
+  font-family: Manrope, Inter, sans-serif;
+  font-weight: 700;
   font-size: clamp(28px, 4vw, 34px);
 }
 .workspace-heading p {
@@ -2048,6 +2083,10 @@ button.studio-appearance-option[aria-pressed="true"] {
   align-items: start;
   gap: 12px;
 }
+.dashboard-panel,
+.audio-preparation-card {
+  border-radius: 10px;
+}
 .dashboard-panel {
   display: grid;
   gap: 12px;
@@ -2059,6 +2098,7 @@ button.studio-appearance-option[aria-pressed="true"] {
   margin: 0;
 }
 .dashboard-panel h2 {
+  font-family: Manrope, Inter, sans-serif;
   font-size: 21px;
 }
 .dashboard-connections {
@@ -2083,6 +2123,12 @@ button.studio-appearance-option[aria-pressed="true"] {
   flex-basis: 100%;
   margin: 0;
   padding-inline-start: 1rem;
+}
+.app-nav button,
+.workspace-action-bar button,
+.audio-source-options button,
+.audio-input-actions button {
+  border-radius: 7px;
 }
 .workspace-action-bar {
   position: sticky;
@@ -2310,16 +2356,38 @@ button.studio-appearance-option[aria-pressed="true"] {
 }
 
 .audio-preparation-card h2 {
+  font-family: Manrope, Inter, sans-serif;
   margin: 0;
   font-size: 21px;
 }
 
-.audio-source-tabs {
-  overflow-x: auto;
+.audio-preparation-card[hidden] {
+  display: none;
 }
-
-.audio-source-tabs button {
-  min-width: max-content;
+.audio-source-options,
+.audio-input-actions {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+.audio-source-options button {
+  width: 100%;
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  text-align: start;
+}
+.audio-source-options small {
+  color: var(--studio-muted);
+}
+.audio-source-options button[aria-selected="true"] {
+  background: var(--studio-active-bg);
+  border-color: var(--studio-primary);
+}
+@media (max-width: 480px) {
+  .audio-input-actions button {
+    width: 100%;
+  }
 }
 
 .audio-source-mode-panel,
@@ -2542,17 +2610,6 @@ button.studio-appearance-option[aria-pressed="true"] {
 }
 
 @media (max-width: 620px) {
-  .audio-source-tabs {
-    display: grid;
-    grid-template-columns: 1fr;
-    overflow: visible;
-  }
-
-  .audio-source-tabs button {
-    min-width: 0;
-    white-space: normal;
-  }
-
   .audio-settings-grid,
   .audio-source-grid {
     grid-template-columns: 1fr;
@@ -3424,26 +3481,18 @@ button.studio-appearance-option[aria-pressed="true"] {
 .audio-preparation-page > * {
   min-width: 0;
 }
-.audio-preparation-page .audio-settings-grid,
+.audio-preparation-page .audio-settings-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
 .audio-preparation-page .audio-source-grid {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
 }
-.audio-preparation-page .audio-source-tabs {
-  flex-wrap: wrap;
-  overflow: visible;
-}
-.audio-preparation-page .audio-source-tabs button {
-  min-width: 0;
-  flex: 0 1 auto;
-  text-align: start;
-  white-space: normal;
-}
-@media (min-width: 1120px) {
-  .audio-preparation-page:not([data-audio-source-mode="direct-drive"]) {
+@media (min-width: 901px) {
+  .audio-preparation-page[data-audio-stage="setup"] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: start;
   }
-  .audio-preparation-page:not([data-audio-source-mode="direct-drive"]) > :not(.audio-input-card, .audio-parameters-card) {
+  .audio-preparation-page[data-audio-stage="setup"] > :not(.audio-input-card, .audio-parameters-card) {
     grid-column: 1 / -1;
   }
 }

@@ -426,6 +426,7 @@ test('Audio workspace processes a device WAV in-browser without uploading source
     .getByRole('button', { name: 'Подготовка аудио', exact: true })
     .click();
   await expect(page).toHaveURL(/\/audio$/);
+  await page.getByRole('button', { name: 'Добавить файлы', exact: true }).click();
   await page
     .getByRole('tab', { name: 'Обработать на устройстве', exact: true })
     .click();

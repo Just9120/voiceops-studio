@@ -129,10 +129,15 @@ describe("AudioPreparationPage", () => {
     vi.stubGlobal("fetch", fetchMock);
     try {
       render(<AudioPreparationPage csrf="csrf" onCsrf={vi.fn()} />);
+      const add = screen.getByRole("button", { name: "Добавить файлы", exact: true });
+      await waitFor(() => expect(add).toBeEnabled());
+      await userEvent.click(add);
       const choose = await screen.findByRole("button", { name: "Выбрать файлы в Google Drive" });
       await userEvent.click(choose);
       expect(await screen.findByText(/Studio не подтвердила добавление/)).toBeInTheDocument();
       expect(choose).toBeEnabled();
+      expect(screen.getByRole("heading", { name: "Выбрать источники" })).toBeVisible();
+      await userEvent.click(screen.getByRole("button", { name: "К подготовке" }));
       expect(screen.getByRole("combobox", { name: "Формат результата" })).toBeEnabled();
       expect(screen.getByRole("button", { name: "Проверить файлы и рассчитать" })).toBeDisabled();
     } finally {
@@ -155,18 +160,21 @@ describe("AudioPreparationPage", () => {
     render(<AudioPreparationPage csrf="csrf" onCsrf={vi.fn()} />);
     await screen.findByRole("heading", { name: "Готовое аудио" });
     if (flow === "folder") await userEvent.click(screen.getByRole("checkbox", { name: "Автоматически сохранить копию в Google Drive" }));
+    if (flow === "source") await userEvent.click(screen.getByRole("button", { name: "Добавить файлы", exact: true }));
     const label = flow === "source" ? "Выбрать файлы в Google Drive" : flow === "folder" ? "Выбрать папку" : "Сохранить в Google Drive";
     await userEvent.click(screen.getByRole("button", { name: label, exact: true }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Переподключите Google Drive в настройках и повторите выбор.");
     expect(screen.queryByText("google_reauthorization_required")).not.toBeInTheDocument();
     expect(picker).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: label, exact: true })).toBeEnabled();
-    expect(screen.getByRole("link", { name: "Скачать файл" })).toBeVisible();
+    if (flow !== "source") expect(screen.getByRole("link", { name: "Скачать файл" })).toBeVisible();
     const navigate = vi.fn();
     window.addEventListener("studio:navigate-settings", navigate);
     await userEvent.click(screen.getByRole("button", { name: "Открыть настройки Google Drive" }));
     expect(navigate.mock.calls[0][0].detail).toEqual({ section: "connections" });
     window.removeEventListener("studio:navigate-settings", navigate);
+    if (flow === "source") await userEvent.click(screen.getByRole("button", { name: "К подготовке" }));
+    expect(screen.getByRole("link", { name: "Скачать файл" })).toBeVisible();
     await userEvent.click(screen.getByRole("checkbox", { name: "Автоматически сохранить копию в Google Drive" }));
     if (flow !== "folder") await userEvent.click(screen.getByRole("checkbox", { name: "Автоматически сохранить копию в Google Drive" }));
     expect(screen.getByRole("checkbox", { name: "Автоматически сохранить копию в Google Drive" })).not.toBeChecked();
@@ -437,6 +445,7 @@ describe("AudioPreparationPage", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AudioPreparationPage csrf="csrf" onCsrf={vi.fn()} />);
     await screen.findByRole("heading", { name: "Подготовка аудио" });
+    await userEvent.click(screen.getByRole("button", { name: "Добавить файлы", exact: true }));
     await userEvent.click(screen.getByRole("tab", { name: "Обработать на устройстве" }));
 
     await userEvent.upload(
@@ -484,6 +493,7 @@ describe("AudioPreparationPage", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AudioPreparationPage csrf="csrf" onCsrf={vi.fn()} />);
     await screen.findByRole("heading", { name: "Подготовка аудио" });
+    await userEvent.click(screen.getByRole("button", { name: "Добавить файлы", exact: true }));
     await userEvent.click(screen.getByRole("tab", { name: "Загрузить в Studio" }));
     const retention = screen.getByRole("combobox", { name: "Хранить исходники аудио" });
     expect(retention).toHaveValue("7");
@@ -507,21 +517,23 @@ describe("AudioPreparationPage", () => {
     render(<AudioPreparationPage csrf="csrf" onCsrf={vi.fn()} />);
     await screen.findByRole("heading", { name: "Подготовка аудио" });
 
+    const add = screen.getByRole("button", { name: "Добавить файлы", exact: true });
+    await waitFor(() => expect(add).toBeEnabled());
+    await userEvent.click(add);
     const tablist = screen.getByRole("tablist", { name: "Способ получения исходных файлов" });
-    expect(within(tablist).getAllByRole("tab")).toHaveLength(5);
-    await userEvent.click(within(tablist).getByRole("tab", { name: "Из Яндекс Диска" }));
+    expect(within(tablist).getAllByRole("tab")).toHaveLength(4);
+    const drive = within(tablist).getByRole("tab", { name: "Из Google Drive" });
+    await userEvent.click(drive);
+    await userEvent.keyboard("{ArrowDown}");
+    expect(within(tablist).getByRole("tab", { name: "Из Яндекс Диска" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "Выбрать файлы на Яндекс Диске" })).toBeEnabled();
-    const direct = within(tablist).getByRole("tab", { name: "В Google Drive без обработки" });
-    await userEvent.click(direct);
-    expect(direct).toHaveAttribute("aria-selected", "true");
+    await userEvent.click(screen.getByRole("button", { name: "К подготовке" }));
+    await waitFor(() => expect(add).toHaveFocus());
+    await userEvent.click(screen.getByRole("button", { name: "В Google Drive без обработки", exact: true }));
     expect(screen.getByRole("heading", { name: "Загрузить исходные файлы без обработки" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Подготовка" })).not.toBeInTheDocument();
-
-    direct.focus();
-    await userEvent.keyboard("{ArrowLeft}");
-    expect(within(tablist).getByRole("tab", { name: "Загрузить в Studio" }))
-      .toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("heading", { name: "Подготовка" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Подготовка", exact: true })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "К подготовке" }));
+    expect(screen.getByRole("heading", { name: "Подготовка", exact: true })).toBeInTheDocument();
   });
 });
 

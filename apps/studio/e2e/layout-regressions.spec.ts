@@ -171,6 +171,7 @@ for (const viewport of [{width:390,height:844},{width:768,height:1024},{width:12
 test('local WAV result survives route navigation and a truncated WAV requests a healthy copy', async ({page}) => {
   await fixtures(page);
   await page.goto('/audio');
+  await page.getByRole('button', {name: 'Добавить файлы', exact: true}).click();
   await page.getByRole('tab', {name: 'Обработать на устройстве', exact: true}).click();
   const input = page.getByLabel('Выбрать файлы для обработки на устройстве');
   const process = page.getByRole('button', {name: 'Обработать на устройстве', exact: true});

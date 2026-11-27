@@ -46,6 +46,9 @@ async function setup(statuses: unknown[] = [active([1]), active([1, 2]), active(
   vi.stubGlobal("fetch", fetchMock);
   const put = vi.spyOn(transport, "uploadFileWithProgress").mockResolvedValue({ ok: true, status: 200 });
   render(<AudioPreparationPage csrf="csrf" onCsrf={vi.fn()} />);
+  const add = await screen.findByRole("button", { name: "Добавить файлы", exact: true });
+  await waitFor(() => expect(add).toBeEnabled());
+  await userEvent.click(add);
   await userEvent.click(await screen.findByRole("tab", { name: "Загрузить в Studio" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Выбрать и загрузить в Studio" })).toBeEnabled());
   const upload = async () => {
