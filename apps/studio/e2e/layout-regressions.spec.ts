@@ -192,6 +192,7 @@ test('local WAV result survives route navigation and a truncated WAV requests a 
   await input.setInputFiles({name: 'truncated.wav', mimeType: 'audio/wav', buffer: wav.subarray(0, 50)});
   await process.click();
   await expect(page.getByText(/Структура WAV повреждена/)).toBeVisible();
+  await page.getByRole('button', {name: 'Добавить файлы', exact: true}).click();
   await input.setInputFiles({name: 'recording.wav', mimeType: 'audio/wav', buffer: wav});
   await process.click();
   const download = page.getByRole('link', {name: 'Скачать файл'});
@@ -361,6 +362,7 @@ for (const viewport of [{width: 1280, height: 720}, {width: 768, height: 1024}, 
     await dialog.getByRole('button', {name: 'Закрыть выбор папки', exact: true}).click();
     await expect(page.getByRole('button', {name: 'Выбрать папку', exact: true})).toBeFocused();
     await navigation.getByRole('button', {name:'Настройки', exact:true}).click();
+    await page.getByRole('button', {name:'Аккаунт и безопасность', exact:true}).click();
     const settingsTabs = page.locator('.settings-section-tabs');
     await expect(settingsTabs.getByRole('tab')).toHaveCount(6);
     if (viewport.width <= 900) {
@@ -380,7 +382,7 @@ for (const viewport of [{width: 1280, height: 720}, {width: 768, height: 1024}, 
     }
     for (const mode of ['live', 'maintenance']) {
       await page.goto(`/transcriptions?mode=${mode}`);
-      const tabName = mode === 'live' ? 'Live-транскрибация' : 'Обслуживание';
+      const tabName = mode === 'live' ? 'Live-транскрибация' : 'Документы';
       await expect(page.getByRole('tab', {name:tabName, exact:true})).toHaveAttribute('aria-selected', 'true');
       await page.reload();
       await expect(page.getByRole('tab', {name:tabName, exact:true})).toHaveAttribute('aria-selected', 'true');

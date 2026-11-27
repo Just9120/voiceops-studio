@@ -1,5 +1,8 @@
 export type Page = "dashboard" | "audio" | "projects" | "settings";
 export type SettingsSection =
+  | "overview"
+  | "devices"
+  | "analytics"
   | "account"
   | "connections"
   | "notifications"
@@ -32,7 +35,13 @@ export function parsePlatformRoute(
     case "/projects":
       return { page: "projects", settingsSection: "account" };
     case "/settings":
+      return { page: "settings", settingsSection: "overview" };
+    case "/settings/account":
       return { page: "settings", settingsSection: "account" };
+    case "/settings/devices":
+      return { page: "settings", settingsSection: "devices" };
+    case "/settings/analytics":
+      return { page: "settings", settingsSection: "analytics" };
     case "/settings/connections":
       return { page: "settings", settingsSection: "connections" };
     case "/settings/notifications":
@@ -51,12 +60,12 @@ export function parsePlatformRoute(
 
 export function platformPathFor(
   page: Page,
-  settingsSection: SettingsSection = "account",
+  settingsSection: SettingsSection = "overview",
 ) {
   if (page === "audio") return "/audio";
   if (page === "projects") return "/transcriptions";
   if (page === "settings") {
-    return settingsSection === "account"
+    return settingsSection === "overview"
       ? "/settings"
       : `/settings/${settingsSection}`;
   }
@@ -65,7 +74,7 @@ export function platformPathFor(
 
 export function pushPlatformRoute(
   page: Page,
-  settingsSection: SettingsSection = "account",
+  settingsSection: SettingsSection = "overview",
 ) {
   const path = platformPathFor(page, settingsSection);
   if (window.location.pathname !== path) {

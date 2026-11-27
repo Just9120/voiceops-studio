@@ -1001,6 +1001,7 @@ async function reviewAndConfirmBatch() {
 
 async function openSettingsPage() {
   await openPlatformNavPage("Настройки");
+  await userEvent.click(await screen.findByRole("button", { name: "Аккаунт и безопасность" }));
   expect(
     await screen.findByRole("heading", { name: "Аккаунт" }),
   ).toBeInTheDocument();
@@ -14730,11 +14731,9 @@ describe("settings diagnostics", () => {
     ).toBeInTheDocument();
     expect(window.location.pathname).toBe("/transcriptions");
     await userEvent.click(screen.getByRole("button", { name: "Настройки" }));
-    expect(
-      await screen.findByRole("heading", { name: "Аккаунт" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Настройки" })).toBeVisible();
     expect(window.location.pathname).toBe("/settings");
-    await userEvent.click(screen.getByRole("tab", { name: "Для поддержки" }));
+    await userEvent.click(screen.getByRole("button", { name: "Поддержка" }));
     expect(
       await screen.findByRole("heading", { name: "Для поддержки" }),
     ).toBeInTheDocument();
@@ -14743,7 +14742,7 @@ describe("settings diagnostics", () => {
     expect(
       await screen.findByRole("heading", { name: "Аккаунт" }),
     ).toBeInTheDocument();
-    expect(window.location.pathname).toBe("/settings");
+    expect(window.location.pathname).toBe("/settings/account");
     cleanup();
     expect(
       removeSpy.mock.calls.filter(([type]) => type === "popstate"),
@@ -14754,7 +14753,7 @@ describe("settings diagnostics", () => {
     expect(
       await screen.findByRole("heading", { name: "Для поддержки" }),
     ).toBeInTheDocument();
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/settings/account");
     fireEvent.popState(window);
     expect(
       await screen.findByRole("heading", { name: "Аккаунт" }),
@@ -14773,7 +14772,7 @@ describe("settings diagnostics", () => {
     ).toBeInTheDocument();
     cleanup();
 
-    window.history.replaceState({}, "", "/settings");
+    window.history.replaceState({}, "", "/settings/account");
     renderApp();
     expect(
       await screen.findByRole("heading", { name: "Аккаунт" }),
@@ -16206,7 +16205,7 @@ describe("Settings DEBUG session controls", () => {
     await userEvent.click(
       screen.getAllByRole("button", { name: "Настройки" })[0],
     );
-    await userEvent.click(screen.getByRole("tab", { name: "Для поддержки" }));
+    await userEvent.click(screen.getByRole("button", { name: "Поддержка" }));
   }
 
   it("renders loading, inactive defaults, active status, start and stop flows without browser storage", async () => {

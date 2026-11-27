@@ -166,7 +166,7 @@ test('authenticated user opens transcriptions and reads a completed job result',
   await navigation
     .getByRole('button', { name: 'Настройки', exact: true })
     .click();
-  await page.getByRole('tab', { name: 'Для поддержки' }).click();
+  await page.getByRole('button', { name: 'Поддержка', exact: true }).click();
   await page.getByText('Расширенные технические фильтры', { exact: true }).click();
   await page
     .getByRole('textbox', { name: 'Internal task ID', exact: true })
@@ -366,6 +366,7 @@ test('account settings revoke selected and all other active sessions', async ({
     await navigation
       .getByRole('button', { name: 'Настройки', exact: true })
       .click();
+    await page.getByRole('button', { name: 'Аккаунт и безопасность', exact: true }).click();
     const sessions = page.getByRole('region', { name: 'Активные сессии' });
     await expect(sessions.getByText('Текущая сессия', { exact: true })).toBeVisible();
     await expect(sessions.getByText('Другая сессия', { exact: true })).toHaveCount(2);

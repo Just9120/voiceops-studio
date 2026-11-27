@@ -2097,7 +2097,7 @@ button.studio-appearance-option[aria-pressed="true"] {
   margin-top: 0.75rem;
 }
 
-.shell > main:has(> .dashboard-page) {
+.shell > main:has(> :is(.dashboard-page, .settings-landing)) {
   grid-template-rows: auto 1fr;
   padding-bottom: 0;
 }
@@ -2105,6 +2105,56 @@ button.studio-appearance-option[aria-pressed="true"] {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.settings-landing {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.settings-landing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 12px;
+}
+.settings-landing-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border-radius: 10px;
+  box-shadow: none;
+}
+.settings-landing-panel h2 {
+  margin: 0;
+  font: 700 21px Manrope, Inter, sans-serif;
+}
+.settings-landing-entry {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  text-align: start;
+  font-size: 13px;
+  white-space: normal;
+}
+.settings-landing-entry strong {
+  font-weight: 500;
+}
+.settings-landing-entry small {
+  font-size: inherit;
+  color: var(--studio-muted);
+}
+.settings-landing > .workspace-action-bar {
+  margin-top: auto;
+}
+.settings-back {
+  margin-top: 12px;
+}
+@media (max-width: 900px) {
+  .settings-landing-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .workspace-heading {
   display: grid;
@@ -2200,7 +2250,7 @@ button.studio-appearance-option[aria-pressed="true"] {
   margin-top: auto;
 }
 @media (max-width: 900px) {
-  .shell > main:has(> .dashboard-page) {
+  .shell > main:has(> :is(.dashboard-page, .settings-landing)) {
     grid-template-rows: 1fr;
   }
 }

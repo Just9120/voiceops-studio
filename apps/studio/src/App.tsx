@@ -2,6 +2,7 @@ import { openYandexDiskPicker, diskFailureMessage, type DiskPickerMode } from ".
 import { parseProjectSourceCollection } from "./projectCollectionContracts";
 import { YandexDiskConnectionPanel } from "./YandexDiskConnectionPanel";
 import { LocalExecutionPanel } from "./LocalExecutionPanel";
+import { SettingsAnalytics, SettingsLanding } from "./SettingsLanding";
 import { localDeviceReady, localDeviceStatus, localExecutionFailure, localModelName, LOCAL_MODEL, PARAKEET_MODEL,
   useLocalExecutionDevices, type LocalModelSelection } from "./localExecutionContracts";
 import { auditLabel } from "./auditLabels";
@@ -7922,7 +7923,7 @@ const SETTINGS_SECTION_IDS = [
   "appearance",
   "diagnostics",
 ] as const;
-const SETTINGS_SECTION_LABELS: Record<SettingsSection, string> = {
+const SETTINGS_SECTION_LABELS: Record<(typeof SETTINGS_SECTION_IDS)[number], string> = {
   account: "Аккаунт",
   connections: "Подключения",
   notifications: "Уведомления",
@@ -8870,8 +8871,11 @@ function SettingsPage({
       (operation) => operation.credentialId === credentialId,
     ) ?? null;
   const credentialsUnavailable = credentialsLoading || Boolean(credentialsMessage);  return (
-    <section className="card wide">
-      <h1 className="page-title">Настройки</h1>
+    <section className="card wide settings-detail">
+      <header className="workspace-heading">
+        <h1 className="page-title">Настройки</h1>
+      </header>
+      <button type="button" className="settings-back" onClick={() => onSectionChange("overview")}>К настройкам</button>
       <div
         className="tabs settings-section-tabs"
         role="tablist"
@@ -10676,12 +10680,13 @@ function PlatformShell() {
   };
   const navigate = (
     nextPage: Page,
-    nextSettingsSection: SettingsSection = "account",
+    nextSettingsSection: SettingsSection = "overview",
   ) => {
     if (nextPage === "projects") setProjectsOpened(true);
     if (nextPage === "audio") setAudioOpened(true);
     scrollNextPageRef.current = true;
-    focusNextPageRef.current = nextPage !== page;
+    focusNextPageRef.current = nextPage !== page ||
+      (nextPage === "settings" && nextSettingsSection !== settingsSection);
     const nextRoute = {
       page: nextPage,
       settingsSection:
@@ -10696,7 +10701,7 @@ function PlatformShell() {
       const requestedSection = detail?.section;
       navigate(
         "settings",
-        requestedSection && SETTINGS_SECTION_IDS.includes(requestedSection)
+        requestedSection && SETTINGS_SECTION_IDS.some((item) => item === requestedSection)
           ? requestedSection
           : "account",
       );
@@ -10937,6 +10942,10 @@ function PlatformShell() {
       },
     );
   };
+  const refreshSettingsCsrf = (token: string) => {
+    setSession((current) => ({ ...current, csrf: token }));
+    updatePwaDiagnosticsCsrf(token);
+  };
   return (
     <div className="shell">
       <PlatformSidebar
@@ -11012,14 +11021,28 @@ function PlatformShell() {
             />
           </div>
         )}
-        {page === "settings" && (
+        {page === "settings" && settingsSection === "overview" && (
+          <SettingsLanding onSelect={(target) => navigate("settings", target)} onBack={() => navigate("dashboard")} />
+        )}
+        {page === "settings" && (settingsSection === "analytics" || settingsSection === "devices") && (
+          <section className="settings-landing">
+            <header className="workspace-heading">
+              <h1 className="page-title">{settingsSection === "devices" ? "Windows Companion" : "Аналитика и расход"}</h1>
+              <p>{settingsSection === "devices" ? "Подключайте компьютеры и проверяйте доступность локальных моделей." : "Проверьте задания и данные о расходах провайдеров."}</p>
+            </header>
+            {settingsSection === "devices"
+              ? <LocalExecutionPanel key={user.email} csrf={csrf} onCsrf={refreshSettingsCsrf} />
+              : <SettingsAnalytics csrf={csrf} onCsrf={refreshSettingsCsrf} />}
+            <footer className="workspace-action-bar">
+              <button type="button" onClick={() => navigate("settings", "overview")}>К настройкам</button>
+            </footer>
+          </section>
+        )}
+        {page === "settings" && settingsSection !== "overview" && settingsSection !== "analytics" && settingsSection !== "devices" && (
           <SettingsPage
             user={user}
             csrf={csrf}
-            onCsrf={(token) => {
-              setSession((current) => ({ ...current, csrf: token }));
-              updatePwaDiagnosticsCsrf(token);
-            }}
+            onCsrf={refreshSettingsCsrf}
             onLogout={logout}
             logoutPending={logoutState.pending}
             logoutError={logoutState.error}
