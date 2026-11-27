@@ -333,7 +333,7 @@ test('mobile Drive dialog stays inside the viewport and locks page scrolling', a
   await page.mouse.move(380, 820);
   await page.mouse.wheel(0, 800);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(pageScrollBefore);
-  await dialog.getByRole('button', { name: 'Закрыть выбор папки' }).click();
+  await dialog.getByRole('button', { name: 'Отмена' }).click();
   await expect(dialog).toHaveCount(0);
   expect(await page.evaluate(() => document.body.style.overflow)).toBe('');
 });

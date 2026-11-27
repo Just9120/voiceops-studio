@@ -359,7 +359,7 @@ for (const viewport of [{width: 1280, height: 720}, {width: 768, height: 1024}, 
     expect(bounds).not.toBeNull();
     expect(bounds!.height).toBeLessThanOrEqual(viewport.height);
     expect(bounds!.x).toBeGreaterThanOrEqual(0);
-    await dialog.getByRole('button', {name: 'Закрыть выбор папки', exact: true}).click();
+    await dialog.getByRole('button', {name: 'Отмена', exact: true}).click();
     await expect(page.getByRole('button', {name: 'Выбрать папку', exact: true})).toBeFocused();
     await navigation.getByRole('button', {name:'Настройки', exact:true}).click();
     await page.getByRole('button', {name:'Аккаунт и безопасность', exact:true}).click();

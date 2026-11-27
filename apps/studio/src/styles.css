@@ -219,27 +219,22 @@
 .confirm-clear-dialog h2 {
   margin-top: 0;
 }
-.google-drive-folder-picker-dialog {
-  width: min(100%, 780px);
-  max-height: min(760px, calc(100vh - 40px));
+.card.google-drive-folder-picker-dialog {
+  width: min(100%, 600px);
+  max-height: calc(100dvh - 40px);
   margin: 0;
-  display: grid;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto auto;
-  gap: 0.9rem;
-  overflow: hidden;
-}
-.google-drive-folder-picker-header {
+  padding: 16px;
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
 }
-.google-drive-folder-picker-header h2,
-.google-drive-folder-picker-header p {
+.google-drive-folder-picker-header h2 {
   margin: 0;
+  font-size: 1.3125rem;
 }
 .google-drive-folder-picker-header p {
-  margin-top: 0.35rem;
+  margin: 0.35rem 0 0;
   color: var(--studio-muted);
 }
 .google-drive-picker-search {
@@ -273,9 +268,10 @@
   opacity: 1;
 }
 .google-drive-folder-picker-content {
-  min-height: 0;
+  min-height: min(6rem, 27dvh);
   min-width: 0;
   max-width: 100%;
+  flex: 1 1 auto;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -327,9 +323,8 @@
   font-weight: 800;
 }
 .google-drive-file-row[aria-pressed="true"] {
-  border-width: 2px;
   border-color: var(--studio-primary);
-  background: color-mix(in srgb, var(--studio-primary) 12%, var(--studio-surface));
+  background: color-mix(in srgb, var(--studio-primary) 14%, var(--studio-surface));
 }
 .google-drive-file-row > span:nth-child(2) {
   display: grid;
@@ -378,12 +373,32 @@
   padding: 0;
   list-style: none;
 }
-.google-drive-folder-picker-actions {
+.google-drive-picker-current-folder {
+  display: grid;
+  gap: 0.15rem;
+  margin-bottom: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--studio-primary) 25%, var(--studio-border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--studio-primary) 14%, var(--studio-surface));
+  overflow-wrap: anywhere;
+}
+.google-drive-folder-picker-actions.actions {
+  flex: 0 0 auto;
+  display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0;
 }
-.google-drive-folder-picker-actions .muted {
-  min-width: 0;
+.google-drive-folder-picker-actions > button {
+  width: auto;
+  min-height: 44px;
+}
+.google-drive-picker-folder-status {
+  flex-basis: 100%;
+  color: var(--studio-muted);
+  font-size: 0.875rem;
   overflow-wrap: anywhere;
 }
 .folder-import-dialog {
@@ -425,35 +440,12 @@
   .confirm-clear-backdrop {
     padding: 10px;
   }
-  .google-drive-folder-picker-dialog {
+  .card.google-drive-folder-picker-dialog {
     max-height: calc(100dvh - 20px);
-    padding: 0.85rem;
-    gap: 0.55rem;
-  }
-  .google-drive-folder-picker-header { gap: 0.5rem; }
-  .google-drive-folder-picker-header h2 { font-size: 1.2rem; }
-  .google-drive-folder-picker-header p { font-size: 0.85rem; }
-  .google-drive-picker-search small { display: none; }
-  .google-drive-picker-sort { font-size: 0.9rem; }
-  .google-drive-folder-picker-actions {
-    display: grid;
-  }
-  .google-drive-folder-picker-actions button {
-    width: 100%;
   }
   .folder-import-summary {
     grid-template-columns: minmax(0, 1fr);
   }
-}
-.yandex-disk-picker-dialog {
-  height: min(760px, calc(100dvh - 40px));
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
-}
-.yandex-disk-picker-dialog .google-drive-folder-picker-header > div {
-  min-width: 0;
-}
-.yandex-disk-picker-dialog .google-drive-folder-picker-header > button {
-  flex: 0 0 auto;
 }
 .yandex-disk-picker-toolbar {
   display: grid;
@@ -479,19 +471,10 @@
 .yandex-disk-picker-content { padding: 6px; }
 .yandex-disk-picker-content .google-drive-folder-row > span:first-child { flex: 0 0 auto; }
 .yandex-disk-picker-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.yandex-disk-picker-dialog > footer {
-  padding-top: 0.65rem;
-  border-top: 1px solid var(--studio-border);
-}
 @media (max-width: 520px) {
-  .yandex-disk-picker-dialog { height: calc(100dvh - 20px); }
   .yandex-disk-picker-toolbar { grid-template-columns: minmax(0, 1fr); }
-  .yandex-disk-picker-dialog .google-drive-folder-row { padding: 0.6rem; gap: 0.4rem; }
 }
-@media (max-height: 560px) {
-  .yandex-disk-picker-dialog { height: auto; overflow-y: auto; }
-  .yandex-disk-picker-content { min-height: 8rem; max-height: 40dvh; }
-}
+
 html,
 body,
 #root {
@@ -3705,9 +3688,6 @@ button.studio-appearance-option[aria-pressed="true"] {
   }
 }
 
-.google-drive-folder-picker-dialog:not(.yandex-disk-picker-dialog) {
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
-}
 .google-drive-picker-controls {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(9rem, .45fr);
@@ -3716,10 +3696,6 @@ button.studio-appearance-option[aria-pressed="true"] {
 }
 .google-drive-picker-controls label {
   min-width: 0;
-}
-.google-drive-folder-picker-actions {
-  border-top: 1px solid var(--studio-border);
-  padding-top: .65rem;
 }
 .live-text-panels {
   display: grid;
