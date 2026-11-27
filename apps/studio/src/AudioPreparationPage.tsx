@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { ApiError, api, mutateWithCsrfRetry } from "./apiClient";
 import { ActionMenu } from "./ActionMenu";
 import { useFormDraft } from "./formDrafts";
@@ -238,6 +238,7 @@ export function AudioPreparationPage({ csrf, onCsrf }: Props) {
   const inputSection = useRef<HTMLElement>(null);
   const stepHeading = useRef<HTMLHeadingElement>(null);
   const openSourcesButton = useRef<HTMLButtonElement>(null);
+  const nextStepFocus = useRef<"heading" | "open-sources" | null>(null);
   const errorAlert = useRef<HTMLDivElement>(null);
   const focusOperationError = useRef(false);
   const [draftRestored, setDraftRestored] = useState(false);
@@ -272,15 +273,23 @@ export function AudioPreparationPage({ csrf, onCsrf }: Props) {
     errorAlert.current?.focus();
     errorAlert.current?.scrollIntoView?.({ block: "nearest" });
   }, [error]);
+  const selectingInput = choosingSources || sourceMode === "direct-drive";
+  useLayoutEffect(() => {
+    const target = nextStepFocus.current;
+    nextStepFocus.current = null;
+    if (target === "heading") stepHeading.current?.focus();
+    if (target === "open-sources") openSourcesButton.current?.focus();
+  }, [selectingInput]);
+
   function openSourceStep() {
+    nextStepFocus.current = "heading";
     setChoosingSources(true);
-    requestAnimationFrame(() => stepHeading.current?.focus());
   }
 
   function returnToPreparation() {
+    nextStepFocus.current = "open-sources";
     setChoosingSources(false);
     if (sourceMode === "direct-drive") setSourceMode("drive");
-    requestAnimationFrame(() => openSourcesButton.current?.focus());
   }
 
   const chooseDifferentSource = () => {
@@ -961,7 +970,6 @@ export function AudioPreparationPage({ csrf, onCsrf }: Props) {
   }
 
   const directDrive = sourceMode === "direct-drive";
-  const selectingInput = choosingSources || directDrive;
   return (
     <div className="audio-preparation-page" data-audio-stage={selectingInput ? "sources" : "setup"}>
       <header className="workspace-heading">
@@ -1056,8 +1064,8 @@ export function AudioPreparationPage({ csrf, onCsrf }: Props) {
             Добавить файлы
           </button>
           <button type="button" disabled={busy} onClick={() => {
+            nextStepFocus.current = "heading";
             selectSourceMode("direct-drive");
-            requestAnimationFrame(() => stepHeading.current?.focus());
           }}>
             В Google Drive без обработки
           </button>
@@ -1088,7 +1096,7 @@ export function AudioPreparationPage({ csrf, onCsrf }: Props) {
         {format !== "copy" && <p className="muted">Для изменения каналов или пауз файл будет перекодирован в выбранный формат.</p>}
         <label className="audio-source-choice"><input type="checkbox" checked={silenceEnabled} onChange={(e) => applySilence(e.target.checked)} /><span>Уменьшить длинные паузы в аудио или видео</span></label>
         {silenceEnabled && <details ref={silenceDetailsRef} className="audio-advanced-settings"><summary>Дополнительные настройки пауз</summary><div className="audio-settings-grid"><label>Что считать тишиной, dB<input ref={thresholdInput} type="text" inputMode="text" value={threshold} aria-invalid={silenceError?.field === "threshold"} aria-describedby={silenceError?.field === "threshold" ? "audio-threshold-error" : undefined} onChange={(e) => { setThreshold(e.target.value.replaceAll(".", ",")); setSilenceError(null); }} /><small>Порог от −60 до −10 dB.</small>{silenceError?.field === "threshold" && <small id="audio-threshold-error" className="error" role="alert">{silenceError.message}</small>}</label><label>Минимальная пауза, сек<input ref={minimumInput} type="text" inputMode="decimal" value={minimum} aria-invalid={silenceError?.field === "minimum"} aria-describedby={silenceError?.field === "minimum" ? "audio-minimum-error" : undefined} onChange={(e) => { setMinimum(e.target.value.replaceAll(".", ",")); setSilenceError(null); }} />{silenceError?.field === "minimum" && <small id="audio-minimum-error" className="error" role="alert">{silenceError.message}</small>}</label><label>Сколько паузы оставить, сек<input ref={keepInput} type="text" inputMode="decimal" value={keep} aria-invalid={silenceError?.field === "keep"} aria-describedby={silenceError?.field === "keep" ? "audio-keep-error" : undefined} onChange={(e) => { setKeep(e.target.value.replaceAll(".", ",")); setSilenceError(null); }} />{silenceError?.field === "keep" && <small id="audio-keep-error" className="error" role="alert">{silenceError.message}</small>}</label></div></details>}
-        {processingPath === "studio" ? <fieldset className="audio-drive-save"><legend>Сохранение</legend><label><input type="checkbox" checked={saveToDrive} onChange={(e) => setSaveToDrive(e.target.checked)} /> Автоматически сохранить копию в Google Drive</label>{saveToDrive && <div className="actions"><button type="button" onClick={chooseOutputFolder} disabled={busy}>Выбрать папку</button>{driveFolder && <span>{driveFolder.name}</span>}</div>}<small>Скачать результат и передать его в транскрибацию можно будет после обработки независимо от этой настройки.</small></fieldset> : <p className="notice">В браузере поддерживается несжатый WAV с одним или двумя каналами. Локальный результат останется в браузере до закрытия или перезагрузки вкладки. После обработки его можно скачать либо явно загрузить в Studio для Google Drive или транскрибации.</p>}
+        {processingPath === "studio" ? <fieldset className="audio-drive-save"><legend>Сохранение</legend><label><input type="checkbox" checked={saveToDrive} onChange={(e) => setSaveToDrive(e.target.checked)} /> Автоматически сохранить копию в Google Drive</label>{saveToDrive && <div className="actions"><button type="button" onClick={chooseOutputFolder} disabled={busy}>Выбрать папку</button>{driveFolder && <span>{driveFolder.name}</span>}</div>}<small>Скачать результат и передать его в транскрибацию можно будет после обработки независимо от этой настройки.</small></fieldset> : <p className="notice">Исходные файлы не отправляются в Studio. В браузере поддерживается несжатый WAV с одним или двумя каналами. Результат останется в браузере до закрытия или перезагрузки вкладки. После обработки его можно скачать либо явно загрузить в Studio для Google Drive или транскрибации.</p>}
         {localProgress && <div className="upload-progress" aria-live="polite"><p><strong>{localProgress.stage === "decoding" ? "Декодируем" : localProgress.stage === "processing" ? "Обрабатываем" : localProgress.stage === "encoding" ? "Создаём WAV" : "Читаем файл"}</strong>{localProgress.filename ? `: ${localProgress.filename}` : ""}</p><progress aria-label="Прогресс локальной обработки" max="100" value={localProgress.percent}>{localProgress.percent}%</progress><small>{localProgress.percent}% · исходные файлы не отправляются в сеть</small><button type="button" onClick={() => localAbort.current?.abort()}>Отменить локальную обработку</button></div>}
 
       </section>

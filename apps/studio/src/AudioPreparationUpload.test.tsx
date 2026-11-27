@@ -53,7 +53,10 @@ async function setup(statuses: unknown[] = [active([1]), active([1, 2]), active(
   await waitFor(() => expect(screen.getByRole("button", { name: "Выбрать и загрузить в Studio" })).toBeEnabled());
   const upload = async () => {
     await userEvent.upload(screen.getByLabelText("Выбрать файлы для загрузки в Studio"), new File([new Uint8Array(fileSize)], "reference.wav", { type: "audio/wav" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Выбрать и загрузить в Studio" })).toBeEnabled());
+    await waitFor(() => {
+      const settled = screen.queryByRole("button", { name: "Выбрать и загрузить в Studio" }) ?? add;
+      expect(settled).toBeEnabled();
+    });
   };
   const completeCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/multipart/complete"));
   return { put, upload, fetchMock, issuedParts, completeCalls };
