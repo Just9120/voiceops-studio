@@ -1818,6 +1818,7 @@ function PreparationPanel({
   const [historyClearMessage, setHistoryClearMessage] = useState("");
   const [historyQuery, setHistoryQuery] = useState("");
   const [historyStatus, setHistoryStatus] = useState("all");
+  const [historyDays, setHistoryDays] = useState(0);
   const [historyPage, setHistoryPage] = useState(0);
   const [selectedTerminalIds,setSelectedTerminalIds]=useState<Set<string>>(() => new Set());
   const [terminalBatchPending,setTerminalBatchPending]=useState(false);
@@ -4522,9 +4523,12 @@ function PreparationPanel({
         (job) => job.history_attention_required !== true,
       ),
     );
+  const historySearch = historyQuery.trim().toLocaleLowerCase("ru-RU");
+  const historyStart = Date.now() - historyDays * 86_400_000;
   const filteredHistory = recentTranscriptions.filter((presentation) => presentation.jobs.some((job) =>
-    jobTitle(job).toLocaleLowerCase("ru-RU").includes(historyQuery.trim().toLocaleLowerCase("ru-RU")) &&
-    (historyStatus === "all" || job.status === historyStatus),
+    jobTitle(job).toLocaleLowerCase("ru-RU").includes(historySearch) &&
+    (historyStatus === "all" || job.status === historyStatus) &&
+    (!historyDays || Date.parse(job.created_at) >= historyStart),
   ));
   const eligibleTerminalJobs=pinnedTerminalTranscriptions.flatMap((group) => group.jobs).filter((job) => job.history_attention_required !== true);
   async function dismissSelectedTerminal() {
@@ -6167,42 +6171,7 @@ function PreparationPanel({
           </p>
         )}
         <div className="history-workbench" hidden={historyClearOpen}>
-          <div className="history-tools">
-            <div className="history-filters">
-              <label>Поиск по названию среди загруженных задач
-                <input type="search" name="transcription-history-search" autoComplete="off" value={historyQuery} onChange={(event) => { setHistoryQuery(event.target.value); setHistoryPage(0); }} />
-              </label>
-              <label>Статус в истории
-                <select value={historyStatus} onChange={(event) => { setHistoryStatus(event.target.value); setHistoryPage(0); }}>
-                  <option value="all">Все статусы</option><option value="completed">Готово</option>
-                  <option value="failed">Ошибка</option><option value="cancelled">Отменено</option>
-                </select>
-              </label>
-            </div>
-            {(historyQuery || historyStatus !== "all") && <div className="filter-chips" aria-label="Активные фильтры истории">
-              {historyQuery && <button type="button" onClick={() => {setHistoryQuery(""); changeHistoryPage(0);}}>Поиск: {historyQuery} ×</button>}
-              {historyStatus !== "all" && <button type="button" onClick={() => {setHistoryStatus("all"); changeHistoryPage(0);}}>Статус: {({completed:"Готово",failed:"Ошибка",cancelled:"Отменено"} as Record<string,string>)[historyStatus] ?? historyStatus} ×</button>}
-              <button type="button" onClick={() => {setHistoryQuery("");setHistoryStatus("all");changeHistoryPage(0);}}>Сбросить фильтры</button>
-            </div>}
-            <div className="history-clear-actions">
-              {hasClearableHistory && (
-                <button
-                  type="button"
-                  className="danger"
-                  disabled={historyClearPending}
-                  ref={historyClearTriggerRef}
-                  onClick={() => {
-                    returnHistoryFocusRef.current = true;
-                    setHistoryClearMessage("");
-                    setHistoryClearOpen(true);
-                  }}
-                >
-                  Очистить историю
-                </button>
-              )}
-            </div>
-          </div>
-          <div className="history-list">
+          <section className="card history-list" aria-label="Результаты истории">
             <p className="muted" role="status">Найдено групп: {filteredHistory.length} · среди загруженных: {recentTranscriptions.length}</p>
             {filteredHistory.length === 0 && <p role="status">Среди загруженных задач совпадений нет.</p>}
             {filteredHistory.slice(currentHistoryPage * 10, (currentHistoryPage + 1) * 10).map(renderTranscriptionPresentation)}
@@ -6223,7 +6192,51 @@ function PreparationPanel({
                   : "Показать ещё транскрибации"}
               </button>
             )}
-          </div>
+          </section>
+          <section className="card history-tools" aria-labelledby="history-filters-title">
+            <h3 id="history-filters-title">Фильтры</h3>
+            <div className="history-filters">
+              <label>Период создания
+                <select value={historyDays} onChange={(event) => { setHistoryDays(Number(event.target.value)); setHistoryPage(0); }}>
+                  <option value={0}>Всё время</option>
+                  <option value={7}>Последние 7 дней</option>
+                  <option value={30}>Последние 30 дней</option>
+                  <option value={90}>Последние 90 дней</option>
+                </select>
+              </label>
+              <label>Поиск по названию среди загруженных задач
+                <input type="search" name="transcription-history-search" autoComplete="off" value={historyQuery} onChange={(event) => { setHistoryQuery(event.target.value); setHistoryPage(0); }} />
+              </label>
+              <label>Статус в истории
+                <select value={historyStatus} onChange={(event) => { setHistoryStatus(event.target.value); setHistoryPage(0); }}>
+                  <option value="all">Все статусы</option><option value="completed">Готово</option>
+                  <option value="failed">Ошибка</option><option value="cancelled">Отменено</option>
+                </select>
+              </label>
+            </div>
+            {(historyQuery || historyStatus !== "all" || historyDays > 0) && <div className="filter-chips" aria-label="Активные фильтры истории">
+              {historyQuery && <button type="button" onClick={() => {setHistoryQuery(""); changeHistoryPage(0);}}>Поиск: {historyQuery} ×</button>}
+              {historyStatus !== "all" && <button type="button" onClick={() => {setHistoryStatus("all"); changeHistoryPage(0);}}>Статус: {({completed:"Готово",failed:"Ошибка",cancelled:"Отменено"} as Record<string,string>)[historyStatus] ?? historyStatus} ×</button>}
+              <button type="button" onClick={() => {setHistoryQuery("");setHistoryStatus("all");setHistoryDays(0);changeHistoryPage(0);}}>Сбросить фильтры</button>
+            </div>}
+            <div className="history-clear-actions">
+              {hasClearableHistory && (
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={historyClearPending}
+                  ref={historyClearTriggerRef}
+                  onClick={() => {
+                    returnHistoryFocusRef.current = true;
+                    setHistoryClearMessage("");
+                    setHistoryClearOpen(true);
+                  }}
+                >
+                  Очистить историю
+                </button>
+              )}
+            </div>
+          </section>
         </div>
         {historyClearOpen && (
           <section
