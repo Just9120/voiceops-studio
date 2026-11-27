@@ -55,7 +55,15 @@ describe("Studio theme preference", () => {
     expect(document.documentElement.style.colorScheme).toBe("dark");
     expect(
       document.querySelector('meta[name="theme-color"]')?.getAttribute("content"),
-    ).toBe("#111827");
+    ).toBe("#151c29");
+  });
+
+  it("restores the OLED preference and uses dark browser controls", () => {
+    expect(setStudioThemePreference("oled")).toBe("oled");
+    expect(readStudioThemePreference()).toBe("oled");
+    expect(document.documentElement.dataset.theme).toBe("oled");
+    expect(document.documentElement.style.colorScheme).toBe("dark");
+    expect(document.querySelector('meta[name="theme-color"]')?.getAttribute("content")).toBe("#000000");
   });
 
   it("resolves the system choice without persisting the resolved value", () => {

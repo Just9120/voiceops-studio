@@ -205,6 +205,7 @@ import { FolderImportDialog } from "./FolderImportDialog";
 import { AccountSessionsPanel } from "./AccountSessionsPanel";
 import { AccountSecurityPanel, requestReauthentication } from "./AccountSecurityPanel";
 import { NotificationsPanel } from "./NotificationsPanel";
+import { AppearancePanel } from "./AppearancePanel";
 import {
   buildLocalFolderPreview,
   localFolderRejectedReasonLabel,
@@ -8957,65 +8958,17 @@ function SettingsPage({
             </>
           )}
           {section === "appearance" && (
-            <section aria-labelledby="appearance-settings-title">
-              <h2 id="appearance-settings-title">Оформление</h2>
-              <div className="settings-appearance-panels">
-                <div className="card theme-preferences">
-                  <label>
-                    Тема интерфейса
-                    <select
-                      aria-label="Тема интерфейса"
-                      value={themePreference}
-                      onChange={(event) => {
-                        const preference = event.target.value as StudioThemePreference;
-                        setThemePreference(preference);
-                        setStudioThemePreference(preference);
-                      }}
-                    >
-                      <option value="system">Системная</option>
-                      <option value="light">Светлая</option>
-                      <option value="dark">Тёмная</option>
-                    </select>
-                  </label>
-                  <p className="muted">
-                    Системная тема следует настройке устройства. Выбор сохраняется
-                    только в этом браузере и не содержит данных аккаунта.
-                  </p>
-                  <label>
-                    Цвет интерфейса
-                    <select
-                      aria-label="Цвет интерфейса"
-                      value={accentSelection}
-                      disabled={!accountPreferences || accentSaving}
-                      onChange={(event) => {
-                        const selected = event.target.value;
-                        if (isStudioAccentColor(selected)) {
-                          void saveAccentPreference(selected);
-                        }
-                      }}
-                    >
-                      <option value="blue">Синий</option>
-                      <option value="violet">Фиолетовый</option>
-                      <option value="teal">Бирюзовый</option>
-                      <option value="rose">Розовый</option>
-                    </select>
-                  </label>
-                  {accentMessage && (
-                    <p role="status" className="notice">
-                      {accentMessage}
-                    </p>
-                  )}
-                </div>
-                <aside className="card" aria-label="Предпросмотр оформления">
-                  <h3>Предпросмотр</h3>
-                  <p className="notice">Результат готов.</p>
-                  <div className="actions" aria-hidden="true">
-                    <span className="button-like primary">Основное действие</span>
-                    <span className="tag">Статус</span>
-                  </div>
-                </aside>
-              </div>
-            </section>
+            <AppearancePanel
+              theme={themePreference}
+              accent={accentSelection}
+              accentDisabled={!accountPreferences || accentSaving}
+              message={accentMessage}
+              onThemeChange={(preference) => {
+                setThemePreference(preference);
+                setStudioThemePreference(preference);
+              }}
+              onAccentChange={(color) => void saveAccentPreference(color)}
+            />
           )}
           {section === "notifications" && (
             <NotificationsPanel csrf={csrf} onCsrf={onCsrf} />

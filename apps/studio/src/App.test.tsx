@@ -5667,26 +5667,30 @@ describe("Studio PWA", () => {
     ).toBeInTheDocument();
   });
 
-  it("offers and persists system, light, and dark appearance choices", async () => {
+  it("offers and persists all four appearance choices", async () => {
     renderApp();
     await openSettingsSection("Оформление");
-    const selector = screen.getByLabelText("Тема интерфейса");
-    expect(selector).toHaveValue("system");
-    await userEvent.selectOptions(selector, "dark");
+    const themes = within(screen.getByRole("group", { name: "Тема интерфейса" }));
+    expect(themes.getByRole("button", { name: "Системная" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(themes.getByRole("button", { name: "Тёмная" }));
     expect(localStorage.getItem("studio-theme-preference")).toBe("dark");
     expect(document.documentElement.dataset.theme).toBe("dark");
-    await userEvent.selectOptions(selector, "light");
-    expect(localStorage.getItem("studio-theme-preference")).toBe("light");
+    await userEvent.click(themes.getByRole("button", { name: "Светлая" }));
     expect(document.documentElement.dataset.theme).toBe("light");
+    await userEvent.click(themes.getByRole("button", { name: "OLED" }));
+    expect(localStorage.getItem("studio-theme-preference")).toBe("oled");
+    expect(document.documentElement.dataset.theme).toBe("oled");
   });
 
-  it("persists and applies the owner accent color without browser storage", async () => {
+  it("persists the owner accent in OLED without browser storage", async () => {
     renderApp();
     await openSettingsSection("Оформление");
-    const selector = await screen.findByLabelText("Цвет интерфейса");
-    expect(selector).toHaveValue("blue");
+    expect(screen.queryByRole("group", { name: "Акцент OLED" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "OLED" }));
+    const accents = within(await screen.findByRole("group", { name: "Акцент OLED" }));
+    expect(accents.getByRole("button", { name: "Синий" })).toHaveAttribute("aria-pressed", "true");
 
-    await userEvent.selectOptions(selector, "violet");
+    await userEvent.click(accents.getByRole("button", { name: "Фиолетовый" }));
 
     expect(
       await screen.findByText("Цвет интерфейса сохранён."),
@@ -5700,6 +5704,10 @@ describe("Studio PWA", () => {
       }),
     );
     expect(localStorage.getItem("studio-accent-preference")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Светлая" }));
+    expect(screen.queryByRole("group", { name: "Акцент OLED" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "OLED" }));
+    expect(screen.getByRole("button", { name: "Фиолетовый" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("allows replacing the fragment count and blocks incomplete or out-of-range drafts", async () => {
