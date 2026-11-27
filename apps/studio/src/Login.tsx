@@ -70,6 +70,10 @@ export function Login({
   const [error, setError] = useState("");
   const [loginPending, setLoginPending] = useState(false);
   const [secondFactorRequired, setSecondFactorRequired] = useState(false);
+  const [recoveryCodeMode, setRecoveryCodeMode] = useState(false);
+  const [recoveryInfo, setRecoveryInfo] = useState(false);
+  const [rateLimited, setRateLimited] = useState(false);
+  const factorInput = useRef<HTMLInputElement>(null);
   const loginPendingRef = useRef(false);
   const requestEpochsRef = useRef(new Map<string, number>());
   const requestControllersRef = useRef(new Map<string, AbortController>());
@@ -103,10 +107,15 @@ export function Login({
       );
   }, [checkBootstrap]);
 
+  useEffect(() => {
+    if (secondFactorRequired && !recoveryInfo) factorInput.current?.focus();
+  }, [secondFactorRequired, recoveryCodeMode, recoveryInfo]);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (loginPendingRef.current) return;
     setError("");
+    setRateLimited(false);
     const formData = new FormData(event.currentTarget);
     const email = String(formData.get("email") ?? "");
     const password = String(formData.get("password") ?? "");
@@ -149,6 +158,7 @@ export function Login({
           setError("Неверный одноразовый или резервный код.");
           return;
         }
+        setRateLimited(failure instanceof ApiError && failure.status === 429);
         setError(
           failure instanceof ApiError && failure.status === 401
             ? "Неверная почта или пароль."
@@ -198,48 +208,97 @@ export function Login({
       </main>
     );
 
+  const title = recoveryInfo ? "Восстановление доступа"
+    : rateLimited ? "Вход временно ограничен"
+      : secondFactorRequired ? (recoveryCodeMode ? "Резервный код" : "Подтверждение входа")
+        : "Вход в VoiceOps Studio";
+  const intro = recoveryInfo ? "Выберите доступный для личного аккаунта способ."
+    : secondFactorRequired ? "Второй шаг для аккаунта с включённой двухфакторной защитой."
+      : "Введите данные личного аккаунта.";
+
   return (
-    <main className="auth">
-      <form className="card login" onSubmit={submit}>
-        <p className="eyebrow">VoiceOps Studio</p>
-        <h1>Вход</h1>
-        <label>
-          Email
-          <input name="email" type="email" autoComplete="username" required />
-        </label>
-        {secondFactorRequired && (
-          <fieldset className="security-code-fields">
-            <legend>Дополнительная защита</legend>
-            <label>
-              Одноразовый код
-              <input
-                name="verificationCode"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                pattern="[0-9 ]{6,12}"
-              />
-            </label>
-            <label>
-              Или резервный код
-              <input name="recoveryCode" autoComplete="off" />
-            </label>
-          </fieldset>
+    <main className="studio-login">
+      <header className="studio-login-top">
+        <img src="/icons/voiceops-brand.svg" width="32" height="32" alt="" />
+        <strong>VoiceOps Studio</strong>
+        <span className="app-personal-badge">Личный аккаунт</span>
+      </header>
+      <div className="studio-login-workspace">
+        <div className="workspace-heading">
+          <h1 className="page-title">{title}</h1>
+          <p>{intro}</p>
+        </div>
+        {recoveryInfo ? (
+          <>
+            <section className="card studio-login-card">
+              <h2>Вход с включённой 2FA</h2>
+              <p>Введите пароль аккаунта. Затем на шаге подтверждения можно использовать ранее сохранённый резервный код.</p>
+              <button type="button" onClick={() => {
+                setRecoveryCodeMode(true);
+                setRecoveryInfo(false);
+              }}>Войти с резервным кодом</button>
+            </section>
+            <section className="card studio-login-card">
+              <h2>Пароль утерян</h2>
+              <p>Владелец может восстановить доступ через защищённую процедуру на сервере.</p>
+            </section>
+            <button type="button" onClick={() => setRecoveryInfo(false)}>Вернуться ко входу</button>
+          </>
+        ) : (
+          <form className="card login studio-login-card" onSubmit={submit}>
+            <h2>{secondFactorRequired ? (recoveryCodeMode ? "Подтверждение доступа" : "Одноразовый код") : "Вход"}</h2>
+            <div className="studio-login-fields" hidden={secondFactorRequired}>
+              <label>
+                Email
+                <input name="email" type="email" autoComplete="username" required />
+              </label>
+              <label>
+                Пароль
+                <input name="password" type="password" autoComplete="current-password" required />
+              </label>
+            </div>
+            {secondFactorRequired && (recoveryCodeMode ? (
+              <>
+                <label>
+                  Резервный код
+                  <input key="recovery" ref={factorInput} name="recoveryCode" autoComplete="off" required />
+                </label>
+                <p className="notice">Код одноразовый. После входа этот код будет использован.</p>
+              </>
+            ) : (
+              <label>
+                Одноразовый код
+                <input key="totp" ref={factorInput} name="verificationCode" inputMode="numeric"
+                  autoComplete="one-time-code" pattern="[0-9 ]{6,12}" required />
+              </label>
+            ))}
+            {error && <p className="error" role="alert">{error}</p>}
+            <div className="studio-login-actions">
+              <button className="primary" disabled={loginPending}>
+                {loginPending ? "Входим…" : secondFactorRequired ? "Подтвердить вход" : "Войти"}
+              </button>
+            </div>
+            {secondFactorRequired ? (
+              <div className="studio-login-controls">
+                <button type="button" disabled={loginPending} onClick={() => {
+                  setRecoveryCodeMode((current) => !current);
+                  setError("");
+                }}>{recoveryCodeMode ? "Использовать код из приложения" : "Использовать резервный код"}</button>
+                <button type="button" disabled={loginPending} onClick={() => {
+                  setSecondFactorRequired(false);
+                  setRateLimited(false);
+                  setError("");
+                }}>Назад</button>
+              </div>
+            ) : (
+              <>
+                <button type="button" disabled={loginPending} onClick={() => setRecoveryInfo(true)}>Восстановить доступ</button>
+                <PublicInfoLinks />
+              </>
+            )}
+          </form>
         )}
-        <label>
-          Пароль
-          <input
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            required
-          />
-        </label>
-        <button className="primary" disabled={loginPending}>
-          {loginPending ? "Входим…" : "Войти"}
-        </button>
-        {error && <p className="error" role="alert">{error}</p>}
-        <PublicInfoLinks />
-      </form>
+      </div>
     </main>
   );
 }

@@ -10685,8 +10685,10 @@ function PlatformShell() {
     if (nextPage === "projects") setProjectsOpened(true);
     if (nextPage === "audio") setAudioOpened(true);
     scrollNextPageRef.current = true;
-    focusNextPageRef.current = nextPage !== page ||
-      (nextPage === "settings" && nextSettingsSection !== settingsSection);
+    const changingSettingsView = nextPage === "settings" && nextSettingsSection !== settingsSection &&
+      (!SETTINGS_SECTION_IDS.some((item) => item === settingsSection) ||
+        !SETTINGS_SECTION_IDS.some((item) => item === nextSettingsSection));
+    focusNextPageRef.current = nextPage !== page || changingSettingsView;
     const nextRoute = {
       page: nextPage,
       settingsSection:
