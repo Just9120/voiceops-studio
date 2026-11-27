@@ -6560,7 +6560,7 @@ function OverviewPage({
 
   return (
     <section className="page dashboard-page">
-      <header className="dashboard-heading">
+      <header className="workspace-heading">
         <h1 className="page-title">Обзор</h1>
         <p>Продолжите текущую работу или начните новую.</p>
       </header>
@@ -6602,13 +6602,16 @@ function OverviewPage({
                 </li>
               ))}
               {audioJobs.map((job) => (
-                <li className="dashboard-row" key={job.id}>
+                <li className="dashboard-row dashboard-progress-row" key={job.id}>
                   <span>
                     <button type="button" className="text-link" onClick={() => onNavigate("audio")}>{job.title}</button>
                     <small>Подготовка аудио</small>
                   </span>
                   {Number.isFinite(job.progress?.percent) && (
                     <span className="tag">{job.progress.percent}%</span>
+                  )}
+                  {Number.isFinite(job.progress?.percent) && (
+                    <progress aria-label={`Подготовка: ${job.title}`} max="100" value={job.progress.percent} />
                   )}
                 </li>
               ))}
@@ -6679,7 +6682,7 @@ function OverviewPage({
           </div>
         </article>
       </div>
-      <footer className="dashboard-actions">
+      <footer className="workspace-action-bar dashboard-actions">
         <button type="button" onClick={() => onNavigate("audio")}>Подготовить аудио</button>
         <button type="button" className="primary" onClick={onOpenTranscriptions}>Новая транскрибация</button>
       </footer>

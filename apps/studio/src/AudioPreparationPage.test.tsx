@@ -515,13 +515,13 @@ describe("AudioPreparationPage", () => {
     await userEvent.click(direct);
     expect(direct).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("heading", { name: "Загрузить исходные файлы без обработки" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "2. Параметры" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Подготовка" })).not.toBeInTheDocument();
 
     direct.focus();
     await userEvent.keyboard("{ArrowLeft}");
     expect(within(tablist).getByRole("tab", { name: "Загрузить в Studio" }))
       .toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("heading", { name: "2. Параметры" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Подготовка" })).toBeInTheDocument();
   });
 });
 

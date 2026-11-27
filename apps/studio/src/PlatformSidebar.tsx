@@ -29,7 +29,7 @@ export function PlatformSidebar({
       <div className="app-brand">
         <img src="/icons/voiceops-brand.svg" width="32" height="32" alt="" />
         <span>VoiceOps Studio</span>
-        <span className="app-personal-badge">Personal</span>
+        <span className="app-personal-badge">Studio</span>
       </div>
       <nav className="app-nav" aria-label="Основная навигация">
         {platformNav.map(({ id, label, compactLabel }) => (

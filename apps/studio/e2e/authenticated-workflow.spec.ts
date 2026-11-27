@@ -443,7 +443,7 @@ test('Audio workspace processes a device WAV in-browser without uploading source
   await expect(page.getByLabel('Формат результата')).toHaveValue('wav');
   await expect(page.getByLabel('Формат результата')).toBeDisabled();
   const parameters = page
-    .getByRole('heading', { name: '2. Параметры' })
+    .getByRole('heading', { name: 'Подготовка' })
     .locator('..');
   await parameters.getByRole('checkbox', { name: 'Уменьшить длинные паузы в аудио или видео' }).check();
   await parameters.getByText('Дополнительные настройки пауз').click();
