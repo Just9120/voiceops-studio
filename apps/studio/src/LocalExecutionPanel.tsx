@@ -5,6 +5,7 @@ import { ConfirmClearDialog } from "./ConfirmClearDialog";
 import { CompanionRelease } from "./CompanionRelease";
 import { LocalDeviceEnrollment } from "./LocalDeviceEnrollment";
 import { LocalModelCatalog } from "./LocalModelCatalog";
+import { ObsImportBindings } from "./ObsImportBindings";
 import { runBoundedRequest } from "./jobMutationRequest";
 import { localDeviceStatus, localExecutionFailure, parseLocalDevice, useLocalExecutionDevices, type LocalExecutionDevice } from "./localExecutionContracts";
 
@@ -59,6 +60,7 @@ export function LocalExecutionPanel({ csrf, onCsrf }: { csrf: string; onCsrf: (v
     <h3 id="local-execution-title">Локальные модели на Windows</h3>
     {enrollmentId && <LocalDeviceEnrollment key={enrollmentId} requestId={enrollmentId} csrf={csrf} onCsrf={onCsrf} />}
     <CompanionRelease />
+    <ObsImportBindings csrf={csrf} onCsrf={onCsrf} />
     <LocalModelCatalog devices={devices.items} csrf={csrf} onCsrf={onCsrf} />
     <p>Распознавание выполняется на выбранном Windows-компьютере. Обработчик должен быть запущен; Studio сохраняет результат и создаёт документ. Автоматического перехода на облачный сервис нет.</p>
     <p className="muted">Поддерживаются русский и английский языки. Nemotron обрабатывает записи или фрагменты до 60 минут, Parakeet — до 24 минут. Скорость зависит от компьютера.</p>

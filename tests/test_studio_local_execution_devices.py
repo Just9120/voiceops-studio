@@ -351,6 +351,86 @@ def test_browser_enrollment_is_owner_approved_proof_bound_and_replay_safe(local_
     assert client.post(path + "/finish", headers=machine, json={"verifier": verifier}).status_code == 410
 
 
+def test_obs_import_replays_one_draft_and_cannot_use_worker_or_owner_apis(local_app, enrollment_store, monkeypatch):
+    import base64
+    from studio_api import main
+    from studio_api.models import ObsImportBinding, ObsImportDraft, Source
+    from studio_api.source_storage import ObjectHead
+
+    client, maker, settings, (owner_id, _) = local_app
+    base = "/api/obs-import"
+    verifier = secrets.token_urlsafe(32)
+    machine = {"x-voiceops-local-protocol": "1"}
+    started = client.post(base + "/enrollment", headers=machine, json={
+        "label": "Synthetic OBS", "challenge": hashlib.sha256(verifier.encode("ascii")).hexdigest(),
+    })
+    binding_id = started.json()["request_id"]
+    path = base + "/enrollment/" + binding_id
+    assert client.get(BASE + "/enrollment/" + binding_id).status_code == 410
+    assert client.post(path + "/finish", headers=machine, json={"verifier": verifier}).status_code == 202
+    assert client.post(path + "/approve", headers=OWNER_HEADERS).status_code == 200
+    assert client.post(path + "/finish", headers=machine, json={"verifier": "x" * 43}).status_code == 403
+    for _ in range(2):
+        assert client.post(path + "/finish", headers=machine, json={"verifier": verifier}).status_code == 200
+
+    class Storage:
+        key = None
+        uploaded = False
+
+        def presigned_create_url(self, key, mime, ttl, size, md5):
+            assert (mime, size, md5) == ("audio/flac", 4096, payload["content_md5"])
+            assert self.key is None or self.key == key
+            self.key = key
+            return "https://storage.test/upload"
+
+        def head_object(self, key):
+            assert key == self.key
+            if not self.uploaded:
+                raise FileNotFoundError
+            return ObjectHead(4096, "audio/flac")
+
+    storage = Storage()
+    monkeypatch.setattr(main, "get_reference_storage", lambda *_: storage)
+    monkeypatch.setattr(main, "reference_storage_bucket", lambda *_: "synthetic-transcription")
+    monkeypatch.setattr(main, "reference_storage_isolation_configured", lambda *_: True)
+    event_id = uuid4().hex
+    record = f"{base}/events/{event_id}"
+    payload = {"filename": "Synthetic.flac", "size_bytes": 4096, "content_sha256": "a" * 64,
+               "content_md5": base64.b64encode(b"x" * 16).decode("ascii")}
+    auth = pc_headers(f"vs-obs.{binding_id}.{verifier}")
+    assert client.post(record + "/initiate", headers=OWNER_HEADERS, json=payload).status_code == 403
+    client.cookies.clear()
+    assert client.get(f"/api/projects/{uuid4()}/obs-drafts", headers=auth).status_code == 401
+    assert client.post(BASE + "/companion/heartbeat", headers=auth, json=READY).status_code == 401
+    assert client.post(record + "/initiate", headers=pc_headers(f"vs-local.{binding_id}.{verifier}"),
+                       json=payload).status_code == 401
+    first = client.post(record + "/initiate", headers=auth, json=payload)
+    assert first.status_code == 200, first.text
+    assert first.json()["headers"]["If-None-Match"] == "*"
+    assert client.post(record + "/initiate", headers=auth, json=payload).json() == first.json()
+    assert client.post(record + "/initiate", headers=auth,
+                       json={**payload, "content_sha256": "b" * 64}).status_code == 409
+    assert client.post(record + "/complete", headers=auth).status_code == 409
+    storage.uploaded = True
+    completed = {"status": "completed", "event_id": event_id}
+    for _ in range(2):
+        assert client.post(record + "/complete", headers=auth).json() == completed
+    assert client.post(record + "/initiate", headers=auth, json=payload).json() == completed
+    with maker() as db:
+        assert len(db.scalars(select(ObsImportBinding)).all()) == 1
+        assert db.get(ObsImportDraft, (owner_id, event_id)).completed_at is not None
+        source = db.scalars(select(Source)).one()
+        drafts = f"/api/projects/{source.project_id}/obs-drafts"
+        source_id = source.id
+    client.cookies.set(settings.cookie_name, "other-session")
+    assert client.get(drafts).status_code == 404
+    assert client.delete(base + f"/bindings/{binding_id}", headers=OWNER_HEADERS).status_code == 404
+    client.cookies.set(settings.cookie_name, "owner-session")
+    assert client.get(drafts).json()["sources"][0]["id"] == source_id
+    assert client.delete(base + f"/bindings/{binding_id}", headers=OWNER_HEADERS).status_code == 200
+    assert client.post(record + "/initiate", headers=auth, json=payload).status_code == 401
+
+
 def test_pair_is_once_only_idempotent_and_does_not_persist_or_list_secret(local_app):
     client, maker, settings, (owner_id, _) = local_app
     reply, data = pair(client)

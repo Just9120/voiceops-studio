@@ -32,8 +32,12 @@ OutputBaseFilename=VoiceOpsCompanion-Setup
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 
+[Tasks]
+Name: "obsimport"; Description: "Установить импорт аудио из OBS Studio"; Flags: unchecked
+
 [Files]
 Source: "{#BundleRoot}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "voiceops-obs-import.lua"; DestDir: "{app}"; Flags: ignoreversion; Tasks: obsimport
 Source: "{tmp}\{#FfmpegDirectory}\bin\ffmpeg.exe"; DestDir: "{app}\_internal\voiceops-tools"; ExternalSize: 242496512; Flags: external ignoreversion
 Source: "{tmp}\{#FfmpegDirectory}\bin\ffprobe.exe"; DestDir: "{app}\_internal\voiceops-tools"; ExternalSize: 242291712; Flags: external ignoreversion
 Source: "{tmp}\{#FfmpegDirectory}\LICENSE"; DestDir: "{app}\_internal\voiceops-tools"; DestName: "FFmpeg-LICENSE.txt"; ExternalSize: 35147; Flags: external ignoreversion
@@ -42,6 +46,7 @@ Source: "{tmp}\{#FfmpegDirectory}\README.txt"; DestDir: "{app}\_internal\voiceop
 #ifndef SmokeBuild
 [Icons]
 Name: "{autoprograms}\VoiceOps Studio Companion"; Filename: "{app}\VoiceOpsCompanion.exe"
+Name: "{autoprograms}\VoiceOps Studio — импорт OBS"; Filename: "{app}\VoiceOpsCompanion.exe"; Parameters: "--obs-settings"; Tasks: obsimport
 
 [Run]
 Filename: "{app}\VoiceOpsCompanion.exe"; Description: "Запустить локальный обработчик"; Flags: nowait postinstall skipifsilent

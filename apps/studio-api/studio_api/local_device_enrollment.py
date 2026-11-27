@@ -10,16 +10,15 @@ PAIRING_SECONDS = 300
 
 
 class DeviceEnrollment:
-    def __init__(self, redis):
+    def __init__(self, redis, *, namespace="local-device"):
         self.redis = redis
+        self.namespace = namespace
 
-    @staticmethod
-    def request_key(request_id):
-        return "local-device:enrollment:" + str(request_id)
+    def request_key(self, request_id):
+        return f"{self.namespace}:enrollment:{request_id}"
 
-    @staticmethod
-    def approval_key(request_id):
-        return "local-device:approval:" + str(request_id)
+    def approval_key(self, request_id):
+        return f"{self.namespace}:approval:{request_id}"
 
     def begin(self, label, challenge):
         request_id = str(uuid4())
