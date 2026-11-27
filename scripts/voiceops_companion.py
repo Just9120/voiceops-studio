@@ -93,12 +93,35 @@ def autostart(enable=None):
         return previous == command
 
 
+COMPANION_PALETTES = {
+    "Светлая": {
+        "base": "#edf2f8", "header": "#f4f7fc", "surface": "#ffffff", "text": "#152440",
+        "muted": "#485b76", "border": "#677b99", "button": "#f7f9fd", "hover": "#dce7fa",
+        "primary": "#214db0", "primary_hover": "#173d94", "primary_text": "#ffffff",
+        "danger": "#fce6ea", "danger_hover": "#f8d3db", "danger_text": "#981e37",
+    },
+    "Тёмная": {
+        "base": "#151c29", "header": "#182233", "surface": "#202a3a", "text": "#eff4ff",
+        "muted": "#adbdd4", "border": "#8c9eb9", "button": "#182233", "hover": "#344257",
+        "primary": "#8aafff", "primary_hover": "#acc5ff", "primary_text": "#111a2b",
+        "danger": "#432630", "danger_hover": "#59313e", "danger_text": "#ffc4ce",
+    },
+    "OLED": {
+        "base": "#000000", "header": "#191f29", "surface": "#11161e", "text": "#eff4ff",
+        "muted": "#adbdd4", "border": "#8c9eb9", "button": "#191f29", "hover": "#303b4c",
+        "primary": "#71c9b4", "primary_hover": "#91dcc9", "primary_text": "#001c19",
+        "danger": "#432630", "danger_hover": "#59313e", "danger_text": "#ffc4ce",
+    },
+}
+
+
 class CompanionWindow:
     def __init__(self, window, *, background=False):
         self.window = window
         self.legacy_path = default_profile()
         self.identity_path = self.legacy_path.with_name("desktop-identity.json")
         self.runtime_path = self.legacy_path.with_name("desktop-runtime.json")
+        self.theme_path = self.legacy_path.with_name("desktop-theme.txt")
         self.events = SimpleQueue()
         self.stop = threading.Event()
         self.thread = None
@@ -122,24 +145,15 @@ class CompanionWindow:
         window.grid_rowconfigure(1, weight=1)
         window.grid_columnconfigure(0, weight=1)
 
-        style = ttk.Style(window)
-        style.theme_use("clam")
-        style.configure("TFrame", background="#edf2f8")
-        style.configure("TLabel", background="#edf2f8", foreground="#152440", font=("Segoe UI", 10))
-        style.configure("CompanionHeader.TFrame", background="#f4f7fc")
-        style.configure("CompanionHeader.TLabel", background="#f4f7fc")
-        style.configure("CompanionTitle.TLabel", font=("Segoe UI", 17, "bold"))
-        style.configure("CompanionCard.TLabelframe", background="#ffffff", bordercolor="#cdd8ea")
-        style.configure("CompanionCard.TLabelframe.Label", background="#ffffff",
-                        foreground="#152440", font=("Segoe UI", 12, "bold"))
-        style.configure("CompanionCard.TFrame", background="#ffffff")
-        style.configure("CompanionCard.TLabel", background="#ffffff")
-        style.configure("TButton", padding=(10, 8), font=("Segoe UI", 10), foreground="#152440")
-        style.configure("CompanionPrimary.TButton", background="#214db0", foreground="#ffffff")
-        style.map("CompanionPrimary.TButton", background=[("disabled", "#dbe5f5"), ("active", "#173d94")],
-                  foreground=[("disabled", "#425570"), ("!disabled", "#ffffff")])
-        style.configure("CompanionStop.TButton", background="#fce6ea", foreground="#981e37")
-        style.map("CompanionStop.TButton", background=[("active", "#f8d3db")])
+        self.style = ttk.Style(window)
+        self.style.theme_use("clam")
+        self.theme = tk.StringVar(value="Светлая")
+        try:
+            saved_theme = self.theme_path.read_text(encoding="utf-8").strip()
+            if saved_theme in COMPANION_PALETTES:
+                self.theme.set(saved_theme)
+        except (OSError, UnicodeError):
+            pass
 
         header = ttk.Frame(window, style="CompanionHeader.TFrame", padding=(12, 8))
         header.grid(row=0, column=0, sticky="ew")
@@ -150,11 +164,17 @@ class CompanionWindow:
             window.iconphoto(True, self.brand)
         ttk.Label(header, text="VoiceOps Companion", style="CompanionHeader.TLabel").pack(side="left")
         ttk.Label(header, text="Windows x64", style="CompanionHeader.TLabel").pack(side="right")
+        theme_button = ttk.Menubutton(header, text="Тема")
+        theme_button.pack(side="right", padx=(0, 8))
+        self.theme_menu = tk.Menu(theme_button, tearoff=False)
+        for name in COMPANION_PALETTES:
+            self.theme_menu.add_radiobutton(label=name, variable=self.theme, value=name, command=self.change_theme)
+        theme_button.configure(menu=self.theme_menu)
 
         scroll = ttk.Frame(window)
         scroll.grid(row=1, column=0, sticky="nsew")
-        self.canvas = tk.Canvas(scroll, highlightthickness=0, takefocus=False,
-                                background=style.lookup("TFrame", "background"))
+        self.canvas = tk.Canvas(scroll, highlightthickness=0, takefocus=False)
+        self.apply_theme()
         scrollbar = ttk.Scrollbar(scroll, orient="vertical", command=self.canvas.yview, takefocus=False)
         self.canvas.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
@@ -263,6 +283,56 @@ class CompanionWindow:
                 window.withdraw()
             if restore_active:
                 window.after(0, self.start)
+
+    def apply_theme(self):
+        colors = COMPANION_PALETTES[self.theme.get()]
+        style = self.style
+        style.configure("TFrame", background=colors["base"])
+        style.configure("TLabel", background=colors["base"], foreground=colors["text"], font=("Segoe UI", 10))
+        style.configure("CompanionTitle.TLabel", font=("Segoe UI", 17, "bold"))
+        style.configure("CompanionHeader.TFrame", background=colors["header"])
+        style.configure("CompanionHeader.TLabel", background=colors["header"])
+        style.configure("CompanionCard.TLabelframe", background=colors["surface"], bordercolor=colors["border"])
+        style.configure("CompanionCard.TLabelframe.Label", background=colors["surface"],
+                        foreground=colors["text"], font=("Segoe UI", 12, "bold"))
+        style.configure("CompanionCard.TFrame", background=colors["surface"])
+        style.configure("CompanionCard.TLabel", background=colors["surface"])
+        for name in ("TButton", "TMenubutton"):
+            style.configure(name, padding=(10, 8), font=("Segoe UI", 10), background=colors["button"],
+                            foreground=colors["text"], bordercolor=colors["border"])
+            style.map(name, background=[("active", colors["hover"])],
+                      foreground=[("disabled", colors["muted"])])
+        style.configure("CompanionPrimary.TButton", background=colors["primary"], foreground=colors["primary_text"])
+        style.map("CompanionPrimary.TButton",
+                  background=[("disabled", colors["hover"]), ("active", colors["primary_hover"])],
+                  foreground=[("disabled", colors["muted"]), ("!disabled", colors["primary_text"])])
+        style.configure("CompanionStop.TButton", background=colors["danger"], foreground=colors["danger_text"])
+        style.map("CompanionStop.TButton", background=[("active", colors["danger_hover"])],
+                  foreground=[("disabled", colors["muted"]), ("!disabled", colors["danger_text"])])
+        for name in ("TEntry", "TCombobox"):
+            style.configure(name, background=colors["button"], foreground=colors["text"],
+                            fieldbackground=colors["surface"], bordercolor=colors["border"],
+                            insertcolor=colors["text"], arrowcolor=colors["text"])
+            style.map(name, fieldbackground=[("readonly", colors["surface"]), ("disabled", colors["surface"])],
+                      foreground=[("readonly", colors["text"]), ("disabled", colors["muted"])])
+        style.configure("TCheckbutton", background=colors["surface"], foreground=colors["text"],
+                        indicatorbackground=colors["button"], indicatorforeground=colors["text"])
+        style.map("TCheckbutton", background=[("active", colors["hover"])],
+                  foreground=[("disabled", colors["muted"])])
+        style.configure("Vertical.TScrollbar", troughcolor=colors["base"], background=colors["border"])
+        self.canvas.configure(background=colors["base"])
+        self.theme_menu.configure(background=colors["surface"], foreground=colors["text"],
+                                  activebackground=colors["hover"], activeforeground=colors["text"])
+
+    def change_theme(self):
+        self.apply_theme()
+        try:
+            self.theme_path.parent.mkdir(parents=True, exist_ok=True)
+            pending = self.theme_path.with_suffix(".tmp")
+            pending.write_text(self.theme.get(), encoding="utf-8")
+            pending.replace(self.theme_path)
+        except OSError:
+            self.status.set("Тема применена. Сохранить настройку для следующего запуска не удалось.")
 
     def update_scroll(self):
         bounds = self.canvas.bbox("all")

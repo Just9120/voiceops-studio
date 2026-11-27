@@ -155,7 +155,13 @@ def test_companion_keeps_stop_visible_across_pairing_models_and_work(tmp_path, m
     window = tk.Tk()
     window.attributes("-alpha", 0.0)
     try:
+        (tmp_path / "desktop-theme.txt").write_text("Тёмная", encoding="utf-8")
         companion = CompanionWindow(window)
+        assert companion.theme.get() == "Тёмная"
+        assert companion.canvas.cget("background") == "#151c29"
+        companion.theme_menu.invoke(2)
+        assert companion.canvas.cget("background") == "#000000"
+        assert companion.theme_path.read_text(encoding="utf-8") == "OLED"
         for size in sizes:
             window.geometry(size)
             window.update()
